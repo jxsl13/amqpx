@@ -12,3 +12,10 @@ This library is highly inspired by `https://github.com/houseofcat/turbocookedrab
 ```shell
 go get github.com/jxsl13/amqpx
 ```
+
+
+## TODO:
+
+clean shutdown requires:
+- closing of consumers, producers
+- processing or requeuing of pending messages
