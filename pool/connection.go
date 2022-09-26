@@ -128,7 +128,6 @@ func (ch *Connection) isClosed() bool {
 // Sleeps for one second, repeatedly until the blocking has stopped.
 // Such messages will most likely be received when the broker hits its memory or disk limits.
 func (ch *Connection) PauseOnFlowControl() {
-	// TODO: do these locks make sense?
 	ch.mu.Lock()
 	defer ch.mu.Unlock()
 
@@ -169,12 +168,18 @@ func (ch *Connection) PauseOnFlowControl() {
 }
 
 func (ch *Connection) IsClosed() bool {
+	ch.mu.Lock()
+	defer ch.mu.Unlock()
+
 	// connection closed 							-> cannot access it
 	// connection not closed but shutdown triggered -> is closed
 	return ch.conn.IsClosed() || ch.isShutdown()
 }
 
 func (ch *Connection) Close() error {
+	ch.mu.Lock()
+	defer ch.mu.Unlock()
+
 	ch.cancel()            // close derived context
 	return ch.conn.Close() // close internal channel
 }

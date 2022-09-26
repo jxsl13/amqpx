@@ -74,6 +74,9 @@ func NewSession(conn *Connection, id uint64, cached bool, options ...SessionOpti
 
 // Close closes the session completely.
 func (s *Session) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	s.cancel()
 	return s.channel.Close()
 }
@@ -82,6 +85,7 @@ func (s *Session) Close() error {
 func (s *Session) Connect() (err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	defer func() {
 		// reset stat in case of an error
 		if err != nil {
@@ -90,6 +94,10 @@ func (s *Session) Connect() (err error) {
 			s.confirms = nil
 		}
 	}()
+
+	if s.conn.IsClosed() {
+		return ErrConnectionClosed
+	}
 
 	channel, err := s.conn.conn.Channel()
 	if err != nil {
@@ -112,8 +120,8 @@ func (s *Session) Connect() (err error) {
 	return nil
 }
 
-// FlushConfirms removes all previous confirmations pending processing.
-func (s *Session) FlushConfirms() {
+// flushConfirms removes all previous confirmations pending processing.
+func (s *Session) flushConfirms() {
 
 	for {
 		// Some weird use case where the Channel is being flooded with confirms after connection disruption
