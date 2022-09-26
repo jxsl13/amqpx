@@ -16,9 +16,10 @@ import (
 type Connection struct {
 	url  string
 	name string
-	tls  *tls.Config
+	id   int64
 
-	id   uint64
+	tls *tls.Config
+
 	conn *amqp.Connection
 
 	heartbeat   time.Duration
@@ -33,7 +34,8 @@ type Connection struct {
 }
 
 // NewConnection creates a connection wrapper.
-func NewConnection(connectUrl, name string, id uint64, options ...ConnectionOption) (*Connection, error) {
+// name: unique connection name
+func NewConnection(connectUrl, name string, id int64, options ...ConnectionOption) (*Connection, error) {
 	// use sane defaults
 	option := connectionOption{
 		HeartbeatInterval: 30 * time.Second,
@@ -62,9 +64,9 @@ func NewConnection(connectUrl, name string, id uint64, options ...ConnectionOpti
 	conn := &Connection{
 		url:  u.String(),
 		name: name,
+		id:   id,
 		tls:  option.TLSConfig,
 
-		id:   id,
 		conn: nil, // will be initialized below
 
 		heartbeat:   option.HeartbeatInterval,
@@ -82,6 +84,11 @@ func NewConnection(connectUrl, name string, id uint64, options ...ConnectionOpti
 		return nil, err
 	}
 	return conn, nil
+}
+
+func (ch *Connection) ID() int64 {
+	// no mutex lock, as we do read only the id and write only upon initialization
+	return ch.id
 }
 
 // Connect tries to connect (or reconnect)
@@ -182,6 +189,11 @@ func (ch *Connection) Close() error {
 
 	ch.cancel()            // close derived context
 	return ch.conn.Close() // close internal channel
+}
+
+// Errors returns the errors channel for consumption.
+func (ch *Connection) Errors() <-chan *amqp.Error {
+	return ch.errors
 }
 
 func (ch *Connection) catchShutdown() <-chan struct{} {

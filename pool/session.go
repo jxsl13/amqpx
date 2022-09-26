@@ -10,10 +10,10 @@ import (
 
 // Session is
 type Session struct {
-	channelId         uint64
-	channelCached     bool
-	channelAckable    bool
-	channelBufferSize int
+	id         int64
+	cached     bool
+	ackable    bool
+	bufferSize int
 
 	channel  *amqp.Channel
 	confirms chan amqp.Confirmation
@@ -28,7 +28,7 @@ type Session struct {
 
 // NewSession wraps a connection and a channel in order tointeract with the message broker.
 // By default the context of the parent connection is used for cancellation.
-func NewSession(conn *Connection, id uint64, cached bool, options ...SessionOption) (*Session, error) {
+func NewSession(conn *Connection, id int64, cached bool, options ...SessionOption) (*Session, error) {
 	if conn.IsClosed() {
 		return nil, ErrConnectionClosed
 	}
@@ -50,10 +50,10 @@ func NewSession(conn *Connection, id uint64, cached bool, options ...SessionOpti
 	ctx, cancel := context.WithCancel(option.Ctx)
 
 	session := &Session{
-		channelId:         id,
-		channelCached:     cached,
-		channelAckable:    option.Ackable,
-		channelBufferSize: option.BufferSize,
+		id:         id,
+		cached:     cached,
+		ackable:    option.Ackable,
+		bufferSize: option.BufferSize,
 
 		channel:  nil, // will be created below
 		confirms: nil, // will be created below
@@ -104,8 +104,8 @@ func (s *Session) Connect() (err error) {
 		return fmt.Errorf("%w: %v", ErrConnectionFailed, err)
 	}
 
-	if s.channelAckable {
-		s.confirms = make(chan amqp.Confirmation, s.channelBufferSize)
+	if s.ackable {
+		s.confirms = make(chan amqp.Confirmation, s.bufferSize)
 		channel.NotifyPublish(s.confirms)
 
 		err = channel.Confirm(false)
@@ -114,7 +114,7 @@ func (s *Session) Connect() (err error) {
 		}
 	}
 
-	s.errors = make(chan *amqp.Error, s.channelBufferSize)
+	s.errors = make(chan *amqp.Error, s.bufferSize)
 	channel.NotifyClose(s.errors)
 
 	return nil
@@ -136,9 +136,15 @@ func (s *Session) flushConfirms() {
 	}
 }
 
-// pauseForFlowControl allows you to wait and sleep while receiving flow control messages.
-func (s *Session) pauseForFlowControl() {
-	s.conn.PauseOnFlowControl()
+func (s *Session) ID() int64 {
+	// read only property after initialization
+	return s.id
+}
+
+// IsCached returns true in case this session is supposed to be returned to a session pool.
+func (s *Session) IsCached() bool {
+	// read only property after initialization
+	return s.cached
 }
 
 func (s *Session) catchShutdown() <-chan struct{} {

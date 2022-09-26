@@ -12,8 +12,8 @@ type sessionOption struct {
 
 type SessionOption func(*sessionOption)
 
-// SessionContext allows to set a custom session context that might trigger a shutdown
-func SessionContext(ctx context.Context) SessionOption {
+// SessionWithContext allows to set a custom session context that might trigger a shutdown
+func SessionWithContext(ctx context.Context) SessionOption {
 	if ctx == nil {
 		panic("nil context passed")
 	}
@@ -31,8 +31,8 @@ func SessionWithAckableMessages(ackable bool) SessionOption {
 
 // SessionWithBufferSize allows to customize the size of th einternal channel buffers.
 // all buffers/channels are initialized with this size. (e.g. error or confirm channels)
-func SessionWithBufferSize(ackable bool) SessionOption {
+func SessionWithBufferSize(size int) SessionOption {
 	return func(so *sessionOption) {
-		so.Ackable = ackable
+		so.BufferSize = size
 	}
 }
