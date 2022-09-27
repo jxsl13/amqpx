@@ -120,16 +120,17 @@ func (s *Session) Connect() (err error) {
 	return nil
 }
 
-// flushConfirms removes all previous confirmations pending processing.
-func (s *Session) flushConfirms() {
+// FlushConfirms removes all previous confirmations pending processing.
+func (s *Session) FlushConfirms() {
 
 	for {
 		// Some weird use case where the Channel is being flooded with confirms after connection disruption
 		// It lead to an infinite loop when this method was called.
 		select {
+		case <-s.confirms:
+			// flush confirmations in channel
 		case <-s.catchShutdown():
 			return
-		case <-s.confirms:
 		default:
 			return
 		}

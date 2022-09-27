@@ -3,7 +3,6 @@ package pool
 import (
 	"context"
 	"crypto/tls"
-	"errors"
 	"fmt"
 	"net/url"
 	"sync"
@@ -32,7 +31,7 @@ type ConnectionPool struct {
 	sessions    chan *Session
 
 	flaggedConns map[int64]bool
-	connID       int64
+	connID       int
 
 	mu     sync.RWMutex
 	ctx    context.Context
@@ -111,8 +110,7 @@ func NewConnectionPool(connectUrl string, maxSize int, options ...PoolOption) (*
 }
 
 func (cp *ConnectionPool) initConns() error {
-	maxSize := int64(cp.maxSize)
-	for cp.connID = 0; cp.connID < maxSize; cp.connID++ {
+	for cp.connID = 0; cp.connID < cp.maxSize; cp.connID++ {
 		conn, err := cp.deriveConnection(cp.connID)
 		if err != nil {
 			return fmt.Errorf("%w: %v", ErrPoolInitializationFailed, err)
@@ -124,7 +122,7 @@ func (cp *ConnectionPool) initConns() error {
 	}
 
 	for i := 0; i < cp.cachedSize; i++ {
-		session, err := cp.createCachedSession(int64(i))
+		session, err := cp.createCachedSession(i)
 		if err != nil {
 			return err
 		}
@@ -134,9 +132,9 @@ func (cp *ConnectionPool) initConns() error {
 	return nil
 }
 
-func (cp *ConnectionPool) deriveConnection(id int64) (*Connection, error) {
+func (cp *ConnectionPool) deriveConnection(id int) (*Connection, error) {
 	name := fmt.Sprintf("%s-%d", cp.name, id)
-	return NewConnection(cp.url, name, id,
+	return NewConnection(cp.url, name, int64(id),
 		ConnectionContext(cp.ctx),
 		ConnectionTimeout(cp.connTimeout),
 		ConnectionHeartbeatInterval(cp.heartbeat),
@@ -144,15 +142,15 @@ func (cp *ConnectionPool) deriveConnection(id int64) (*Connection, error) {
 	)
 }
 
-func (cp *ConnectionPool) deriveSession(conn *Connection, id int64, cached bool) (*Session, error) {
-	return NewSession(conn, id, cached,
+func (cp *ConnectionPool) deriveSession(conn *Connection, id int, cached bool) (*Session, error) {
+	return NewSession(conn, int64(id), cached,
 		SessionWithContext(cp.ctx),
 		SessionWithBufferSize(cp.sessionBufferSize),
 	)
 }
 
 // createCacheSession allows you create a cached Session which helps wrap Amqp Session functionality.
-func (cp *ConnectionPool) createCachedSession(id int64) (*Session, error) {
+func (cp *ConnectionPool) createCachedSession(id int) (*Session, error) {
 
 	// retry until we get a channel
 	// or until shutdown
@@ -184,7 +182,10 @@ func (cp *ConnectionPool) GetConnection() (*Connection, error) {
 		return nil, err
 	}
 
-	cp.verifyHealthyConnection(conn)
+	err = cp.healConnection(conn)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get connection: %w", err)
+	}
 
 	return conn, nil
 }
@@ -193,20 +194,19 @@ func (cp *ConnectionPool) getConnectionFromPool() (*Connection, error) {
 
 	// Pull from the queue.
 	// Pauses here indefinitely if the queue is empty.
-	structs, err := cp.connections.Get(1)
+	objects, err := cp.connections.Get(1)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %v", ErrPoolClosed, err)
 	}
 
-	conn, ok := structs[0].(*Connection)
+	conn, ok := objects[0].(*Connection)
 	if !ok {
-		return nil, errors.New("invalid struct type found in ConnectionPool queue")
+		panic("invalid type in queue")
 	}
-
 	return conn, nil
 }
 
-func (cp *ConnectionPool) verifyHealthyConnection(conn *Connection) {
+func (cp *ConnectionPool) healConnection(conn *Connection) error {
 
 	healthy := true
 	select {
@@ -216,41 +216,52 @@ func (cp *ConnectionPool) verifyHealthyConnection(conn *Connection) {
 		break
 	}
 
-	flagged := cp.isConnectionFlagged(conn.ID())
+	flagged := cp.isFlagged(conn.ID())
 
 	// Between these three states we do our best to determine that a connection is dead in the various lifecycles.
 	if flagged || !healthy || conn.IsClosed() {
-		cp.triggerConnectionRecovery(conn)
+		return cp.recoverConnection(conn)
 	}
 
 	conn.PauseOnFlowControl()
+	return nil
 }
 
-func (cp *ConnectionPool) triggerConnectionRecovery(conn *Connection) {
-
-	// InfiniteLoop: Stay here till we reconnect.
+func (cp *ConnectionPool) recoverConnection(conn *Connection) error {
+	timer := time.NewTimer(0)
+	if !timer.Stop() {
+		<-timer.C
+	}
+	defer func() {
+		if !timer.Stop() {
+			<-timer.C
+		}
+	}()
 
 	for retry := 0; ; retry++ {
-		// TODO: catch shutdown upon retry, use ticker
-
 		err := conn.Connect()
 		if err != nil {
-			// TODO: use timer
-			time.Sleep(cp.errorBackoff(retry))
-			continue
+			// reset to exponential backoff
+			timer.Reset(cp.errorBackoff(retry))
+			select {
+			case <-cp.catchShutdown():
+				// catch shutdown signal
+				return fmt.Errorf("connection recovery failed: %w", ErrPoolClosed)
+			case <-timer.C:
+				if !timer.Stop() {
+					<-timer.C
+				}
+				// retry after sleep
+				continue
+			}
 		}
+
+		// connection established successfully
 		break
 	}
 
-	for {
-		select {
-		case <-conn.Errors():
-			// Flush any pending errors.
-		default:
-			cp.unflagConnection(conn.ID())
-			return
-		}
-	}
+	cp.unflagConnection(conn.ID())
+	return nil
 }
 
 // ReturnConnection puts the connection back in the queue and flag it for error.
@@ -263,8 +274,9 @@ func (cp *ConnectionPool) ReturnConnection(conn *Connection, flag bool) {
 
 	err := cp.connections.Put(conn)
 	if err != nil {
-		// close connection in case the queue blocks
-		// returning
+		// queue was disposed of,
+		// indicating pool shutdown
+		// -> close connection upon pool shutdown
 		conn.Close()
 	}
 }
@@ -275,9 +287,11 @@ func (cp *ConnectionPool) ReturnConnection(conn *Connection, flag bool) {
 // If you want a transient Ackable channel (un-managed), use CreateSession directly.
 func (cp *ConnectionPool) GetSession() (*Session, error) {
 	select {
+	case <-cp.catchShutdown():
+		return nil, ErrPoolClosed
 	case session, ok := <-cp.sessions:
 		if !ok {
-			return nil, ErrPoolClosed
+			return nil, fmt.Errorf("failed to get session: %w", ErrPoolClosed)
 		}
 		return session, nil
 
@@ -289,37 +303,51 @@ func (cp *ConnectionPool) GetSession() (*Session, error) {
 // If Cache Session, we check if erred, new Session is created instead and then returned to the cache.
 func (cp *ConnectionPool) ReturnSession(session *Session, erred bool) {
 
-	// If called by user with the wrong channel don't add a non-managed channel back to the channel cache.
-	if session.IsCached() {
-		if erred {
-			cp.reconnectSession(session) // <- blocking operation
-		} else {
-			session.flushConfirms()
-		}
-
-		cp.sessions <- session
+	// don't ass non-managed sessions back to the channel
+	if !session.IsCached() {
+		session.Close()
 		return
 	}
 
-	go func(*Session) {
-		defer func() { _ = recover() }()
+	if erred {
+		err := cp.recoverSession(session)
+		if err != nil {
+			// error only on shutdown, don't recover
+			return
+		}
+	} else {
+		// healthy sessions may contain pending confirmation messages
+		// cleanup confirmations from previous session usage
+		session.FlushConfirms()
+	}
 
+	select {
+	case <-cp.catchShutdown():
 		session.Close()
-	}(session)
+	case cp.sessions <- session:
+	}
 }
 
-func (cp *ConnectionPool) reconnectSession(session *Session) {
+func (cp *ConnectionPool) recoverSession(session *Session) error {
 
 	// InfiniteLoop: Stay here till we reconnect.
 	for {
-		cp.verifyHealthyConnection(session.conn) // <- blocking operation
+		err := cp.healConnection(session.conn)
+		if err != nil {
+			// upon shutdown this will fail
+			return fmt.Errorf("failed to recover session: %w", err)
+		}
 
-		err := session.Connect() // Creates a new channel and flushes internal buffers automatically.
+		// no backoff upon retry, because healConnection already retries
+		// with a backoff. Sessions should be instantly created on a healthy connection
+		err = session.Connect() // Creates a new channel and flushes internal buffers automatically.
 		if err != nil {
 			continue
 		}
 		break
 	}
+
+	return nil
 }
 
 // GetTransientSession allows you create an unmanaged amqp Session with the help of the ConnectionPool.
@@ -357,8 +385,8 @@ func (cp *ConnectionPool) flagConnection(connectionID int64) {
 	cp.flaggedConns[connectionID] = true
 }
 
-// IsConnectionFlagged checks to see if the connection has been flagged for removal.
-func (cp *ConnectionPool) isConnectionFlagged(connectionID int64) bool {
+// isFlagged checks to see if the connection has been flagged for removal.
+func (cp *ConnectionPool) isFlagged(connectionID int64) bool {
 	cp.mu.RLock()
 	defer cp.mu.RUnlock()
 	if flagged, ok := cp.flaggedConns[connectionID]; ok {
