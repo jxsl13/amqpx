@@ -13,7 +13,7 @@ type poolOption struct {
 	Name string
 	Ctx  context.Context
 
-	CachedSize int
+	Size int
 
 	ConnHeartbeatInterval time.Duration
 	ConnTimeout           time.Duration
@@ -41,17 +41,6 @@ func WithName(name string) PoolOption {
 	}
 	return func(po *poolOption) {
 		po.Name = name
-	}
-}
-
-// WithCachedSize allows to set the number of cached connections.
-// Also minimum number of open connections that might also be idle.
-func WithCachedSize(size int) PoolOption {
-	if size < 0 {
-		size = 0
-	}
-	return func(po *poolOption) {
-		po.CachedSize = size
 	}
 }
 
@@ -89,24 +78,6 @@ func WithContext(ctx context.Context) PoolOption {
 func WithTLS(config *tls.Config) PoolOption {
 	return func(po *poolOption) {
 		po.TLSConfig = config
-	}
-}
-
-// WithSessionBufferSize allows to configurethe size of
-// all derived sessions that are created from the connection pool.
-func WithSessionBufferSize(size int) PoolOption {
-	if size < 0 {
-		size = 0
-	}
-	return func(po *poolOption) {
-		po.SessionBufferSize = size
-	}
-}
-
-// WithAckableSessions requires all messages from sessions to be acked.
-func WithAckableSessions(ackable bool) PoolOption {
-	return func(po *poolOption) {
-		po.SessionAckable = ackable
 	}
 }
 

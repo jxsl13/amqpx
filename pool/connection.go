@@ -92,6 +92,8 @@ func (ch *Connection) ID() int64 {
 }
 
 // Connect tries to connect (or reconnect)
+// Does not block indefinitly, but returns an error
+// upon connection failure.
 func (ch *Connection) Connect() error {
 	ch.mu.Lock()
 	defer ch.mu.Unlock()
@@ -145,10 +147,7 @@ func (ch *Connection) PauseOnFlowControl() {
 		}
 	}()
 
-	for {
-		if ch.isClosed() || ch.isShutdown() {
-			return
-		}
+	for !ch.isClosed() && !ch.isShutdown() {
 
 		select {
 		case blocker := <-ch.blockers: // Check for flow control issues.
@@ -191,9 +190,33 @@ func (ch *Connection) Close() error {
 	return ch.conn.Close() // close internal channel
 }
 
-// Errors returns the errors channel for consumption.
-func (ch *Connection) Errors() <-chan *amqp.Error {
-	return ch.errors
+// Error returns the first error from the errors channel
+// and flushes all other pending errors from the channel
+// In case that there are no errors, nil is returned.
+func (ch *Connection) Error() error {
+	ch.mu.Lock()
+	defer ch.mu.Unlock()
+	var (
+		err error = nil
+	)
+	for {
+		select {
+		case <-ch.catchShutdown():
+			return ErrConnectionClosed
+		case e, ok := <-ch.errors:
+			if !ok {
+				// because the amqp library might close this
+				// channel, we asume that closing was done due to
+				// a library error
+				return ErrConnectionClosed
+			}
+			if err == nil {
+				err = e
+			}
+		default:
+			return err
+		}
+	}
 }
 
 func (ch *Connection) catchShutdown() <-chan struct{} {

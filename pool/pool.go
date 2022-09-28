@@ -20,15 +20,10 @@ type ConnectionPool struct {
 	connTimeout  time.Duration
 	errorBackoff BackoffFunc
 
-	maxSize    int
-	cachedSize int
-
-	sessionBufferSize int
-	sessionAckable    bool
+	size int
 
 	tls         *tls.Config
 	connections *queue.Queue
-	sessions    chan *Session
 
 	flaggedConns map[int64]bool
 	connID       int
@@ -40,18 +35,19 @@ type ConnectionPool struct {
 
 // NewConnectionPool creates a new connection pool which has a maximum size it
 // can become and an idle size of connections that are always open.
-func NewConnectionPool(connectUrl string, maxSize int, options ...PoolOption) (*ConnectionPool, error) {
-	if maxSize < 1 {
+func NewConnectionPool(connectUrl string, size int, options ...PoolOption) (*ConnectionPool, error) {
+	if size < 1 {
 		panic("max pool size is negative or 0")
 	}
 
 	// use sane defaults
 	option := poolOption{
 		Name: defaultAppName(),
-		Ctx:  context.Background(),
+		Size: size,
+
+		Ctx: context.Background(),
 
 		BackoffPolicy: newDefaultBackoffPolicy(time.Second, 15*time.Second),
-		CachedSize:    maxSize / 2,
 
 		ConnHeartbeatInterval: 30 * time.Second,
 		ConnTimeout:           60 * time.Second,
@@ -75,27 +71,23 @@ func NewConnectionPool(connectUrl string, maxSize int, options ...PoolOption) (*
 		u.Scheme = "amqps"
 	}
 
+	// decouple from parent context, in case we want to close this context ourselves.
 	ctx, cancel := context.WithCancel(option.Ctx)
 
 	cp := &ConnectionPool{
-		url: u.String(),
+		name: option.Name,
+		url:  u.String(),
 
 		heartbeat:    option.ConnHeartbeatInterval,
 		connTimeout:  option.ConnTimeout,
 		errorBackoff: option.BackoffPolicy,
 
-		maxSize:    maxSize,
-		cachedSize: option.CachedSize,
-
-		sessionBufferSize: option.SessionBufferSize,
-		sessionAckable:    option.SessionAckable,
-
+		size:        option.Size,
 		tls:         option.TLSConfig,
-		connections: queue.New(int64(maxSize)),
-		sessions:    make(chan *Session, maxSize),
+		connections: queue.New(int64(size)),
 
-		flaggedConns: make(map[int64]bool, maxSize),
-		connID:       0,
+		flaggedConns: make(map[int64]bool, size),
+		connID:       1, // connections ids that are not transient start from 1 - n, transient are always 0
 
 		ctx:    ctx,
 		cancel: cancel,
@@ -110,7 +102,7 @@ func NewConnectionPool(connectUrl string, maxSize int, options ...PoolOption) (*
 }
 
 func (cp *ConnectionPool) initConns() error {
-	for cp.connID = 0; cp.connID < cp.maxSize; cp.connID++ {
+	for cp.connID = 0; cp.connID < cp.size; cp.connID++ {
 		conn, err := cp.deriveConnection(cp.connID)
 		if err != nil {
 			return fmt.Errorf("%w: %v", ErrPoolInitializationFailed, err)
@@ -120,15 +112,6 @@ func (cp *ConnectionPool) initConns() error {
 			return fmt.Errorf("%w: %v", ErrPoolInitializationFailed, err)
 		}
 	}
-
-	for i := 0; i < cp.cachedSize; i++ {
-		session, err := cp.createCachedSession(i)
-		if err != nil {
-			return err
-		}
-		cp.sessions <- session
-	}
-
 	return nil
 }
 
@@ -142,43 +125,10 @@ func (cp *ConnectionPool) deriveConnection(id int) (*Connection, error) {
 	)
 }
 
-func (cp *ConnectionPool) deriveSession(conn *Connection, id int, cached bool) (*Session, error) {
-	return NewSession(conn, int64(id), cached,
-		SessionWithContext(cp.ctx),
-		SessionWithBufferSize(cp.sessionBufferSize),
-	)
-}
-
-// createCacheSession allows you create a cached Session which helps wrap Amqp Session functionality.
-func (cp *ConnectionPool) createCachedSession(id int) (*Session, error) {
-
-	// retry until we get a channel
-	// or until shutdown
-	for {
-
-		// TODO: catch shutdown
-		conn, err := cp.GetConnection()
-		if err != nil {
-			continue
-		}
-
-		session, err := cp.deriveSession(conn, id, true)
-		if err != nil {
-			cp.ReturnConnection(conn, true)
-			continue
-		}
-
-		cp.ReturnConnection(conn, false)
-		return session, nil
-	}
-}
-
-// TODO: everything below here must be reimplemented and checked properly
-
 func (cp *ConnectionPool) GetConnection() (*Connection, error) {
 
 	conn, err := cp.getConnectionFromPool()
-	if err != nil { // errors on bad data in the queue
+	if err != nil {
 		return nil, err
 	}
 
@@ -208,13 +158,7 @@ func (cp *ConnectionPool) getConnectionFromPool() (*Connection, error) {
 
 func (cp *ConnectionPool) healConnection(conn *Connection) error {
 
-	healthy := true
-	select {
-	case <-conn.Errors():
-		healthy = false
-	default:
-		break
-	}
+	healthy := conn.Error() == nil
 
 	flagged := cp.isFlagged(conn.ID())
 
@@ -281,96 +225,6 @@ func (cp *ConnectionPool) ReturnConnection(conn *Connection, flag bool) {
 	}
 }
 
-// GetSessionFromPool gets a cached ackable channel from the Pool if they exist or creates a channel.
-// A non-acked channel is always a transient channel.
-// Blocking if Ackable is true and the cache is empty.
-// If you want a transient Ackable channel (un-managed), use CreateSession directly.
-func (cp *ConnectionPool) GetSession() (*Session, error) {
-	select {
-	case <-cp.catchShutdown():
-		return nil, ErrPoolClosed
-	case session, ok := <-cp.sessions:
-		if !ok {
-			return nil, fmt.Errorf("failed to get session: %w", ErrPoolClosed)
-		}
-		return session, nil
-
-	}
-}
-
-// ReturnSession returns a Session.
-// If Session is not a cached channel, it is simply closed here.
-// If Cache Session, we check if erred, new Session is created instead and then returned to the cache.
-func (cp *ConnectionPool) ReturnSession(session *Session, erred bool) {
-
-	// don't ass non-managed sessions back to the channel
-	if !session.IsCached() {
-		session.Close()
-		return
-	}
-
-	if erred {
-		err := cp.recoverSession(session)
-		if err != nil {
-			// error only on shutdown, don't recover
-			return
-		}
-	} else {
-		// healthy sessions may contain pending confirmation messages
-		// cleanup confirmations from previous session usage
-		session.FlushConfirms()
-	}
-
-	select {
-	case <-cp.catchShutdown():
-		session.Close()
-	case cp.sessions <- session:
-	}
-}
-
-func (cp *ConnectionPool) recoverSession(session *Session) error {
-
-	// InfiniteLoop: Stay here till we reconnect.
-	for {
-		err := cp.healConnection(session.conn)
-		if err != nil {
-			// upon shutdown this will fail
-			return fmt.Errorf("failed to recover session: %w", err)
-		}
-
-		// no backoff upon retry, because healConnection already retries
-		// with a backoff. Sessions should be instantly created on a healthy connection
-		err = session.Connect() // Creates a new channel and flushes internal buffers automatically.
-		if err != nil {
-			continue
-		}
-		break
-	}
-
-	return nil
-}
-
-// GetTransientSession allows you create an unmanaged amqp Session with the help of the ConnectionPool.
-func (cp *ConnectionPool) GetTransientSession(ackable bool) (*Session, error) {
-
-	// InfiniteLoop: Stay till we have a good channel.
-	for {
-		conn, err := cp.GetConnection()
-		if err != nil {
-			continue
-		}
-
-		session, err := cp.deriveSession(conn, 0, false)
-		if err != nil {
-			cp.ReturnConnection(conn, true)
-			continue
-		}
-
-		cp.ReturnConnection(conn, false)
-		return session, nil
-	}
-}
-
 // UnflagConnection flags that connection as usable in the future.
 func (cp *ConnectionPool) unflagConnection(connectionID int64) {
 	cp.mu.Lock()
@@ -396,42 +250,29 @@ func (cp *ConnectionPool) isFlagged(connectionID int64) bool {
 	return false
 }
 
-// Shutdown closes all connections in the ConnectionPool and resets the Pool to pre-initialized state.
-func (cp *ConnectionPool) Shutdown() {
-
-	if cp == nil {
-		return
-	}
+// Close closes the connection pool.
+// Closes all connections and sessions that are currently known to the pool.
+// Any new connections or session requests will return an error.
+// Any returned sessions or connections will be closed properly.
+func (cp *ConnectionPool) Close() {
 
 	wg := &sync.WaitGroup{}
-SessionClose:
-	for {
-		select {
-		case session := <-cp.sessions:
-			wg.Add(1)
-			go func(*Session) {
-				defer wg.Done()
-				session.Close()
-			}(session)
 
-		default:
-			break SessionClose
-		}
-	}
-	wg.Wait()
-
+	// close all connections
 	for !cp.connections.Empty() {
 		items := cp.connections.Dispose()
 
 		for _, item := range items {
-			conn := item.(*Connection)
-			wg.Add(1)
+			conn, ok := item.(*Connection)
+			if !ok {
+				panic("item in connection queue is not a connection")
+			}
 
+			wg.Add(1)
 			go func(c *Connection) {
 				defer wg.Done()
 				c.Close()
 			}(conn)
-
 		}
 	}
 	wg.Wait()
@@ -439,13 +280,4 @@ SessionClose:
 
 func (cp *ConnectionPool) catchShutdown() <-chan struct{} {
 	return cp.ctx.Done()
-}
-
-func (cp *ConnectionPool) isShutdown() bool {
-	select {
-	case <-cp.ctx.Done():
-		return true
-	default:
-		return false
-	}
 }

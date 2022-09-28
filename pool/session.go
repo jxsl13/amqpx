@@ -16,7 +16,7 @@ type Session struct {
 	bufferSize int
 
 	channel  *amqp.Channel
-	confirms chan amqp.Confirmation
+	confirms chan Confirmation
 	errors   chan *amqp.Error
 
 	conn *Connection
@@ -73,12 +73,18 @@ func NewSession(conn *Connection, id int64, cached bool, options ...SessionOptio
 }
 
 // Close closes the session completely.
+// Do not use this method in case you have acquired the session
+// from a connection pool.
+// Use the ConnectionPool.ResurnSession method in order to return the session.
 func (s *Session) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	s.cancel()
-	return s.channel.Close()
+	if s.channel != nil && !s.channel.IsClosed() {
+		return s.channel.Close()
+	}
+	return nil
 }
 
 // Connect tries to create (or re-create) the channel from the Connection it is derived from.
@@ -87,7 +93,7 @@ func (s *Session) Connect() (err error) {
 	defer s.mu.Unlock()
 
 	defer func() {
-		// reset stat in case of an error
+		// reset state in case of an error
 		if err != nil {
 			s.channel = nil
 			s.errors = nil
@@ -96,6 +102,7 @@ func (s *Session) Connect() (err error) {
 	}()
 
 	if s.conn.IsClosed() {
+		// do not reconnect connection explicitly
 		return ErrConnectionClosed
 	}
 
@@ -120,21 +127,31 @@ func (s *Session) Connect() (err error) {
 	return nil
 }
 
-// FlushConfirms removes all previous confirmations pending processing.
-func (s *Session) FlushConfirms() {
+// flushConfirms removes all previous confirmations pending processing.
+// You can use the returned value
+func (s *Session) flushConfirms() []Confirmation {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
+	confirms := make([]Confirmation, 0, len(s.confirms))
+flush:
 	for {
 		// Some weird use case where the Channel is being flooded with confirms after connection disruption
 		// It lead to an infinite loop when this method was called.
 		select {
-		case <-s.confirms:
+		case c, ok := <-s.confirms:
+			if !ok {
+				break flush
+			}
 			// flush confirmations in channel
+			confirms = append(confirms, c)
 		case <-s.catchShutdown():
-			return
+			break flush
 		default:
-			return
+			break flush
 		}
 	}
+	return confirms
 }
 
 func (s *Session) ID() int64 {
@@ -144,19 +161,10 @@ func (s *Session) ID() int64 {
 
 // IsCached returns true in case this session is supposed to be returned to a session pool.
 func (s *Session) IsCached() bool {
-	// read only property after initialization
 	return s.cached
 }
 
 func (s *Session) catchShutdown() <-chan struct{} {
+	// no locking because
 	return s.ctx.Done()
-}
-
-func (s *Session) isShutdown() bool {
-	select {
-	case <-s.ctx.Done():
-		return true
-	default:
-		return false
-	}
 }
