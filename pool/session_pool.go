@@ -189,8 +189,9 @@ func (sp *SessionPool) initSession(id int) (*Session, error) {
 }
 
 func (sp *SessionPool) deriveSession(conn *Connection, id int, cached bool) (*Session, error) {
-	return NewSession(conn, int64(id), cached,
+	return NewSession(conn, int64(id),
 		SessionWithContext(sp.ctx),
 		SessionWithBufferSize(sp.size),
+		SessionWithCached(cached),
 	)
 }

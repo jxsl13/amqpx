@@ -16,8 +16,9 @@ func TestNewConnection(t *testing.T) {
 	rand.Seed(time.Now().Unix())
 	var wg sync.WaitGroup
 
-	for i := int64(0); i < 200; i++ {
-		wg.Add(1)
+	connections := 200
+	wg.Add(connections)
+	for i := 0; i < connections; i++ {
 		go func(id int64) {
 			defer wg.Done()
 
@@ -30,9 +31,9 @@ func TestNewConnection(t *testing.T) {
 				assert.Error(t, c.Error())
 			}()
 			defer c.Close()
-			time.Sleep(15 * time.Second)
+			time.Sleep(5 * time.Second)
 			assert.NoError(t, c.Error())
-		}(i)
+		}(int64(i))
 	}
 
 	wg.Wait()

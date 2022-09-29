@@ -28,18 +28,19 @@ type Session struct {
 
 // NewSession wraps a connection and a channel in order tointeract with the message broker.
 // By default the context of the parent connection is used for cancellation.
-func NewSession(conn *Connection, id int64, cached bool, options ...SessionOption) (*Session, error) {
+func NewSession(conn *Connection, id int64, options ...SessionOption) (*Session, error) {
 	if conn.IsClosed() {
 		return nil, ErrConnectionClosed
 	}
 
 	// default values
 	option := sessionOption{
-		// derive context from connection, as we are derived from the connection
-		// so in case the connection is closed, we are closed as well.
-		Ctx:        conn.ctx,
+		Cached:     false,
 		Ackable:    false,
 		BufferSize: 100,
+		// derive context from connection, as we are derived from the connection
+		// so in case the connection is closed, we are closed as well.
+		Ctx: conn.ctx,
 	}
 
 	// override default values if options were provided
@@ -51,7 +52,7 @@ func NewSession(conn *Connection, id int64, cached bool, options ...SessionOptio
 
 	session := &Session{
 		id:         id,
-		cached:     cached,
+		cached:     option.Cached,
 		ackable:    option.Ackable,
 		bufferSize: option.BufferSize,
 

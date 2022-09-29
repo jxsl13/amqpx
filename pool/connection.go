@@ -213,8 +213,11 @@ func (ch *Connection) Close() error {
 	ch.mu.Lock()
 	defer ch.mu.Unlock()
 
-	ch.cancel()            // close derived context
-	return ch.conn.Close() // close internal channel
+	ch.cancel() // close derived context
+	if ch.conn != nil && !ch.conn.IsClosed() {
+		return ch.conn.Close() // close internal channel
+	}
+	return nil
 }
 
 // Error returns the first error from the errors channel

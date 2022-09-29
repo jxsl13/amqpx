@@ -5,9 +5,10 @@ import (
 )
 
 type sessionOption struct {
-	Ctx        context.Context
+	Cached     bool
 	Ackable    bool
 	BufferSize int
+	Ctx        context.Context
 }
 
 type SessionOption func(*sessionOption)
@@ -19,6 +20,15 @@ func SessionWithContext(ctx context.Context) SessionOption {
 	}
 	return func(so *sessionOption) {
 		so.Ctx = ctx
+	}
+}
+
+// SessionWithCached makes a session a cached session
+// This is only necessary for the session pool, as cached sessions are part of a pool
+// and can be returne dback to the pool without being closed.
+func SessionWithCached(cached bool) SessionOption {
+	return func(so *sessionOption) {
+		so.Cached = cached
 	}
 }
 

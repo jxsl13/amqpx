@@ -21,18 +21,19 @@ func TestNewSession(t *testing.T) {
 
 	var wg sync.WaitGroup
 
-	for id := 0; id < 200; id++ {
-		wg.Add(1)
+	sessions := 200
+	wg.Add(sessions)
+	for id := 0; id < sessions; id++ {
 		go func(id int64) {
 			defer wg.Done()
-			s, err := pool.NewSession(c, id, false)
+			s, err := pool.NewSession(c, id)
 			if err != nil {
 				assert.NoError(t, err)
 				return
 			}
 			defer s.Close()
 
-			time.Sleep(15 * time.Second)
+			time.Sleep(5 * time.Second)
 		}(int64(id))
 	}
 
