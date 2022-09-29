@@ -19,8 +19,6 @@ type poolOption struct {
 	ConnTimeout           time.Duration
 	TLSConfig             *tls.Config
 
-	BackoffPolicy BackoffFunc
-
 	SessionAckable    bool
 	SessionBufferSize int
 }
@@ -78,12 +76,6 @@ func WithContext(ctx context.Context) PoolOption {
 func WithTLS(config *tls.Config) PoolOption {
 	return func(po *poolOption) {
 		po.TLSConfig = config
-	}
-}
-
-func WithBackoffPolicy(poliy BackoffFunc) PoolOption {
-	return func(po *poolOption) {
-		po.BackoffPolicy = poliy
 	}
 }
 

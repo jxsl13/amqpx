@@ -14,13 +14,16 @@ import (
 
 // Connection is an internal representation of amqp.Connection.
 type Connection struct {
-	url  string
-	name string
-	id   int64
+	url     string
+	name    string
+	id      int64
+	flagged bool // whether an error occurred on this connection or not, indicating the connectionmust be recovered
 
 	tls *tls.Config
 
 	conn *amqp.Connection
+
+	errorBackoff BackoffFunc
 
 	heartbeat   time.Duration
 	connTimeout time.Duration
@@ -40,6 +43,7 @@ func NewConnection(connectUrl, name string, id int64, options ...ConnectionOptio
 	option := connectionOption{
 		HeartbeatInterval: 30 * time.Second,
 		ConnectionTimeout: 60 * time.Second,
+		BackoffPolicy:     newDefaultBackoffPolicy(time.Second, 15*time.Second),
 		Ctx:               context.Background(),
 	}
 
@@ -62,15 +66,17 @@ func NewConnection(connectUrl, name string, id int64, options ...ConnectionOptio
 	ctx, cancel := context.WithCancel(option.Ctx)
 
 	conn := &Connection{
-		url:  u.String(),
-		name: name,
-		id:   id,
-		tls:  option.TLSConfig,
+		url:     u.String(),
+		name:    name,
+		id:      id,
+		flagged: false,
+		tls:     option.TLSConfig,
 
 		conn: nil, // will be initialized below
 
-		heartbeat:   option.HeartbeatInterval,
-		connTimeout: option.ConnectionTimeout,
+		heartbeat:    option.HeartbeatInterval,
+		connTimeout:  option.ConnectionTimeout,
+		errorBackoff: option.BackoffPolicy,
 
 		errors:   make(chan *amqp.Error, 10),
 		blockers: make(chan amqp.Blocking, 10),
@@ -91,12 +97,28 @@ func (ch *Connection) ID() int64 {
 	return ch.id
 }
 
+// Flag flags the connection as broken which must be recovered.
+// A flagged connection implies a closed connection.
+// Flagging of a connectioncan only be undone by Recover-ing the connection.
+func (ch *Connection) Flag(flagged bool) {
+	ch.mu.Lock()
+	defer ch.mu.Unlock()
+
+	if !ch.flagged && flagged {
+		ch.flagged = flagged
+	}
+}
+
 // Connect tries to connect (or reconnect)
 // Does not block indefinitly, but returns an error
 // upon connection failure.
 func (ch *Connection) Connect() error {
 	ch.mu.Lock()
 	defer ch.mu.Unlock()
+	return ch.connect()
+}
+
+func (ch *Connection) connect() error {
 
 	// not closed, reuse
 	if !ch.isClosed() {
@@ -128,11 +150,6 @@ func (ch *Connection) Connect() error {
 	return nil
 }
 
-// not atomic
-func (ch *Connection) isClosed() bool {
-	return ch.conn == nil || ch.conn.IsClosed()
-}
-
 // PauseOnFlowControl allows you to wait and sleep while receiving flow control messages.
 // Sleeps for one second, repeatedly until the blocking has stopped.
 // Such messages will most likely be received when the broker hits its memory or disk limits.
@@ -140,6 +157,11 @@ func (ch *Connection) PauseOnFlowControl() {
 	ch.mu.Lock()
 	defer ch.mu.Unlock()
 
+	ch.pauseOnFlowControl()
+}
+
+// not threadsafe
+func (ch *Connection) pauseOnFlowControl() {
 	timer := time.NewTimer(time.Second)
 	defer func() {
 		if !timer.Stop() {
@@ -147,7 +169,7 @@ func (ch *Connection) PauseOnFlowControl() {
 		}
 	}()
 
-	for !ch.isClosed() && !ch.isShutdown() {
+	for !ch.isClosed() {
 
 		select {
 		case blocker := <-ch.blockers: // Check for flow control issues.
@@ -173,13 +195,18 @@ func (ch *Connection) PauseOnFlowControl() {
 	}
 }
 
+// not threadsafe
+func (ch *Connection) isClosed() bool {
+	return ch.flagged || ch.conn == nil || ch.conn.IsClosed() || ch.isShutdown()
+}
+
 func (ch *Connection) IsClosed() bool {
 	ch.mu.Lock()
 	defer ch.mu.Unlock()
 
 	// connection closed 							-> cannot access it
 	// connection not closed but shutdown triggered -> is closed
-	return ch.conn.IsClosed() || ch.isShutdown()
+	return ch.isClosed()
 }
 
 func (ch *Connection) Close() error {
@@ -196,6 +223,11 @@ func (ch *Connection) Close() error {
 func (ch *Connection) Error() error {
 	ch.mu.Lock()
 	defer ch.mu.Unlock()
+	return ch.error()
+}
+
+// not threadsafe
+func (ch *Connection) error() error {
 	var (
 		err error = nil
 	)
@@ -210,13 +242,70 @@ func (ch *Connection) Error() error {
 				// a library error
 				return ErrConnectionClosed
 			}
+			// only overwrite with the first error
 			if err == nil {
 				err = e
+			} else {
+				// flush all other errors after the first one
+				continue
 			}
 		default:
 			return err
 		}
 	}
+}
+
+// Recover tries to recover the connection until
+// a shutdown occurs via context cancelation.
+func (ch *Connection) Recover() error {
+	ch.mu.Lock()
+	defer ch.mu.Unlock()
+	return ch.recover()
+}
+
+func (ch *Connection) recover() error {
+	healthy := ch.error() == nil
+
+	if healthy && !ch.isClosed() {
+		ch.pauseOnFlowControl()
+		return nil
+	}
+
+	timer := time.NewTimer(0)
+	if !timer.Stop() {
+		<-timer.C
+	}
+	defer func() {
+		if !timer.Stop() {
+			<-timer.C
+		}
+	}()
+
+	for retry := 0; ; retry++ {
+		err := ch.connect()
+		if err != nil {
+			// reset to exponential backoff
+			timer.Reset(ch.errorBackoff(retry))
+			select {
+			case <-ch.catchShutdown():
+				// catch shutdown signal
+				return fmt.Errorf("connection recovery failed: %w", ErrPoolClosed)
+			case <-timer.C:
+				if !timer.Stop() {
+					<-timer.C
+				}
+				// retry after sleep
+				continue
+			}
+		}
+
+		// connection established successfully
+		break
+	}
+
+	ch.flagged = false
+
+	return nil
 }
 
 func (ch *Connection) catchShutdown() <-chan struct{} {

@@ -9,6 +9,7 @@ import (
 type connectionOption struct {
 	HeartbeatInterval time.Duration
 	ConnectionTimeout time.Duration
+	BackoffPolicy     BackoffFunc
 	Ctx               context.Context
 	TLSConfig         *tls.Config
 }
@@ -32,6 +33,13 @@ func ConnectionTimeout(timeout time.Duration) ConnectionOption {
 	}
 	return func(co *connectionOption) {
 		co.ConnectionTimeout = timeout
+	}
+}
+
+// ConnectionBackoffPolicy influences the sleep interval between connection recovery retries.
+func ConnectionBackoffPolicy(policy BackoffFunc) ConnectionOption {
+	return func(co *connectionOption) {
+		co.BackoffPolicy = policy
 	}
 }
 

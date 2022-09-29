@@ -6,7 +6,6 @@ import (
 	"sync"
 )
 
-// TODO: do we want a session pool OR a session factory which creates sessions on demand?
 type SessionPool struct {
 	pool *ConnectionPool
 
@@ -110,7 +109,7 @@ func (sp *SessionPool) recoverSession(session *Session) error {
 
 	// tries to recover session forever
 	for {
-		err := sp.pool.healConnection(session.conn) // uses pool internals
+		err := session.conn.Recover() // uses pool internals
 		if err != nil {
 			// upon shutdown this will fail
 			return fmt.Errorf("failed to recover session: %w", err)

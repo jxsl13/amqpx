@@ -16,19 +16,16 @@ type ConnectionPool struct {
 	name string
 	url  string
 
-	heartbeat    time.Duration
-	connTimeout  time.Duration
-	errorBackoff BackoffFunc
+	heartbeat   time.Duration
+	connTimeout time.Duration
 
 	size int
 
 	tls         *tls.Config
 	connections *queue.Queue
 
-	flaggedConns map[int64]bool
-	connID       int
+	connID int
 
-	mu     sync.RWMutex
 	ctx    context.Context
 	cancel context.CancelFunc
 }
@@ -46,8 +43,6 @@ func NewConnectionPool(connectUrl string, size int, options ...PoolOption) (*Con
 		Size: size,
 
 		Ctx: context.Background(),
-
-		BackoffPolicy: newDefaultBackoffPolicy(time.Second, 15*time.Second),
 
 		ConnHeartbeatInterval: 30 * time.Second,
 		ConnTimeout:           60 * time.Second,
@@ -78,16 +73,14 @@ func NewConnectionPool(connectUrl string, size int, options ...PoolOption) (*Con
 		name: option.Name,
 		url:  u.String(),
 
-		heartbeat:    option.ConnHeartbeatInterval,
-		connTimeout:  option.ConnTimeout,
-		errorBackoff: option.BackoffPolicy,
+		heartbeat:   option.ConnHeartbeatInterval,
+		connTimeout: option.ConnTimeout,
 
 		size:        option.Size,
 		tls:         option.TLSConfig,
 		connections: queue.New(int64(size)),
 
-		flaggedConns: make(map[int64]bool, size),
-		connID:       1, // connections ids that are not transient start from 1 - n, transient are always 0
+		connID: 1, // connections ids that are not transient start from 1 - n, transient are always 0
 
 		ctx:    ctx,
 		cancel: cancel,
@@ -132,7 +125,7 @@ func (cp *ConnectionPool) GetConnection() (*Connection, error) {
 		return nil, err
 	}
 
-	err = cp.healConnection(conn)
+	err = conn.Recover()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get connection: %w", err)
 	}
@@ -156,64 +149,12 @@ func (cp *ConnectionPool) getConnectionFromPool() (*Connection, error) {
 	return conn, nil
 }
 
-func (cp *ConnectionPool) healConnection(conn *Connection) error {
-
-	healthy := conn.Error() == nil
-
-	flagged := cp.isFlagged(conn.ID())
-
-	// Between these three states we do our best to determine that a connection is dead in the various lifecycles.
-	if flagged || !healthy || conn.IsClosed() {
-		return cp.recoverConnection(conn)
-	}
-
-	conn.PauseOnFlowControl()
-	return nil
-}
-
-func (cp *ConnectionPool) recoverConnection(conn *Connection) error {
-	timer := time.NewTimer(0)
-	if !timer.Stop() {
-		<-timer.C
-	}
-	defer func() {
-		if !timer.Stop() {
-			<-timer.C
-		}
-	}()
-
-	for retry := 0; ; retry++ {
-		err := conn.Connect()
-		if err != nil {
-			// reset to exponential backoff
-			timer.Reset(cp.errorBackoff(retry))
-			select {
-			case <-cp.catchShutdown():
-				// catch shutdown signal
-				return fmt.Errorf("connection recovery failed: %w", ErrPoolClosed)
-			case <-timer.C:
-				if !timer.Stop() {
-					<-timer.C
-				}
-				// retry after sleep
-				continue
-			}
-		}
-
-		// connection established successfully
-		break
-	}
-
-	cp.unflagConnection(conn.ID())
-	return nil
-}
-
 // ReturnConnection puts the connection back in the queue and flag it for error.
 // This helps maintain a Round Robin on Connections and their resources.
 func (cp *ConnectionPool) ReturnConnection(conn *Connection, flag bool) {
 
 	if flag {
-		cp.flagConnection(conn.ID())
+		conn.Flag(flag)
 	}
 
 	err := cp.connections.Put(conn)
@@ -223,31 +164,6 @@ func (cp *ConnectionPool) ReturnConnection(conn *Connection, flag bool) {
 		// -> close connection upon pool shutdown
 		conn.Close()
 	}
-}
-
-// UnflagConnection flags that connection as usable in the future.
-func (cp *ConnectionPool) unflagConnection(connectionID int64) {
-	cp.mu.Lock()
-	defer cp.mu.Unlock()
-	cp.flaggedConns[connectionID] = false
-}
-
-// FlagConnection flags that connection as non-usable in the future.
-func (cp *ConnectionPool) flagConnection(connectionID int64) {
-	cp.mu.Lock()
-	defer cp.mu.Unlock()
-	cp.flaggedConns[connectionID] = true
-}
-
-// isFlagged checks to see if the connection has been flagged for removal.
-func (cp *ConnectionPool) isFlagged(connectionID int64) bool {
-	cp.mu.RLock()
-	defer cp.mu.RUnlock()
-	if flagged, ok := cp.flaggedConns[connectionID]; ok {
-		return flagged
-	}
-
-	return false
 }
 
 // Close closes the connection pool.
@@ -276,8 +192,4 @@ func (cp *ConnectionPool) Close() {
 		}
 	}
 	wg.Wait()
-}
-
-func (cp *ConnectionPool) catchShutdown() <-chan struct{} {
-	return cp.ctx.Done()
 }
