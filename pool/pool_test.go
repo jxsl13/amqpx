@@ -6,9 +6,16 @@ import (
 
 	"github.com/jxsl13/amqpx/pool"
 	"github.com/stretchr/testify/assert"
+	"go.uber.org/goleak"
 )
 
+func TestMain(m *testing.M) {
+	goleak.VerifyTestMain(m)
+}
+
 func TestNewConnectionPool(t *testing.T) {
+	t.Parallel()
+
 	p, err := pool.NewConnectionPool("amqp://admin:password@localhost:5672", 200,
 		pool.WithName("TestNewConnectionPool"),
 	)
@@ -16,6 +23,7 @@ func TestNewConnectionPool(t *testing.T) {
 		assert.NoError(t, err)
 		return
 	}
+	defer p.Close()
 	var wg sync.WaitGroup
 
 	for i := 0; i < 200; i++ {

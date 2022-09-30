@@ -44,8 +44,8 @@ func NewConnectionPool(connectUrl string, size int, options ...PoolOption) (*Con
 
 		Ctx: context.Background(),
 
-		ConnHeartbeatInterval: 30 * time.Second,
-		ConnTimeout:           60 * time.Second,
+		ConnHeartbeatInterval: 15 * time.Second,
+		ConnTimeout:           30 * time.Second,
 		TLSConfig:             nil,
 
 		SessionAckable:    false,
@@ -111,8 +111,8 @@ func (cp *ConnectionPool) initConns() error {
 func (cp *ConnectionPool) deriveConnection(id int) (*Connection, error) {
 	name := fmt.Sprintf("%s-%d", cp.name, id)
 	return NewConnection(cp.url, name, int64(id),
-		ConnectionContext(cp.ctx),
-		ConnectionTimeout(cp.connTimeout),
+		ConnectionWithContext(cp.ctx),
+		ConnectionWithTimeout(cp.connTimeout),
 		ConnectionHeartbeatInterval(cp.heartbeat),
 		ConnectionWithTLS(cp.tls),
 	)
@@ -192,4 +192,5 @@ func (cp *ConnectionPool) Close() {
 		}
 	}
 	wg.Wait()
+	time.Sleep(cp.heartbeat)
 }

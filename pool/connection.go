@@ -41,8 +41,8 @@ type Connection struct {
 func NewConnection(connectUrl, name string, id int64, options ...ConnectionOption) (*Connection, error) {
 	// use sane defaults
 	option := connectionOption{
-		HeartbeatInterval: 30 * time.Second,
-		ConnectionTimeout: 60 * time.Second,
+		HeartbeatInterval: 15 * time.Second,
+		ConnectionTimeout: 30 * time.Second,
 		BackoffPolicy:     newDefaultBackoffPolicy(time.Second, 15*time.Second),
 		Ctx:               context.Background(),
 	}

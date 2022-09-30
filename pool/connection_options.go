@@ -26,8 +26,8 @@ func ConnectionHeartbeatInterval(interval time.Duration) ConnectionOption {
 	}
 }
 
-// ConnectionTimeout allows to set a custom connection timeout, that MUST be >= 1 * time.Second
-func ConnectionTimeout(timeout time.Duration) ConnectionOption {
+// ConnectionWithTimeout allows to set a custom connection timeout, that MUST be >= 1 * time.Second
+func ConnectionWithTimeout(timeout time.Duration) ConnectionOption {
 	if timeout < time.Second {
 		timeout = time.Second
 	}
@@ -36,15 +36,15 @@ func ConnectionTimeout(timeout time.Duration) ConnectionOption {
 	}
 }
 
-// ConnectionBackoffPolicy influences the sleep interval between connection recovery retries.
-func ConnectionBackoffPolicy(policy BackoffFunc) ConnectionOption {
+// ConnectionWithBackoffPolicy influences the sleep interval between connection recovery retries.
+func ConnectionWithBackoffPolicy(policy BackoffFunc) ConnectionOption {
 	return func(co *connectionOption) {
 		co.BackoffPolicy = policy
 	}
 }
 
-// ConnectionContext allows to set a custom connection timeout, that MUST be >= 1 * time.Second
-func ConnectionContext(ctx context.Context) ConnectionOption {
+// ConnectionWithContext allows to set a custom connection timeout, that MUST be >= 1 * time.Second
+func ConnectionWithContext(ctx context.Context) ConnectionOption {
 	if ctx == nil {
 		panic("nil context passed")
 	}

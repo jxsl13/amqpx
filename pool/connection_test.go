@@ -1,7 +1,6 @@
 package pool_test
 
 import (
-	"math/rand"
 	"sync"
 	"testing"
 	"time"
@@ -13,7 +12,6 @@ import (
 func TestNewConnection(t *testing.T) {
 	t.Parallel()
 
-	rand.Seed(time.Now().Unix())
 	var wg sync.WaitGroup
 
 	connections := 200
