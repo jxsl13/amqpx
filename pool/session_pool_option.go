@@ -12,16 +12,6 @@ type sessionPoolOption struct {
 
 type SessionPoolOption func(*sessionPoolOption)
 
-// WithContext allows to set a custom connection timeout, that MUST be >= 1 * time.Second
-func SessionPoolWithContext(ctx context.Context) SessionPoolOption {
-	if ctx == nil {
-		panic("nil context passed")
-	}
-	return func(po *sessionPoolOption) {
-		po.Ctx = ctx
-	}
-}
-
 // SessionPoolWithBufferSize allows to configurethe size of
 // the confirmation, error & blocker buffers of all sessions
 func SessionPoolWithBufferSize(size int) SessionPoolOption {
@@ -33,7 +23,7 @@ func SessionPoolWithBufferSize(size int) SessionPoolOption {
 	}
 }
 
-// SessionPoolWithAcks requires all messages from sessions to be acked.
+// SessionPoolWithRequiredAcks requires all messages from sessions to be acked.
 func SessionPoolWithRequiredAcks(requireAcks bool) SessionPoolOption {
 	return func(po *sessionPoolOption) {
 		po.RequireAcks = requireAcks

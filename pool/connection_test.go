@@ -5,15 +5,11 @@ import (
 	"testing"
 	"time"
 
-	"context"
-
 	"github.com/jxsl13/amqpx/pool"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestNewConnection(t *testing.T) {
-	t.Parallel()
-
 	var wg sync.WaitGroup
 
 	connections := 200
@@ -37,21 +33,4 @@ func TestNewConnection(t *testing.T) {
 	}
 
 	wg.Wait()
-}
-
-func TestNewConnectionContext(t *testing.T) {
-	t.Parallel()
-
-	ctx, cancel := context.WithCancel(context.Background())
-	c, err := pool.NewConnection(
-		"amqp://admin:password@localhost:5672",
-		"TestNewConnectionContext",
-		0,
-		pool.ConnectionWithContext(ctx),
-	)
-	assert.NoError(t, err)
-	time.Sleep(3 * time.Second)
-	cancel()
-	time.Sleep(3 * time.Second)
-	assert.ErrorIs(t, c.Error(), pool.ErrConnectionClosed)
 }

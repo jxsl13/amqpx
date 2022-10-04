@@ -29,18 +29,23 @@ func NewSessionPool(pool *ConnectionPool, size int, options ...SessionPoolOption
 	option := sessionPoolOption{
 		Size:        size,
 		RequireAcks: false,
-		BufferSize:  10,
-		Ctx:         pool.ctx,
+		BufferSize:  1,        // fault tolerance over throughput
+		Ctx:         pool.ctx, // derive context from parent
 	}
 
 	for _, o := range options {
 		o(&option)
 	}
 
+	return newSessionPoolFromOption(pool, option)
+}
+
+func newSessionPoolFromOption(pool *ConnectionPool, option sessionPoolOption) (*SessionPool, error) {
 	// decouple from parent context, in case we want to close this context ourselves.
 	ctx, cancel := context.WithCancel(option.Ctx)
 
 	sessionPool := &SessionPool{
+		pool:      pool,
 		sessionId: 1, // transient sessions get an id of 0 and pooled sessions are incremented, starting from 1
 
 		size:        option.Size,
@@ -109,13 +114,13 @@ func (sp *SessionPool) recoverSession(session *Session) error {
 
 	// tries to recover session forever
 	for {
-		err := session.conn.Recover() // uses pool internals
+		err := session.conn.Recover() // recovers connection with a backoff mechanism
 		if err != nil {
 			// upon shutdown this will fail
 			return fmt.Errorf("failed to recover session: %w", err)
 		}
 
-		// no backoff upon retry, because healConnection already retries
+		// no backoff upon retry, because Recover already retries
 		// with a backoff. Sessions should be instantly created on a healthy connection
 		err = session.Connect() // Creates a new channel and flushes internal buffers automatically.
 		if err != nil {
@@ -140,6 +145,7 @@ func (sp *SessionPool) Close() {
 SessionClose:
 	for {
 		select {
+		// flush sessions channel
 		case session := <-sp.sessions:
 			wg.Add(1)
 			go func(*Session) {
@@ -151,6 +157,7 @@ SessionClose:
 			break SessionClose
 		}
 	}
+
 	wg.Wait()
 }
 

@@ -2,195 +2,76 @@ package pool
 
 import (
 	"context"
-	"crypto/tls"
-	"fmt"
-	"net/url"
-	"sync"
 	"time"
-
-	"github.com/Workiva/go-datastructures/queue"
 )
 
-// ConnectionPool houses the pool of RabbitMQ connections.
-type ConnectionPool struct {
-	name string
-	url  string
-
-	heartbeat   time.Duration
-	connTimeout time.Duration
-
-	size int
-
-	tls         *tls.Config
-	connections *queue.Queue
-
-	connID int
-
-	ctx    context.Context
-	cancel context.CancelFunc
+type Pool struct {
+	cp *ConnectionPool
+	sp *SessionPool
 }
 
-// NewConnectionPool creates a new connection pool which has a maximum size it
-// can become and an idle size of connections that are always open.
-func NewConnectionPool(connectUrl string, size int, options ...PoolOption) (*ConnectionPool, error) {
+func New(connectUrl string, size int, options ...PoolOption) (*Pool, error) {
 	if size < 1 {
 		panic("max pool size is negative or 0")
 	}
 
+	ctx := context.Background()
+
 	// use sane defaults
 	option := poolOption{
-		Name: defaultAppName(),
-		Size: size,
+		cpo: connectionPoolOption{
+			Name: defaultAppName(),
+			Ctx:  ctx,
+			Size: maxi(1, size/2), // at least one connection
 
-		Ctx: context.Background(),
-
-		ConnHeartbeatInterval: 15 * time.Second,
-		ConnTimeout:           30 * time.Second,
-		TLSConfig:             nil,
-
-		SessionAckable:    false,
-		SessionBufferSize: 1, // fault tolerance over throughput
+			ConnHeartbeatInterval: 15 * time.Second,
+			ConnTimeout:           30 * time.Second,
+			TLSConfig:             nil,
+		},
+		spo: sessionPoolOption{
+			Size:        size,
+			RequireAcks: false,
+			BufferSize:  1,   // fault tolerance over throughput
+			Ctx:         nil, // initialized further below
+		},
 	}
 
-	// apply options
 	for _, o := range options {
 		o(&option)
 	}
 
-	u, err := url.Parse(connectUrl)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrInvalidConnectURL, err)
-	}
-
-	if option.TLSConfig != nil {
-		u.Scheme = "amqps"
-	}
-
-	// decouple from parent context, in case we want to close this context ourselves.
-	ctx, cancel := context.WithCancel(option.Ctx)
-
-	cp := &ConnectionPool{
-		name: option.Name,
-		url:  u.String(),
-
-		heartbeat:   option.ConnHeartbeatInterval,
-		connTimeout: option.ConnTimeout,
-
-		size:        option.Size,
-		tls:         option.TLSConfig,
-		connections: queue.New(int64(size)),
-
-		connID: 1, // connections ids that are not transient start from 1 - n, transient are always 0
-
-		ctx:    ctx,
-		cancel: cancel,
-	}
-
-	err = cp.initConns()
+	connPool, err := newConnectionPoolFromOption(connectUrl, option.cpo)
 	if err != nil {
 		return nil, err
 	}
 
-	return cp, nil
-}
+	// derive context from connection pool
+	option.spo.Ctx = connPool.ctx
 
-func (cp *ConnectionPool) initConns() error {
-	for cp.connID = 0; cp.connID < cp.size; cp.connID++ {
-		conn, err := cp.deriveConnection(cp.connID)
-		if err != nil {
-			return fmt.Errorf("%w: %v", ErrPoolInitializationFailed, err)
-		}
-
-		if err = cp.connections.Put(conn); err != nil {
-			return fmt.Errorf("%w: %v", ErrPoolInitializationFailed, err)
-		}
-	}
-	return nil
-}
-
-func (cp *ConnectionPool) deriveConnection(id int) (*Connection, error) {
-	name := fmt.Sprintf("%s-%d", cp.name, id)
-	return NewConnection(cp.url, name, int64(id),
-		ConnectionWithContext(cp.ctx),
-		ConnectionWithTimeout(cp.connTimeout),
-		ConnectionHeartbeatInterval(cp.heartbeat),
-		ConnectionWithTLS(cp.tls),
-	)
-}
-
-func (cp *ConnectionPool) GetConnection() (*Connection, error) {
-
-	conn, err := cp.getConnectionFromPool()
+	sessPool, err := newSessionPoolFromOption(connPool, option.spo)
 	if err != nil {
 		return nil, err
 	}
 
-	err = conn.Recover()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get connection: %w", err)
-	}
-
-	return conn, nil
+	return &Pool{
+		cp: connPool,
+		sp: sessPool,
+	}, nil
 }
 
-func (cp *ConnectionPool) getConnectionFromPool() (*Connection, error) {
-
-	// Pull from the queue.
-	// Pauses here indefinitely if the queue is empty.
-	objects, err := cp.connections.Get(1)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrPoolClosed, err)
-	}
-
-	conn, ok := objects[0].(*Connection)
-	if !ok {
-		panic("invalid type in queue")
-	}
-	return conn, nil
+func (p *Pool) Close() {
+	p.sp.Close()
+	p.cp.Close()
 }
 
-// ReturnConnection puts the connection back in the queue and flag it for error.
-// This helps maintain a Round Robin on Connections and their resources.
-func (cp *ConnectionPool) ReturnConnection(conn *Connection, flag bool) {
-
-	if flag {
-		conn.Flag(flag)
-	}
-
-	err := cp.connections.Put(conn)
-	if err != nil {
-		// queue was disposed of,
-		// indicating pool shutdown
-		// -> close connection upon pool shutdown
-		conn.Close()
-	}
+// GetSession returns a new session from the pool, only returns an error upon shutdown.
+func (p *Pool) GetSession() (*Session, error) {
+	return p.sp.GetSession()
 }
 
-// Close closes the connection pool.
-// Closes all connections and sessions that are currently known to the pool.
-// Any new connections or session requests will return an error.
-// Any returned sessions or connections will be closed properly.
-func (cp *ConnectionPool) Close() {
-
-	wg := &sync.WaitGroup{}
-
-	// close all connections
-	for !cp.connections.Empty() {
-		items := cp.connections.Dispose()
-
-		for _, item := range items {
-			conn, ok := item.(*Connection)
-			if !ok {
-				panic("item in connection queue is not a connection")
-			}
-
-			wg.Add(1)
-			go func(c *Connection) {
-				defer wg.Done()
-				c.Close()
-			}(conn)
-		}
-	}
-	wg.Wait()
-	time.Sleep(cp.heartbeat)
+// ReturnSession returns a Session back to the pool.
+// If the session was returned due to an error, erred should be set to true, otherwise
+// erred should be set to false.
+func (p *Pool) ReturnSession(session *Session, erred bool) (*Session, error) {
+	return p.sp.GetSession()
 }

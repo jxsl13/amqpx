@@ -10,7 +10,6 @@ import (
 )
 
 func TestNewSession(t *testing.T) {
-	t.Parallel()
 
 	c, err := pool.NewConnection("amqp://admin:password@localhost:5672", "TestNewSession", 1)
 	if err != nil {
