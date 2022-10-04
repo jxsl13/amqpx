@@ -75,3 +75,8 @@ func (p *Pool) GetSession() (*Session, error) {
 func (p *Pool) ReturnSession(session *Session, erred bool) (*Session, error) {
 	return p.sp.GetSession()
 }
+
+func (p *Pool) Context() context.Context {
+	// return child context because objects using this pool will rely on the session pool
+	return p.sp.ctx
+}
