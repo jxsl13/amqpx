@@ -193,5 +193,4 @@ func (cp *ConnectionPool) Close() {
 		}
 	}
 	wg.Wait()
-	time.Sleep(cp.heartbeat)
 }

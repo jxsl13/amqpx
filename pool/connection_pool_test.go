@@ -3,6 +3,7 @@ package pool_test
 import (
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/jxsl13/amqpx/pool"
 	"github.com/stretchr/testify/assert"
@@ -33,6 +34,7 @@ func TestNewConnectionPool(t *testing.T) {
 				assert.NoError(t, err)
 				return
 			}
+			time.Sleep(5 * time.Second)
 			p.ReturnConnection(c, false)
 		}()
 	}
