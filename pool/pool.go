@@ -10,9 +10,13 @@ type Pool struct {
 	sp *SessionPool
 }
 
-func New(connectUrl string, size int, options ...PoolOption) (*Pool, error) {
-	if size < 1 {
-		panic("max pool size is negative or 0")
+func New(connectUrl string, numConns, numSessions int, options ...PoolOption) (*Pool, error) {
+	if numConns < 1 {
+		panic("pool size is negative or 0")
+	}
+
+	if numSessions < 1 {
+		numSessions = numConns
 	}
 
 	ctx := context.Background()
@@ -22,17 +26,17 @@ func New(connectUrl string, size int, options ...PoolOption) (*Pool, error) {
 		cpo: connectionPoolOption{
 			Name: defaultAppName(),
 			Ctx:  ctx,
-			Size: maxi(1, size/2), // at least one connection
+			Size: numConns, // at least one connection
 
 			ConnHeartbeatInterval: 15 * time.Second,
 			ConnTimeout:           30 * time.Second,
 			TLSConfig:             nil,
 		},
 		spo: sessionPoolOption{
-			Size:        size,
-			RequireAcks: false,
-			BufferSize:  1,   // fault tolerance over throughput
-			Ctx:         nil, // initialized further below
+			Size:        numSessions,
+			Confirmable: false, // require publish confirmations
+			BufferSize:  1,     // fault tolerance over throughput
+			Ctx:         nil,   // initialized further below
 		},
 	}
 

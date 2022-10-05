@@ -59,9 +59,9 @@ func WithBufferSize(size int) PoolOption {
 	}
 }
 
-// WithRequiredAcks requires all messages from sessions to be acked.
-func WithRequiredAcks(requireAcks bool) PoolOption {
+// WithConfirms requires all messages from sessions to be acked.
+func WithConfirms(requirePublishConfirms bool) PoolOption {
 	return func(po *poolOption) {
-		SessionPoolWithRequiredAcks(requireAcks)(&po.spo)
+		SessionPoolWithConfirms(requirePublishConfirms)(&po.spo)
 	}
 }

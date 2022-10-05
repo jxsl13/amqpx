@@ -9,7 +9,7 @@ import (
 
 func TestNew(t *testing.T) {
 
-	p, err := pool.New("amqp://admin:password@localhost:5672", 10, pool.WithName("TestNew"))
+	p, err := pool.New("amqp://admin:password@localhost:5672", 10, 10, pool.WithName("TestNew"))
 	if err != nil {
 		assert.NoError(t, err)
 		return

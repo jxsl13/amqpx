@@ -13,7 +13,7 @@ type SessionPool struct {
 
 	size        int
 	bufferSize  int
-	requireAcks bool
+	confirmable bool
 	sessions    chan *Session
 
 	ctx    context.Context
@@ -28,7 +28,7 @@ func NewSessionPool(pool *ConnectionPool, size int, options ...SessionPoolOption
 	// use sane defaults
 	option := sessionPoolOption{
 		Size:        size,
-		RequireAcks: false,
+		Confirmable: false,
 		BufferSize:  1,        // fault tolerance over throughput
 		Ctx:         pool.ctx, // derive context from parent
 	}
@@ -50,7 +50,7 @@ func newSessionPoolFromOption(pool *ConnectionPool, option sessionPoolOption) (*
 
 		size:        option.Size,
 		bufferSize:  option.BufferSize,
-		requireAcks: option.RequireAcks,
+		confirmable: option.Confirmable,
 		sessions:    make(chan *Session, option.Size),
 
 		ctx:    ctx,
@@ -200,5 +200,6 @@ func (sp *SessionPool) deriveSession(conn *Connection, id int, cached bool) (*Se
 		SessionWithContext(sp.ctx),
 		SessionWithBufferSize(sp.size),
 		SessionWithCached(cached),
+		SessionWithConfirms(sp.confirmable),
 	)
 }

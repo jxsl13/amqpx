@@ -4,7 +4,7 @@ import "context"
 
 type sessionPoolOption struct {
 	Size        int
-	RequireAcks bool // whether messages require acks
+	Confirmable bool // whether published messages require confirmation awaiting
 	BufferSize  int  // size of the sessio internal confirmation and error buffers.
 
 	Ctx context.Context
@@ -23,9 +23,9 @@ func SessionPoolWithBufferSize(size int) SessionPoolOption {
 	}
 }
 
-// SessionPoolWithRequiredAcks requires all messages from sessions to be acked.
-func SessionPoolWithRequiredAcks(requireAcks bool) SessionPoolOption {
+// SessionPoolWithConfirms requires all messages from sessions to be acked.
+func SessionPoolWithConfirms(requirePublishConfirms bool) SessionPoolOption {
 	return func(po *sessionPoolOption) {
-		po.RequireAcks = requireAcks
+		po.Confirmable = requirePublishConfirms
 	}
 }

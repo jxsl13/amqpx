@@ -24,7 +24,7 @@ func (p *Publisher) Close() {
 	}
 }
 
-func NewPublisher(p *Pool, options ...PublisherOption) (*Publisher, error) {
+func NewPublisher(p *Pool, options ...PublisherOption) *Publisher {
 	if p == nil {
 		panic("nil pool passed")
 	}
@@ -52,15 +52,12 @@ func NewPublisher(p *Pool, options ...PublisherOption) (*Publisher, error) {
 		cancel: cancel,
 	}
 
-	// TODO: continue here
-
-	return pub, nil
+	return pub
 }
 
 func (p *Publisher) Publish(exchange string, routingKey string, mandatory bool, immediate bool, msg Publishing) error {
 
 	for {
-
 		err := p.publish(exchange, routingKey, mandatory, immediate, msg)
 		if err == nil {
 			return nil
@@ -68,7 +65,6 @@ func (p *Publisher) Publish(exchange string, routingKey string, mandatory bool, 
 			return err
 		}
 		// continue in any other error case
-
 	}
 }
 
