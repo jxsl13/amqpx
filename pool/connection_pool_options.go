@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/jxsl13/amqpx/logging"
 )
 
 type connectionPoolOption struct {
@@ -18,6 +20,8 @@ type connectionPoolOption struct {
 	ConnHeartbeatInterval time.Duration
 	ConnTimeout           time.Duration
 	TLSConfig             *tls.Config
+
+	Logger logging.Logger
 }
 
 type ConnectionPoolOption func(*connectionPoolOption)
@@ -27,6 +31,13 @@ func defaultAppName() string {
 	ext := filepath.Ext(appNameWithExt)
 	appNameWithoutExt := appNameWithExt[:len(appNameWithExt)-len(ext)]
 	return appNameWithoutExt
+}
+
+// ConnectionPoolWithLogger allows to set a custom logger.
+func ConnectionPoolWithLogger(logger logging.Logger) ConnectionPoolOption {
+	return func(po *connectionPoolOption) {
+		po.Logger = logger
+	}
 }
 
 // ConnectionPoolWithName gives all of your pooled connections a prefix name

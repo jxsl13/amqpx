@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Workiva/go-datastructures/queue"
+	"github.com/jxsl13/amqpx/logging"
 )
 
 // ConnectionPool houses the pool of RabbitMQ connections.
@@ -25,12 +26,12 @@ type ConnectionPool struct {
 	tls         *tls.Config
 	connections *queue.Queue
 
-	connID int
-
 	transientID atomic.Int64
 
 	ctx    context.Context
 	cancel context.CancelFunc
+
+	log logging.Logger
 }
 
 // NewConnectionPool creates a new connection pool which has a maximum size it
@@ -50,6 +51,8 @@ func NewConnectionPool(connectUrl string, size int, options ...ConnectionPoolOpt
 		ConnHeartbeatInterval: 15 * time.Second, // https://www.rabbitmq.com/heartbeats.html#false-positives
 		ConnTimeout:           30 * time.Second,
 		TLSConfig:             nil,
+
+		Logger: logging.NewNoOpLogger(),
 	}
 
 	// apply options
@@ -84,10 +87,10 @@ func newConnectionPoolFromOption(connectUrl string, option connectionPoolOption)
 		tls:         option.TLSConfig,
 		connections: queue.New(int64(option.Size)),
 
-		connID: 1, // connections ids that are not transient start from 1 - n, transient are always 0
-
 		ctx:    ctx,
 		cancel: cancel,
+
+		log: option.Logger,
 	}
 
 	err = cp.initCachedConns()
@@ -99,8 +102,8 @@ func newConnectionPoolFromOption(connectUrl string, option connectionPoolOption)
 }
 
 func (cp *ConnectionPool) initCachedConns() error {
-	for cp.connID = 0; cp.connID < cp.size; cp.connID++ {
-		conn, err := cp.deriveConnection(cp.connID, true)
+	for id := 0; id < cp.size; id++ {
+		conn, err := cp.deriveConnection(id, true)
 		if err != nil {
 			return fmt.Errorf("%w: %v", ErrPoolInitializationFailed, err)
 		}
