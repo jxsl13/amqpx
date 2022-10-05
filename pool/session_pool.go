@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"sync"
 	"sync/atomic"
+
+	"github.com/jxsl13/amqpx/logging"
 )
 
 type SessionPool struct {
@@ -19,6 +21,8 @@ type SessionPool struct {
 
 	ctx    context.Context
 	cancel context.CancelFunc
+
+	log logging.Logger
 }
 
 func NewSessionPool(pool *ConnectionPool, size int, options ...SessionPoolOption) (*SessionPool, error) {
@@ -30,20 +34,21 @@ func NewSessionPool(pool *ConnectionPool, size int, options ...SessionPoolOption
 	option := sessionPoolOption{
 		Size:        size,
 		Confirmable: false,
-		BufferSize:  1,        // fault tolerance over throughput
-		Ctx:         pool.ctx, // derive context from parent
+		BufferSize:  1, // fault tolerance over throughput
+		Logger:      logging.NewNoOpLogger(),
 	}
 
 	for _, o := range options {
 		o(&option)
 	}
 
-	return newSessionPoolFromOption(pool, option)
+	// derive context from connection pool
+	return newSessionPoolFromOption(pool, pool.ctx, option)
 }
 
-func newSessionPoolFromOption(pool *ConnectionPool, option sessionPoolOption) (*SessionPool, error) {
+func newSessionPoolFromOption(pool *ConnectionPool, ctx context.Context, option sessionPoolOption) (*SessionPool, error) {
 	// decouple from parent context, in case we want to close this context ourselves.
-	ctx, cancel := context.WithCancel(option.Ctx)
+	ctx, cancel := context.WithCancel(ctx)
 
 	sessionPool := &SessionPool{
 		pool: pool,
@@ -55,6 +60,8 @@ func newSessionPoolFromOption(pool *ConnectionPool, option sessionPoolOption) (*
 
 		ctx:    ctx,
 		cancel: cancel,
+
+		log: option.Logger,
 	}
 
 	err := sessionPool.initCachedSessions()
