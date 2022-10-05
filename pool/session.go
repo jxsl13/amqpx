@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/jxsl13/amqpx/logging"
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
@@ -27,6 +28,8 @@ type Session struct {
 	mu     sync.Mutex
 	ctx    context.Context
 	cancel context.CancelFunc
+
+	log logging.Logger
 }
 
 // NewSession wraps a connection and a channel in order tointeract with the message broker.
@@ -38,6 +41,7 @@ func NewSession(conn *Connection, id int64, options ...SessionOption) (*Session,
 
 	// default values
 	option := sessionOption{
+		Logger:      logging.NewNoOpLogger(),
 		Cached:      false,
 		Confirmable: false,
 		BufferSize:  100,
@@ -70,6 +74,8 @@ func NewSession(conn *Connection, id int64, options ...SessionOption) (*Session,
 
 		ctx:    ctx,
 		cancel: cancel,
+
+		log: option.Logger,
 	}
 
 	err := session.Connect()

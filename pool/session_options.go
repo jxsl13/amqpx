@@ -2,9 +2,12 @@ package pool
 
 import (
 	"context"
+
+	"github.com/jxsl13/amqpx/logging"
 )
 
 type sessionOption struct {
+	Logger        logging.Logger
 	Cached        bool
 	Confirmable   bool
 	BufferSize    int
@@ -13,6 +16,14 @@ type sessionOption struct {
 }
 
 type SessionOption func(*sessionOption)
+
+// SessionWithLogger allows to set a logger.
+// By default no logger is set.
+func SessionWithLogger(logger logging.Logger) SessionOption {
+	return func(so *sessionOption) {
+		so.Logger = logger
+	}
+}
 
 // SessionWithContext allows to set a custom session context that might trigger a shutdown
 func SessionWithContext(ctx context.Context) SessionOption {
