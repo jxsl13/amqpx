@@ -2,20 +2,18 @@ package pool
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sync"
-	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
 // Session is
 type Session struct {
-	id         int64
-	cached     bool
-	ackable    bool
-	bufferSize int
+	id          int64
+	cached      bool
+	confirmable bool
+	bufferSize  int
 
 	channel  *amqp.Channel
 	confirms chan Confirmation
@@ -39,9 +37,9 @@ func NewSession(conn *Connection, id int64, options ...SessionOption) (*Session,
 
 	// default values
 	option := sessionOption{
-		Cached:     false,
-		Ackable:    false,
-		BufferSize: 100,
+		Cached:      false,
+		Confirmable: false,
+		BufferSize:  100,
 		// derive context from connection, as we are derived from the connection
 		// so in case the connection is closed, we are closed as well.
 		Ctx: conn.ctx,
@@ -55,10 +53,10 @@ func NewSession(conn *Connection, id int64, options ...SessionOption) (*Session,
 	ctx, cancel := context.WithCancel(option.Ctx)
 
 	session := &Session{
-		id:         id,
-		cached:     option.Cached,
-		ackable:    option.Ackable,
-		bufferSize: option.BufferSize,
+		id:          id,
+		cached:      option.Cached,
+		confirmable: option.Confirmable,
+		bufferSize:  option.BufferSize,
 
 		consumers: map[string]bool{},
 		channel:   nil, // will be created below
@@ -124,7 +122,7 @@ func (s *Session) Connect() (err error) {
 		return fmt.Errorf("%w: %v", ErrConnectionFailed, err)
 	}
 
-	if s.ackable {
+	if s.confirmable {
 		s.confirms = make(chan amqp.Confirmation, s.bufferSize)
 		channel.NotifyPublish(s.confirms)
 
@@ -145,18 +143,14 @@ func (s *Session) Connect() (err error) {
 }
 
 // AwaitConfirm tries to await a confirmation from the broker for a published message
-// Returns the confirmation delivery tag. Make sure to check if your publishing and confirmation tag are equal.
-// You may check for ErrNack in order to
-func (s *Session) AwaitConfirm(expectedTag DeliveryTag, timeout time.Duration) error {
+// You may check for ErrNack in order to see whether the broker rejected the message temporatily.
+func (s *Session) AwaitConfirm(ctx context.Context, expectedTag DeliveryTag) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if !s.ackable {
+	if !s.confirmable {
 		return ErrNoConfirms
 	}
-
-	ctx, cancel := context.WithTimeout(s.ctx, timeout)
-	defer cancel()
 
 	select {
 	case confirm, ok := <-s.confirms:
@@ -177,11 +171,10 @@ func (s *Session) AwaitConfirm(expectedTag DeliveryTag, timeout time.Duration) e
 		return nil
 	case <-ctx.Done():
 		err := ctx.Err()
-		if errors.Is(err, context.Canceled) {
-			// shutdown
-			return ErrClosed
-		}
-		return ctx.Err()
+		return fmt.Errorf("await context %w: %v", ErrClosed, err)
+	case <-s.ctx.Done():
+		err := ctx.Err()
+		return fmt.Errorf("session %w: %v", ErrClosed, err)
 	}
 }
 
@@ -198,16 +191,16 @@ func (s *Session) AwaitConfirm(expectedTag DeliveryTag, timeout time.Duration) e
 // The way to ensure that all publishings reach the server is to add a listener to Channel.NotifyPublish and put the channel in confirm mode with Channel.Confirm.
 // Publishing delivery tags and their corresponding confirmations start at 1. Exit when all publishings are confirmed.
 // When Publish does not return an error and the channel is in confirm mode, the internal counter for DeliveryTags with the first confirmation starts at 1.
-func (s *Session) Publish(exchange string, routingKey string, mandatory bool, immediate bool, msg Publishing) (tag DeliveryTag, err error) {
+func (s *Session) Publish(ctx context.Context, exchange string, routingKey string, mandatory bool, immediate bool, msg Publishing) (tag DeliveryTag, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	tag = 0
-	if s.ackable {
+	if s.confirmable {
 		tag = s.channel.GetNextPublishSeqNo()
 	}
 
-	err = s.channel.PublishWithContext(s.ctx, exchange, routingKey, mandatory, immediate, msg)
+	err = s.channel.PublishWithContext(ctx, exchange, routingKey, mandatory, immediate, msg)
 	if err != nil {
 		return 0, err
 	}
@@ -606,6 +599,11 @@ func (s *Session) ID() int64 {
 // IsCached returns true in case this session is supposed to be returned to a session pool.
 func (s *Session) IsCached() bool {
 	return s.cached
+}
+
+// IsConfirmable returns true in case this session requires that after Publishing a message you also MUST Await its confirmation
+func (s *Session) IsConfirmable() bool {
+	return s.confirmable
 }
 
 func (s *Session) catchShutdown() <-chan struct{} {

@@ -1,6 +1,7 @@
 package pool_test
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"testing"
@@ -26,7 +27,7 @@ func TestNewSession(t *testing.T) {
 	for id := 0; id < sessions; id++ {
 		go func(id int64) {
 			defer wg.Done()
-			s, err := pool.NewSession(c, id, pool.SessionWithAckableMessages(true))
+			s, err := pool.NewSession(c, id, pool.SessionWithConfirms(true))
 			if err != nil {
 				assert.NoError(t, err)
 				return
@@ -88,7 +89,11 @@ func TestNewSession(t *testing.T) {
 			}(message)
 
 			time.Sleep(5 * time.Second)
-			tag, err := s.Publish(exchangeName, "", true, false, pool.Publishing{
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			tag, err := s.Publish(ctx, exchangeName, "", true, false, pool.Publishing{
 				ContentType: "application/json",
 				Body:        []byte(message),
 			})
@@ -97,7 +102,7 @@ func TestNewSession(t *testing.T) {
 				return
 			}
 
-			err = s.AwaitConfirm(tag, 5*time.Second)
+			err = s.AwaitConfirm(ctx, tag)
 			if err != nil {
 				assert.NoError(t, err)
 				return

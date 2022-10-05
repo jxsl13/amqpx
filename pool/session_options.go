@@ -5,10 +5,10 @@ import (
 )
 
 type sessionOption struct {
-	Cached     bool
-	Ackable    bool
-	BufferSize int
-	Ctx        context.Context
+	Cached      bool
+	Confirmable bool
+	BufferSize  int
+	Ctx         context.Context
 }
 
 type SessionOption func(*sessionOption)
@@ -33,9 +33,9 @@ func SessionWithCached(cached bool) SessionOption {
 }
 
 // SessionContext allows enable or explicitly disable message acknowledgements (acks)
-func SessionWithAckableMessages(ackable bool) SessionOption {
+func SessionWithConfirms(requiresPublishConfirms bool) SessionOption {
 	return func(so *sessionOption) {
-		so.Ackable = ackable
+		so.Confirmable = requiresPublishConfirms
 	}
 }
 
