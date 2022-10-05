@@ -34,7 +34,7 @@ type Session struct {
 // By default the context of the parent connection is used for cancellation.
 func NewSession(conn *Connection, id int64, options ...SessionOption) (*Session, error) {
 	if conn.IsClosed() {
-		return nil, ErrConnectionClosed
+		return nil, ErrClosed
 	}
 
 	// default values
@@ -116,7 +116,7 @@ func (s *Session) Connect() (err error) {
 
 	if s.conn.IsClosed() {
 		// do not reconnect connection explicitly
-		return ErrConnectionClosed
+		return ErrClosed
 	}
 
 	channel, err := s.conn.conn.Channel()
@@ -161,7 +161,7 @@ func (s *Session) AwaitConfirm(expectedTag DeliveryTag, timeout time.Duration) e
 	select {
 	case confirm, ok := <-s.confirms:
 		if !ok {
-			return ErrConnectionClosed
+			return ErrClosed
 		}
 		if !confirm.Ack {
 
@@ -179,7 +179,7 @@ func (s *Session) AwaitConfirm(expectedTag DeliveryTag, timeout time.Duration) e
 		err := ctx.Err()
 		if errors.Is(err, context.Canceled) {
 			// shutdown
-			return ErrConnectionClosed
+			return ErrClosed
 		}
 		return ctx.Err()
 	}

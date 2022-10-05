@@ -70,10 +70,10 @@ func newSessionPoolFromOption(pool *ConnectionPool, option sessionPoolOption) (*
 func (sp *SessionPool) GetSession() (*Session, error) {
 	select {
 	case <-sp.catchShutdown():
-		return nil, ErrPoolClosed
+		return nil, ErrClosed
 	case session, ok := <-sp.sessions:
 		if !ok {
-			return nil, fmt.Errorf("failed to get session: %w", ErrPoolClosed)
+			return nil, fmt.Errorf("failed to get session: %w", ErrClosed)
 		}
 		return session, nil
 	}

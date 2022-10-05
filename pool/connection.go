@@ -237,13 +237,13 @@ func (ch *Connection) error() error {
 	for {
 		select {
 		case <-ch.catchShutdown():
-			return ErrConnectionClosed
+			return fmt.Errorf("connection %w", ErrClosed)
 		case e, ok := <-ch.errors:
 			if !ok {
 				// because the amqp library might close this
 				// channel, we asume that closing was done due to
 				// a library error
-				return ErrConnectionClosed
+				return fmt.Errorf("connection and errors channel %w", ErrClosed)
 			}
 			// only overwrite with the first error
 			if err == nil {
@@ -292,7 +292,7 @@ func (ch *Connection) recover() error {
 			select {
 			case <-ch.catchShutdown():
 				// catch shutdown signal
-				return fmt.Errorf("connection recovery failed: %w", ErrPoolClosed)
+				return fmt.Errorf("connection recovery failed: connection %w", ErrClosed)
 			case <-timer.C:
 				if !timer.Stop() {
 					<-timer.C

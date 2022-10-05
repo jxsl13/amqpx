@@ -72,8 +72,8 @@ func (p *Pool) GetSession() (*Session, error) {
 // ReturnSession returns a Session back to the pool.
 // If the session was returned due to an error, erred should be set to true, otherwise
 // erred should be set to false.
-func (p *Pool) ReturnSession(session *Session, erred bool) (*Session, error) {
-	return p.sp.GetSession()
+func (p *Pool) ReturnSession(session *Session, erred bool) {
+	p.sp.ReturnSession(session, erred)
 }
 
 func (p *Pool) Context() context.Context {

@@ -140,7 +140,7 @@ func (cp *ConnectionPool) getConnectionFromPool() (*Connection, error) {
 	// Pauses here indefinitely if the queue is empty.
 	objects, err := cp.connections.Get(1)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrPoolClosed, err)
+		return nil, fmt.Errorf("connection pool %w: %v", ErrClosed, err)
 	}
 
 	conn, ok := objects[0].(*Connection)
