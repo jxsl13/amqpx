@@ -100,6 +100,18 @@ func NewConnection(connectUrl, name string, options ...ConnectionOption) (*Conne
 	return conn, nil
 }
 
+func (ch *Connection) info(a ...any) {
+	ch.log.WithField("connection", ch.Name()).Info(a...)
+}
+
+func (ch *Connection) warn(err error, a ...any) {
+	ch.log.WithField("connection", ch.Name()).WithField("error", err.Error()).Warn(a...)
+}
+
+func (ch *Connection) debug(a ...any) {
+	ch.log.WithField("connection", ch.Name()).Debug(a...)
+}
+
 // Flag flags the connection as broken which must be recovered.
 // A flagged connection implies a closed connection.
 // Flagging of a connectioncan only be undone by Recover-ing the connection.
@@ -128,6 +140,7 @@ func (ch *Connection) connect() error {
 		return nil
 	}
 
+	ch.info("connecting...")
 	amqpConn, err := amqp.DialConfig(ch.url,
 		amqp.Config{
 			Heartbeat:       ch.heartbeat,
@@ -141,6 +154,7 @@ func (ch *Connection) connect() error {
 		return fmt.Errorf("%w: %v", ErrConnectionFailed, err)
 	}
 
+	ch.info("connected.")
 	// override upon reconnect
 	ch.conn = amqpConn
 	ch.errors = make(chan *amqp.Error, 10)
@@ -175,11 +189,15 @@ func (ch *Connection) pauseOnFlowControl() {
 	for !ch.isClosed() {
 
 		select {
-		case blocker := <-ch.blockers: // Check for flow control issues.
+		case blocker, ok := <-ch.blockers: // Check for flow control issues.
+			if !ok {
+				return
+			}
 			if !blocker.Active {
 				return
 			}
 
+			ch.info("pausing on flow control")
 			if !timer.Stop() {
 				<-timer.C
 			}
@@ -212,9 +230,18 @@ func (ch *Connection) IsClosed() bool {
 	return ch.isClosed()
 }
 
-func (ch *Connection) Close() error {
+func (ch *Connection) Close() (err error) {
 	ch.mu.Lock()
 	defer ch.mu.Unlock()
+
+	ch.info("closing...")
+	defer func() {
+		if err != nil {
+			ch.warn(err, "closed.")
+		} else {
+			ch.info("closed.")
+		}
+	}()
 
 	ch.cancel() // close derived context
 	if ch.conn != nil && !ch.conn.IsClosed() {
@@ -287,6 +314,7 @@ func (ch *Connection) recover() error {
 		}
 	}()
 
+	ch.info("recovering")
 	for retry := 0; ; retry++ {
 		err := ch.connect()
 		if err != nil {
@@ -311,6 +339,7 @@ func (ch *Connection) recover() error {
 
 	ch.flagged = false
 
+	ch.info("recovered.")
 	return nil
 }
 

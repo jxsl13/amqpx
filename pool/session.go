@@ -89,10 +89,18 @@ func NewSession(conn *Connection, name string, options ...SessionOption) (*Sessi
 // Do not use this method in case you have acquired the session
 // from a connection pool.
 // Use the ConnectionPool.ResurnSession method in order to return the session.
-func (s *Session) Close() error {
+func (s *Session) Close() (err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	s.info("closing...")
+	defer func() {
+		if err != nil {
+			s.warn(err, "closed.")
+		} else {
+			s.info("closed.")
+		}
+	}()
 	s.cancel()
 	if s.channel == nil || s.channel.IsClosed() {
 		return nil
@@ -113,7 +121,7 @@ func (s *Session) Close() error {
 }
 
 func (s *Session) Name() string {
-	return s.conn.Name()
+	return s.name
 }
 
 // Connect tries to create (or re-create) the channel from the Connection it is derived from.
@@ -650,4 +658,16 @@ func (s *Session) IsConfirmable() bool {
 func (s *Session) catchShutdown() <-chan struct{} {
 	// no locking because
 	return s.ctx.Done()
+}
+
+func (s *Session) info(a ...any) {
+	s.log.WithField("connection", s.conn.Name()).WithField("session", s.Name()).Info(a...)
+}
+
+func (s *Session) warn(err error, a ...any) {
+	s.log.WithField("connection", s.conn.Name()).WithField("session", s.Name()).WithField("error", err.Error()).Warn(a...)
+}
+
+func (s *Session) debug(a ...any) {
+	s.log.WithField("connection", s.conn.Name()).WithField("session", s.Name()).Debug(a...)
 }

@@ -63,7 +63,7 @@ func NewConnectionPool(connectUrl string, size int, options ...ConnectionPoolOpt
 	return newConnectionPoolFromOption(connectUrl, option)
 }
 
-func newConnectionPoolFromOption(connectUrl string, option connectionPoolOption) (*ConnectionPool, error) {
+func newConnectionPoolFromOption(connectUrl string, option connectionPoolOption) (cp *ConnectionPool, err error) {
 	u, err := url.Parse(connectUrl)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalidConnectURL, err)
@@ -76,7 +76,7 @@ func newConnectionPoolFromOption(connectUrl string, option connectionPoolOption)
 	// decouple from parent context, in case we want to close this context ourselves.
 	ctx, cancel := context.WithCancel(option.Ctx)
 
-	cp := &ConnectionPool{
+	cp = &ConnectionPool{
 		name: option.Name,
 		url:  u.String(),
 
@@ -92,6 +92,15 @@ func newConnectionPoolFromOption(connectUrl string, option connectionPoolOption)
 
 		log: option.Logger,
 	}
+
+	cp.info("initializing pool connections")
+	defer func() {
+		if err != nil {
+			cp.error(err, "failed to initialize pool connections")
+		} else {
+			cp.info("initialized.")
+		}
+	}()
 
 	err = cp.initCachedConns()
 	if err != nil {
@@ -212,6 +221,9 @@ func (cp *ConnectionPool) ReturnConnection(conn *Connection, flag bool) {
 // Any returned sessions or connections will be closed properly.
 func (cp *ConnectionPool) Close() {
 
+	cp.info("closing...")
+	defer cp.info("closed.")
+
 	wg := &sync.WaitGroup{}
 
 	// close all connections
@@ -232,4 +244,20 @@ func (cp *ConnectionPool) Close() {
 		}
 	}
 	wg.Wait()
+}
+
+func (cp *ConnectionPool) info(a ...any) {
+	cp.log.WithField("connectionPool", cp.name).Info(a...)
+}
+
+func (cp *ConnectionPool) warn(err error, a ...any) {
+	cp.log.WithField("connectionPool", cp.name).WithField("error", err.Error()).Warn(a...)
+}
+
+func (cp *ConnectionPool) error(err error, a ...any) {
+	cp.log.WithField("connectionPool", cp.name).WithField("error", err.Error()).Error(a...)
+}
+
+func (cp *ConnectionPool) debug(a ...any) {
+	cp.log.WithField("connectionPool", cp.name).Debug(a...)
 }

@@ -46,11 +46,11 @@ func NewSessionPool(pool *ConnectionPool, size int, options ...SessionPoolOption
 	return newSessionPoolFromOption(pool, pool.ctx, option)
 }
 
-func newSessionPoolFromOption(pool *ConnectionPool, ctx context.Context, option sessionPoolOption) (*SessionPool, error) {
+func newSessionPoolFromOption(pool *ConnectionPool, ctx context.Context, option sessionPoolOption) (sp *SessionPool, err error) {
 	// decouple from parent context, in case we want to close this context ourselves.
 	ctx, cancel := context.WithCancel(ctx)
 
-	sessionPool := &SessionPool{
+	sp = &SessionPool{
 		pool: pool,
 
 		size:        option.Size,
@@ -64,12 +64,21 @@ func newSessionPoolFromOption(pool *ConnectionPool, ctx context.Context, option 
 		log: option.Logger,
 	}
 
-	err := sessionPool.initCachedSessions()
+	sp.info("initializing session pool")
+	defer func() {
+		if err != nil {
+			sp.error(err, "initialization failed.")
+		} else {
+			sp.info("initialized.")
+		}
+	}()
+
+	err = sp.initCachedSessions()
 	if err != nil {
 		return nil, err
 	}
 
-	return sessionPool, nil
+	return sp, nil
 }
 
 // Size returns the size of the session pool which indicate sthe number of available cached sessions.
@@ -148,6 +157,9 @@ func (sp *SessionPool) catchShutdown() <-chan struct{} {
 // Closes the session pool with all of its sessions
 func (sp *SessionPool) Close() {
 
+	sp.info("closing session pool...")
+	defer sp.info("closed.")
+
 	wg := &sync.WaitGroup{}
 
 	// close all sessions
@@ -211,4 +223,20 @@ func (sp *SessionPool) deriveSession(conn *Connection, id int, cached bool) (*Se
 		SessionWithCached(cached),
 		SessionWithConfirms(sp.confirmable),
 	)
+}
+
+func (sp *SessionPool) info(a ...any) {
+	sp.log.WithField("sessionPool", sp.pool.name).Info(a...)
+}
+
+func (sp *SessionPool) warn(err error, a ...any) {
+	sp.log.WithField("sessionPool", sp.pool.name).WithField("error", err.Error()).Warn(a...)
+}
+
+func (sp *SessionPool) error(err error, a ...any) {
+	sp.log.WithField("sessionPool", sp.pool.name).WithField("error", err.Error()).Error(a...)
+}
+
+func (sp *SessionPool) debug(a ...any) {
+	sp.log.WithField("sessionPool", sp.pool.name).Debug(a...)
 }
