@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/tls"
 	"time"
+
+	"github.com/jxsl13/amqpx/logging"
 )
 
 type poolOption struct {
@@ -20,6 +22,14 @@ func WithName(name string) PoolOption {
 	}
 	return func(po *poolOption) {
 		ConnectionPoolWithName(name)(&po.cpo)
+	}
+}
+
+// WithLogger allows to set a custom logger for the connection AND session pool
+func WithLogger(logger logging.Logger) PoolOption {
+	return func(po *poolOption) {
+		ConnectionPoolWithLogger(logger)(&po.cpo)
+		SessionPoolWithLogger(logger)(&po.spo)
 	}
 }
 

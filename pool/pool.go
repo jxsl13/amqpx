@@ -3,6 +3,8 @@ package pool
 import (
 	"context"
 	"time"
+
+	"github.com/jxsl13/amqpx/logging"
 )
 
 type Pool struct {
@@ -21,6 +23,8 @@ func New(connectUrl string, numConns, numSessions int, options ...PoolOption) (*
 
 	ctx := context.Background()
 
+	logger := logging.NewNoOpLogger()
+
 	// use sane defaults
 	option := poolOption{
 		cpo: connectionPoolOption{
@@ -31,12 +35,15 @@ func New(connectUrl string, numConns, numSessions int, options ...PoolOption) (*
 			ConnHeartbeatInterval: 15 * time.Second,
 			ConnTimeout:           30 * time.Second,
 			TLSConfig:             nil,
+
+			Logger: logger,
 		},
 		spo: sessionPoolOption{
 			Size:        numSessions,
 			Confirmable: false, // require publish confirmations
 			BufferSize:  1,     // fault tolerance over throughput
-			Ctx:         nil,   // initialized further below
+
+			Logger: logger,
 		},
 	}
 
@@ -50,9 +57,7 @@ func New(connectUrl string, numConns, numSessions int, options ...PoolOption) (*
 	}
 
 	// derive context from connection pool
-	option.spo.Ctx = connPool.ctx
-
-	sessPool, err := newSessionPoolFromOption(connPool, option.spo)
+	sessPool, err := newSessionPoolFromOption(connPool, connPool.ctx, option.spo)
 	if err != nil {
 		return nil, err
 	}
