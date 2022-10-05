@@ -101,7 +101,7 @@ func (sp *SessionPool) GetTransientSession(ctx context.Context) (*Session, error
 	}
 
 	transientId := sp.transientID.Add(1)
-	return NewSession(conn, transientId,
+	return NewSession(conn, fmt.Sprintf("%s-transient-%d", conn.Name(), transientId),
 		SessionWithContext(ctx),
 		SessionWithBufferSize(sp.size),
 		SessionWithConfirms(sp.confirmable),
@@ -205,7 +205,7 @@ func (sp *SessionPool) initCachedSession(id int) (*Session, error) {
 }
 
 func (sp *SessionPool) deriveSession(conn *Connection, id int, cached bool) (*Session, error) {
-	return NewSession(conn, int64(id),
+	return NewSession(conn, fmt.Sprintf("%s-cached-%d", conn.Name(), id),
 		SessionWithContext(sp.ctx),
 		SessionWithBufferSize(sp.size),
 		SessionWithCached(cached),

@@ -15,9 +15,9 @@ import (
 
 // Connection is an internal representation of amqp.Connection.
 type Connection struct {
-	url     string
-	name    string
-	id      int64
+	url  string
+	name string
+
 	cached  bool
 	flagged bool // whether an error occurred on this connection or not, indicating the connectionmust be recovered
 
@@ -42,7 +42,7 @@ type Connection struct {
 
 // NewConnection creates a connection wrapper.
 // name: unique connection name
-func NewConnection(connectUrl, name string, id int64, options ...ConnectionOption) (*Connection, error) {
+func NewConnection(connectUrl, name string, options ...ConnectionOption) (*Connection, error) {
 	// use sane defaults
 	option := connectionOption{
 		Logger:            logging.NewNoOpLogger(),
@@ -74,7 +74,6 @@ func NewConnection(connectUrl, name string, id int64, options ...ConnectionOptio
 	conn := &Connection{
 		url:     u.String(),
 		name:    name,
-		id:      id,
 		cached:  option.Cached,
 		flagged: false,
 		tls:     option.TLSConfig,
@@ -99,11 +98,6 @@ func NewConnection(connectUrl, name string, id int64, options ...ConnectionOptio
 		return nil, err
 	}
 	return conn, nil
-}
-
-func (ch *Connection) ID() int64 {
-	// no mutex lock, as we do read only the id and write only upon initialization
-	return ch.id
 }
 
 // Flag flags the connection as broken which must be recovered.
@@ -323,6 +317,11 @@ func (ch *Connection) recover() error {
 // IsCached returns true in case this session is supposed to be returned to a session pool.
 func (c *Connection) IsCached() bool {
 	return c.cached
+}
+
+// Name returns the name of the connection
+func (c *Connection) Name() string {
+	return c.name
 }
 
 func (ch *Connection) catchShutdown() <-chan struct{} {

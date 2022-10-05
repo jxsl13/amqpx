@@ -13,7 +13,7 @@ import (
 
 func TestNewSession(t *testing.T) {
 
-	c, err := pool.NewConnection("amqp://admin:password@localhost:5672", "TestNewSession", 1)
+	c, err := pool.NewConnection("amqp://admin:password@localhost:5672", "TestNewSession")
 	if err != nil {
 		assert.NoError(t, err)
 		return
@@ -27,7 +27,7 @@ func TestNewSession(t *testing.T) {
 	for id := 0; id < sessions; id++ {
 		go func(id int64) {
 			defer wg.Done()
-			s, err := pool.NewSession(c, id, pool.SessionWithConfirms(true))
+			s, err := pool.NewSession(c, fmt.Sprintf("TestNewSession-%d", id), pool.SessionWithConfirms(true))
 			if err != nil {
 				assert.NoError(t, err)
 				return

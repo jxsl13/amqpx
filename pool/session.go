@@ -11,7 +11,7 @@ import (
 
 // Session is
 type Session struct {
-	id          int64
+	name        string
 	cached      bool
 	confirmable bool
 	bufferSize  int
@@ -34,7 +34,7 @@ type Session struct {
 
 // NewSession wraps a connection and a channel in order tointeract with the message broker.
 // By default the context of the parent connection is used for cancellation.
-func NewSession(conn *Connection, id int64, options ...SessionOption) (*Session, error) {
+func NewSession(conn *Connection, name string, options ...SessionOption) (*Session, error) {
 	if conn.IsClosed() {
 		return nil, ErrClosed
 	}
@@ -59,7 +59,7 @@ func NewSession(conn *Connection, id int64, options ...SessionOption) (*Session,
 	ctx, cancel := context.WithCancel(option.Ctx)
 
 	session := &Session{
-		id:          id,
+		name:        name,
 		cached:      option.Cached,
 		confirmable: option.Confirmable,
 		bufferSize:  option.BufferSize,
@@ -110,6 +110,10 @@ func (s *Session) Close() error {
 	}
 
 	return s.channel.Close()
+}
+
+func (s *Session) Name() string {
+	return s.conn.Name()
 }
 
 // Connect tries to create (or re-create) the channel from the Connection it is derived from.
@@ -631,11 +635,6 @@ flush:
 		}
 	}
 	return confirms
-}
-
-func (s *Session) ID() int64 {
-	// read only property after initialization
-	return s.id
 }
 
 // IsCached returns true in case this session is supposed to be returned to a session pool.

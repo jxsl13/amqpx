@@ -1,6 +1,7 @@
 package pool_test
 
 import (
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -18,7 +19,7 @@ func TestNewConnection(t *testing.T) {
 		go func(id int64) {
 			defer wg.Done()
 
-			c, err := pool.NewConnection("amqp://admin:password@localhost:5672", "TestNewConnection", id)
+			c, err := pool.NewConnection("amqp://admin:password@localhost:5672", fmt.Sprintf("TestNewConnection-%d", id))
 			if err != nil {
 				assert.NoError(t, err)
 				return
