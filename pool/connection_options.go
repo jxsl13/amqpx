@@ -4,9 +4,12 @@ import (
 	"context"
 	"crypto/tls"
 	"time"
+
+	"github.com/jxsl13/amqpx/logging"
 )
 
 type connectionOption struct {
+	Logger            logging.Logger
 	Cached            bool
 	HeartbeatInterval time.Duration
 	ConnectionTimeout time.Duration
@@ -16,6 +19,13 @@ type connectionOption struct {
 }
 
 type ConnectionOption func(*connectionOption)
+
+// ConnectionWithLogger allows to set a logger. By default no logger is set.
+func ConnectionWithLogger(logger logging.Logger) ConnectionOption {
+	return func(co *connectionOption) {
+		co.Logger = logger
+	}
+}
 
 // ConnectionHeartbeatInterval allows to set a custom heartbeat interval, that MUST be >= 1 * time.Second
 func ConnectionWithHeartbeatInterval(interval time.Duration) ConnectionOption {

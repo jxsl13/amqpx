@@ -9,6 +9,7 @@ import (
 
 	"net/url"
 
+	"github.com/jxsl13/amqpx/logging"
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
@@ -35,6 +36,8 @@ type Connection struct {
 	mu     sync.Mutex
 	ctx    context.Context
 	cancel context.CancelFunc
+
+	log logging.Logger
 }
 
 // NewConnection creates a connection wrapper.
@@ -42,6 +45,7 @@ type Connection struct {
 func NewConnection(connectUrl, name string, id int64, options ...ConnectionOption) (*Connection, error) {
 	// use sane defaults
 	option := connectionOption{
+		Logger:            logging.NewNoOpLogger(),
 		Cached:            false,
 		HeartbeatInterval: 15 * time.Second,
 		ConnectionTimeout: 30 * time.Second,
@@ -86,6 +90,8 @@ func NewConnection(connectUrl, name string, id int64, options ...ConnectionOptio
 
 		ctx:    ctx,
 		cancel: cancel,
+
+		log: option.Logger,
 	}
 
 	err = conn.Connect()
