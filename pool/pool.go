@@ -73,6 +73,13 @@ func (p *Pool) GetSession() (*Session, error) {
 	return p.sp.GetSession()
 }
 
+// GetTransientSession returns a new session which is decoupled from anyshutdown mechanism, thus
+// requiring a context for timeout handling.
+// The session does also use a transient connection which is closed when the transient session is closed.
+func (p *Pool) GetTransientSession(ctx context.Context) (*Session, error) {
+	return p.sp.GetTransientSession(ctx)
+}
+
 // ReturnSession returns a Session back to the pool.
 // If the session was returned due to an error, erred should be set to true, otherwise
 // erred should be set to false.

@@ -20,4 +20,6 @@ var (
 	// ErrDeliveryTagMismatch is returne din case we receive a publishing confirmation that
 	// contains a delivery tag that doe snot match the one we expect.
 	ErrDeliveryTagMismatch = errors.New("delivery tag mismatch")
+
+	ErrDeliveryClosed = errors.New("delivery channel lcosed")
 )

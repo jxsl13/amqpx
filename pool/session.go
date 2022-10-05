@@ -19,7 +19,8 @@ type Session struct {
 	confirms chan Confirmation
 	errors   chan *amqp.Error
 
-	conn *Connection
+	conn          *Connection
+	autoCloseConn bool
 
 	consumers map[string]bool // saves consumer names in order to cancel them upon session closure
 
@@ -42,7 +43,8 @@ func NewSession(conn *Connection, id int64, options ...SessionOption) (*Session,
 		BufferSize:  100,
 		// derive context from connection, as we are derived from the connection
 		// so in case the connection is closed, we are closed as well.
-		Ctx: conn.ctx,
+		Ctx:           conn.ctx,
+		AutoCloseConn: false, // do not close the connection provided by caller, by default
 	}
 
 	// override default values if options were provided
@@ -63,7 +65,8 @@ func NewSession(conn *Connection, id int64, options ...SessionOption) (*Session,
 		confirms:  nil, // will be created below
 		errors:    nil, // will be created below
 
-		conn: conn,
+		conn:          conn,
+		autoCloseConn: option.AutoCloseConn,
 
 		ctx:    ctx,
 		cancel: cancel,
@@ -95,6 +98,11 @@ func (s *Session) Close() error {
 		_ = s.channel.Cancel(consumer, false)
 	}
 
+	if s.autoCloseConn {
+		_ = s.channel.Close()
+		return s.conn.Close()
+	}
+
 	return s.channel.Close()
 }
 
@@ -102,7 +110,10 @@ func (s *Session) Close() error {
 func (s *Session) Connect() (err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.connect()
+}
 
+func (s *Session) connect() (err error) {
 	defer func() {
 		// reset state in case of an error
 		if err != nil {
@@ -138,6 +149,31 @@ func (s *Session) Connect() (err error) {
 	// reset consumer tracking upon reconnect
 	s.consumers = map[string]bool{}
 	s.channel = channel
+
+	return nil
+
+}
+
+func (s *Session) Recover() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// tries to recover session forever
+	for {
+		err := s.conn.Recover() // recovers connection with a backoff mechanism
+		if err != nil {
+			// upon shutdown this will fail
+			return fmt.Errorf("failed to recover session: %w", err)
+		}
+
+		// no backoff upon retry, because Recover already retries
+		// with a backoff. Sessions should be instantly created on a healthy connection
+		err = s.connect() // Creates a new channel and flushes internal buffers automatically.
+		if err != nil {
+			continue
+		}
+		break
+	}
 
 	return nil
 }

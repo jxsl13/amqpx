@@ -7,6 +7,7 @@ import (
 )
 
 type connectionOption struct {
+	Cached            bool
 	HeartbeatInterval time.Duration
 	ConnectionTimeout time.Duration
 	BackoffPolicy     BackoffFunc
@@ -17,12 +18,21 @@ type connectionOption struct {
 type ConnectionOption func(*connectionOption)
 
 // ConnectionHeartbeatInterval allows to set a custom heartbeat interval, that MUST be >= 1 * time.Second
-func ConnectionHeartbeatInterval(interval time.Duration) ConnectionOption {
+func ConnectionWithHeartbeatInterval(interval time.Duration) ConnectionOption {
 	if interval < time.Second {
 		interval = time.Second
 	}
 	return func(co *connectionOption) {
 		co.HeartbeatInterval = interval
+	}
+}
+
+// ConnectionWithCached makes a connection a cached connection
+// This is only necessary for the connection pool, as cached connections are part of a pool
+// and can be returned back to the pool without being closed.
+func ConnectionWithCached(cached bool) ConnectionOption {
+	return func(co *connectionOption) {
+		co.Cached = cached
 	}
 }
 

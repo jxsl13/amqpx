@@ -89,6 +89,8 @@ func TestPublisher(t *testing.T) {
 			time.Sleep(5 * time.Second)
 
 			pub := pool.NewPublisher(p)
+			defer pub.Close()
+
 			pub.Publish(exchangeName, "", true, false, pool.Publishing{
 				ContentType: "application/json",
 				Body:        []byte(message),

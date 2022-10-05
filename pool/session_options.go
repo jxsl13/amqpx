@@ -5,10 +5,11 @@ import (
 )
 
 type sessionOption struct {
-	Cached      bool
-	Confirmable bool
-	BufferSize  int
-	Ctx         context.Context
+	Cached        bool
+	Confirmable   bool
+	BufferSize    int
+	Ctx           context.Context
+	AutoCloseConn bool
 }
 
 type SessionOption func(*sessionOption)
@@ -25,7 +26,7 @@ func SessionWithContext(ctx context.Context) SessionOption {
 
 // SessionWithCached makes a session a cached session
 // This is only necessary for the session pool, as cached sessions are part of a pool
-// and can be returne dback to the pool without being closed.
+// and can be returned back to the pool without being closed.
 func SessionWithCached(cached bool) SessionOption {
 	return func(so *sessionOption) {
 		so.Cached = cached
@@ -44,5 +45,14 @@ func SessionWithConfirms(requiresPublishConfirms bool) SessionOption {
 func SessionWithBufferSize(size int) SessionOption {
 	return func(so *sessionOption) {
 		so.BufferSize = size
+	}
+}
+
+// SessionWithAutoCloseConnection is important for transient sessions
+// which, as they allow to create sessions that close their internal connections
+// automatically upon closing themselves.
+func SessionWithAutoCloseConnection(autoClose bool) SessionOption {
+	return func(so *sessionOption) {
+		so.AutoCloseConn = autoClose
 	}
 }

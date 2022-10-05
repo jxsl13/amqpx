@@ -17,6 +17,7 @@ type Connection struct {
 	url     string
 	name    string
 	id      int64
+	cached  bool
 	flagged bool // whether an error occurred on this connection or not, indicating the connectionmust be recovered
 
 	tls *tls.Config
@@ -41,6 +42,7 @@ type Connection struct {
 func NewConnection(connectUrl, name string, id int64, options ...ConnectionOption) (*Connection, error) {
 	// use sane defaults
 	option := connectionOption{
+		Cached:            false,
 		HeartbeatInterval: 15 * time.Second,
 		ConnectionTimeout: 30 * time.Second,
 		BackoffPolicy:     newDefaultBackoffPolicy(time.Second, 15*time.Second),
@@ -69,6 +71,7 @@ func NewConnection(connectUrl, name string, id int64, options ...ConnectionOptio
 		url:     u.String(),
 		name:    name,
 		id:      id,
+		cached:  option.Cached,
 		flagged: false,
 		tls:     option.TLSConfig,
 
@@ -309,6 +312,11 @@ func (ch *Connection) recover() error {
 	ch.flagged = false
 
 	return nil
+}
+
+// IsCached returns true in case this session is supposed to be returned to a session pool.
+func (c *Connection) IsCached() bool {
+	return c.cached
 }
 
 func (ch *Connection) catchShutdown() <-chan struct{} {

@@ -34,7 +34,7 @@ func NewPublisher(p *Pool, options ...PublisherOption) *Publisher {
 		Ctx:            p.Context(),
 		PublishTimeout: 15 * time.Second,
 		ConfirmTimeout: 15 * time.Second,
-		AutoClose:      false,
+		AutoClosePool:  false,
 	}
 
 	for _, o := range options {
@@ -45,7 +45,7 @@ func NewPublisher(p *Pool, options ...PublisherOption) *Publisher {
 
 	pub := &Publisher{
 		pool:           p,
-		autoClosePool:  option.AutoClose,
+		autoClosePool:  option.AutoClosePool,
 		confirmTimeout: option.ConfirmTimeout,
 
 		ctx:    ctx,

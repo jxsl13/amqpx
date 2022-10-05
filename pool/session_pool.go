@@ -4,12 +4,13 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 )
 
 type SessionPool struct {
 	pool *ConnectionPool
 
-	sessionId int64
+	transientID atomic.Int64
 
 	size        int
 	bufferSize  int
@@ -45,8 +46,7 @@ func newSessionPoolFromOption(pool *ConnectionPool, option sessionPoolOption) (*
 	ctx, cancel := context.WithCancel(option.Ctx)
 
 	sessionPool := &SessionPool{
-		pool:      pool,
-		sessionId: 1, // transient sessions get an id of 0 and pooled sessions are incremented, starting from 1
+		pool: pool,
 
 		size:        option.Size,
 		bufferSize:  option.BufferSize,
@@ -57,12 +57,17 @@ func newSessionPoolFromOption(pool *ConnectionPool, option sessionPoolOption) (*
 		cancel: cancel,
 	}
 
-	err := sessionPool.initSessions()
+	err := sessionPool.initCachedSessions()
 	if err != nil {
 		return nil, err
 	}
 
 	return sessionPool, nil
+}
+
+// Size returns the size of the session pool which indicate sthe number of available cached sessions.
+func (sp *SessionPool) Size() int {
+	return sp.size
 }
 
 // GetSession gets a pooled session.
@@ -79,6 +84,25 @@ func (sp *SessionPool) GetSession() (*Session, error) {
 	}
 }
 
+// GetTransientSession returns a transient session.
+// This method may return an error when the context ha sbeen closed before a session could be obtained.
+// A transient session creates a transient connection under the hood.
+func (sp *SessionPool) GetTransientSession(ctx context.Context) (*Session, error) {
+	conn, err := sp.pool.GetTransientConnection(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	transientId := sp.transientID.Add(1)
+	return NewSession(conn, transientId,
+		SessionWithContext(ctx),
+		SessionWithBufferSize(sp.size),
+		SessionWithConfirms(sp.confirmable),
+		SessionWithCached(false),
+		SessionWithAutoCloseConnection(true),
+	)
+}
+
 // ReturnSession returns a Session.
 // If Session is not a cached channel, it is simply closed here.
 // If Cache Session, we check if erred, new Session is created instead and then returned to the cache.
@@ -91,7 +115,7 @@ func (sp *SessionPool) ReturnSession(session *Session, erred bool) {
 	}
 
 	if erred {
-		err := sp.recoverSession(session)
+		err := session.Recover()
 		if err != nil {
 			// error is only returned on shutdown,
 			// don't recover upon shutdown
@@ -108,28 +132,6 @@ func (sp *SessionPool) ReturnSession(session *Session, erred bool) {
 		session.Close()
 	case sp.sessions <- session:
 	}
-}
-
-func (sp *SessionPool) recoverSession(session *Session) error {
-
-	// tries to recover session forever
-	for {
-		err := session.conn.Recover() // recovers connection with a backoff mechanism
-		if err != nil {
-			// upon shutdown this will fail
-			return fmt.Errorf("failed to recover session: %w", err)
-		}
-
-		// no backoff upon retry, because Recover already retries
-		// with a backoff. Sessions should be instantly created on a healthy connection
-		err = session.Connect() // Creates a new channel and flushes internal buffers automatically.
-		if err != nil {
-			continue
-		}
-		break
-	}
-
-	return nil
 }
 
 func (sp *SessionPool) catchShutdown() <-chan struct{} {
@@ -161,9 +163,9 @@ SessionClose:
 	wg.Wait()
 }
 
-func (sp *SessionPool) initSessions() error {
+func (sp *SessionPool) initCachedSessions() error {
 	for i := 0; i < sp.size; i++ {
-		session, err := sp.initSession(i)
+		session, err := sp.initCachedSession(i)
 		if err != nil {
 			return err
 		}
@@ -172,8 +174,8 @@ func (sp *SessionPool) initSessions() error {
 	return nil
 }
 
-// initSession allows you create a pooled Session.
-func (sp *SessionPool) initSession(id int) (*Session, error) {
+// initCachedSession allows you create a pooled Session.
+func (sp *SessionPool) initCachedSession(id int) (*Session, error) {
 
 	// retry until we get a channel
 	// or until shutdown

@@ -9,7 +9,7 @@ type publisherOption struct {
 	Ctx            context.Context
 	PublishTimeout time.Duration
 	ConfirmTimeout time.Duration
-	AutoClose      bool
+	AutoClosePool  bool
 }
 
 type PublisherOption func(*publisherOption)
@@ -22,7 +22,7 @@ func PublisherWithContext(ctx context.Context) PublisherOption {
 
 func PublisherWithAutoClosePool(autoClose bool) PublisherOption {
 	return func(po *publisherOption) {
-		po.AutoClose = autoClose
+		po.AutoClosePool = autoClose
 	}
 }
 
