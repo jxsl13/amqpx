@@ -2,6 +2,7 @@ package pool
 
 import (
 	"github.com/jxsl13/amqpx/logging"
+	"github.com/rabbitmq/amqp091-go"
 )
 
 type Topologer struct {
@@ -80,7 +81,7 @@ func NewTopologer(p *Pool, options ...TopologerOption) *Topologer {
 //
 // Optional amqp.Table of arguments that are specific to the server's implementation of
 // the exchange can be sent for exchange types that require extra parameters.
-func (t *Topologer) ExchangeDeclare(name string, kind string, durable bool, autoDelete bool, internal bool, noWait bool, args Table) (err error) {
+func (t *Topologer) ExchangeDeclare(name string, kind string, durable bool, autoDelete bool, internal bool, noWait bool, args amqp091.Table) (err error) {
 	s, err := t.pool.GetSession()
 	if err != nil {
 		return err
@@ -173,7 +174,7 @@ func (t *Topologer) ExchangeDelete(name string, ifUnused bool, noWait bool) (err
 //
 // When the error return value is not nil, you can assume the queue could not be
 // declared with these parameters, and the channel will be closed.
-func (t *Topologer) QueueDeclare(name string, durable bool, autoDelete bool, exclusive bool, noWait bool, args Table) (err error) {
+func (t *Topologer) QueueDeclare(name string, durable bool, autoDelete bool, exclusive bool, noWait bool, args amqp091.Table) (err error) {
 	s, err := t.pool.GetSession()
 	if err != nil {
 		return err
@@ -260,7 +261,7 @@ func (t *Topologer) QueueDelete(name string, ifUnused bool, ifEmpty bool, noWait
 //
 // When noWait is false and the queue could not be bound, the channel will be
 // closed with an error.
-func (t *Topologer) QueueBind(name string, routingKey string, exchange string, noWait bool, args Table) (err error) {
+func (t *Topologer) QueueBind(name string, routingKey string, exchange string, noWait bool, args amqp091.Table) (err error) {
 	s, err := t.pool.GetSession()
 	if err != nil {
 		return err
@@ -280,7 +281,7 @@ func (t *Topologer) QueueBind(name string, routingKey string, exchange string, n
 
 // It is possible to send and empty string for the exchange name which means to
 // unbind the queue from the default exchange.
-func (t *Topologer) QueueUnbind(name string, routingKey string, exchange string, args Table) (err error) {
+func (t *Topologer) QueueUnbind(name string, routingKey string, exchange string, args amqp091.Table) (err error) {
 	s, err := t.pool.GetSession()
 	if err != nil {
 		return err
@@ -324,7 +325,7 @@ func (t *Topologer) QueueUnbind(name string, routingKey string, exchange string,
 // handle these errors.
 //
 // Optional arguments specific to the exchanges bound can also be specified.
-func (t *Topologer) ExchangeBind(destination string, routingKey string, source string, noWait bool, args Table) (err error) {
+func (t *Topologer) ExchangeBind(destination string, routingKey string, source string, noWait bool, args amqp091.Table) (err error) {
 	s, err := t.pool.GetSession()
 	if err != nil {
 		return err
@@ -351,7 +352,7 @@ func (t *Topologer) ExchangeBind(destination string, routingKey string, source s
 // Optional arguments that are specific to the type of exchanges bound can also be
 // provided.  These must match the same arguments specified in ExchangeBind to
 // identify the binding.
-func (t *Topologer) ExchangeUnbind(destination string, routingKey string, source string, noWait bool, args Table) (err error) {
+func (t *Topologer) ExchangeUnbind(destination string, routingKey string, source string, noWait bool, args amqp091.Table) (err error) {
 	s, err := t.pool.GetSession()
 	if err != nil {
 		return err

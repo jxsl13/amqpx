@@ -9,6 +9,7 @@ import (
 
 	"github.com/jxsl13/amqpx/logging"
 	"github.com/jxsl13/amqpx/pool"
+	"github.com/rabbitmq/amqp091-go"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -38,7 +39,7 @@ func TestSubscriber(t *testing.T) {
 			defer p.ReturnSession(ts, false)
 
 			queueName := fmt.Sprintf("TestSubscriber-Queue-%d", id)
-			err = ts.QueueDeclare(queueName, true, false, false, false, pool.QuorumArgs)
+			err = ts.QueueDeclare(queueName, true, false, false, false, QuorumArgs)
 			if err != nil {
 				assert.NoError(t, err)
 				return
@@ -78,7 +79,7 @@ func TestSubscriber(t *testing.T) {
 			defer sub.Close()
 
 			sub.RegisterHandlerFunc(queueName, fmt.Sprintf("Consumer-%s", queueName), false, true, false, false, nil,
-				func(msg pool.Delivery) error {
+				func(msg amqp091.Delivery) error {
 
 					// handler func
 					receivedMsg := string(msg.Body)
@@ -95,7 +96,7 @@ func TestSubscriber(t *testing.T) {
 			pub := pool.NewPublisher(p)
 			defer pub.Close()
 
-			pub.Publish(exchangeName, "", true, false, pool.Publishing{
+			pub.Publish(exchangeName, "", true, false, amqp091.Publishing{
 				ContentType: "application/json",
 				Body:        []byte(message),
 			})

@@ -1,40 +1,97 @@
 package amqpx
 
 import (
+	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/jxsl13/amqpx/pool"
+	"github.com/rabbitmq/amqp091-go"
 )
 
 var (
 	pub *pool.Publisher
 	sub *pool.Subscriber
 
-	mu       sync.Mutex
-	handlers = make([]pool.Handler, 0)
+	mu         sync.Mutex
+	handlers   = make([]pool.Handler, 0)
+	topologies = make([]TopologyFunc, 0)
 
 	startOnce sync.Once
 	closeOnce sync.Once
 )
 
-// RegisterHandler registers a handler function for a specific queue.
-// consumer can be set to a unique consumer name (if left empty, a unique name will be generated)
-func RegisterHandler(queue string, consumer string, autoAck bool, exclusive bool, noLocal bool, noWait bool, args pool.Table, handlerFunc pool.HandlerFunc) {
+type (
+	Topologer    = pool.Topologer
+	TopologyFunc func(*Topologer) error
+
+	Delivery    = amqp091.Delivery
+	HandlerFunc = func(Delivery) error
+
+	Publishing = amqp091.Publishing
+)
+
+var (
+	// QuorumArgs is the argument you need to pass in order to create a quorum queue.
+	QuorumQueue = amqp091.Table{
+		"x-queue-type": "quorum",
+	}
+)
+
+const (
+	// DeadLetterExchangeKey can be used in order to create a dead letter exchange
+	// https://www.rabbitmq.com/dlx.html
+	DeadLetterExchangeKey = "x-dead-letter-exchange"
+)
+
+// RegisterTopology registers a topology creating function that is called upon
+// Start. The creation of topologie sis the first step before any publisher or subscriber is started.
+func RegisterTopology(topology TopologyFunc) {
+	if topology == nil {
+		panic("topology must not be nil")
+	}
 	mu.Lock()
 	defer mu.Unlock()
 
+	topologies = append(topologies, topology)
+}
+
+// RegisterHandler registers a handler function for a specific queue.
+// consumer can be set to a unique consumer name (if left empty, a unique name will be generated)
+func RegisterHandler(queue string, consumer string, autoAck bool, exclusive bool, noLocal bool, noWait bool, args amqp091.Table, handlerFunc HandlerFunc) {
 	if handlerFunc == nil {
 		panic("handlerFunc must not be nil")
 	}
 
+	mu.Lock()
+	defer mu.Unlock()
+
 	handlers = append(handlers, pool.Handler{
-		Queue:    queue,
-		Consumer: consumer,
-		AutoAck:  autoAck,
+		Queue:       queue,
+		Consumer:    consumer,
+		AutoAck:     autoAck,
+		Exclusive:   exclusive,
+		NoLocal:     noLocal,
+		NoWait:      noWait,
+		Args:        args,
+		HandlerFunc: handlerFunc,
 	})
 }
 
-type TopologyFunc func(*pool.Topologer) error
+// NewURL creates a new conenction string for the NewSessionFactory
+// hostname: 	e.g. localhost
+// port:        e.g. 5672
+// username:	e.g. username
+// password:    e.g. password
+// vhost:       e.g. "" or "/" or ""
+func NewURL(hostname string, port int, username, password string, vhost ...string) string {
+	vhoststr := ""
+	if len(vhost) > 0 {
+		vhoststr = strings.TrimLeft(vhost[0], "/")
+	}
+
+	return fmt.Sprintf("amqp://%s:%s@%s:%d/%s", username, password, hostname, port, vhoststr)
+}
 
 // Start starts the subscriber and publisher pools.
 // In case no handlers were registered, no subscriber pool will be started.
@@ -44,7 +101,7 @@ type TopologyFunc func(*pool.Topologer) error
 // settings like publish confirmations or a custom context which can signal an application shutdown.
 // This customcontext does not replace the Close() call. Always defer a Close() call.
 // Start is a non-blocking operation.
-func Start(connectUrl string, topology TopologyFunc, options ...Option) (err error) {
+func Start(connectUrl string, options ...Option) (err error) {
 	startOnce.Do(func() {
 		mu.Lock()
 		defer mu.Unlock()
@@ -63,7 +120,8 @@ func Start(connectUrl string, topology TopologyFunc, options ...Option) (err err
 		}
 
 		// publisher and subscriber need to have different tcp connections (tcp pushback prevention)
-		pubPool, err := pool.New(
+		var pubPool *pool.Pool
+		pubPool, err = pool.New(
 			connectUrl,
 			option.PublisherConnections,
 			option.PublisherSessions,
@@ -74,13 +132,17 @@ func Start(connectUrl string, topology TopologyFunc, options ...Option) (err err
 		}
 
 		// use publisher pool for topology
-		if topology != nil {
+		if len(topologies) > 0 {
 			// create topology
 			topologer := pool.NewTopologer(pubPool)
-			err = topology(topologer)
-			if err != nil {
-				return
+
+			for _, t := range topologies {
+				err = t(topologer)
+				if err != nil {
+					return
+				}
 			}
+
 		}
 
 		pub = pool.NewPublisher(pubPool, append(option.PublisherOptions, pool.PublisherWithAutoClosePool(true))...)
@@ -116,13 +178,20 @@ func Start(connectUrl string, topology TopologyFunc, options ...Option) (err err
 
 func Close() {
 	closeOnce.Do(func() {
-		// close producers first
-		pub.Close()
-		sub.Close()
+		if pub != nil {
+			// close producers first
+			pub.Close()
+		}
+		if sub != nil {
+			sub.Close()
+		}
 	})
 }
 
 // Publish a message to a specific exchange with a given routingKey.
-func Publish(exchange string, routingKey string, mandatory bool, immediate bool, msg pool.Publishing) error {
+func Publish(exchange string, routingKey string, mandatory bool, immediate bool, msg Publishing) error {
+	if pub == nil {
+		panic("amqpx package was not started")
+	}
 	return pub.Publish(exchange, routingKey, mandatory, immediate, msg)
 }

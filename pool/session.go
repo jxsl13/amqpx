@@ -6,7 +6,7 @@ import (
 	"sync"
 
 	"github.com/jxsl13/amqpx/logging"
-	amqp "github.com/rabbitmq/amqp091-go"
+	"github.com/rabbitmq/amqp091-go"
 )
 
 // Session is
@@ -16,9 +16,9 @@ type Session struct {
 	confirmable bool
 	bufferSize  int
 
-	channel  *amqp.Channel
-	confirms chan Confirmation
-	errors   chan *amqp.Error
+	channel  *amqp091.Channel
+	confirms chan amqp091.Confirmation
+	errors   chan *amqp091.Error
 
 	conn          *Connection
 	autoCloseConn bool
@@ -155,7 +155,7 @@ func (s *Session) connect() (err error) {
 	}
 
 	if s.confirmable {
-		s.confirms = make(chan amqp.Confirmation, s.bufferSize)
+		s.confirms = make(chan amqp091.Confirmation, s.bufferSize)
 		channel.NotifyPublish(s.confirms)
 
 		err = channel.Confirm(false)
@@ -164,7 +164,7 @@ func (s *Session) connect() (err error) {
 		}
 	}
 
-	s.errors = make(chan *amqp.Error, s.bufferSize)
+	s.errors = make(chan *amqp091.Error, s.bufferSize)
 	channel.NotifyClose(s.errors)
 
 	// reset consumer tracking upon reconnect
@@ -201,7 +201,7 @@ func (s *Session) Recover() error {
 
 // AwaitConfirm tries to await a confirmation from the broker for a published message
 // You may check for ErrNack in order to see whether the broker rejected the message temporatily.
-func (s *Session) AwaitConfirm(ctx context.Context, expectedTag DeliveryTag) error {
+func (s *Session) AwaitConfirm(ctx context.Context, expectedTag uint64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -248,7 +248,7 @@ func (s *Session) AwaitConfirm(ctx context.Context, expectedTag DeliveryTag) err
 // The way to ensure that all publishings reach the server is to add a listener to Channel.NotifyPublish and put the channel in confirm mode with Channel.Confirm.
 // Publishing delivery tags and their corresponding confirmations start at 1. Exit when all publishings are confirmed.
 // When Publish does not return an error and the channel is in confirm mode, the internal counter for DeliveryTags with the first confirmation starts at 1.
-func (s *Session) Publish(ctx context.Context, exchange string, routingKey string, mandatory bool, immediate bool, msg Publishing) (tag DeliveryTag, err error) {
+func (s *Session) Publish(ctx context.Context, exchange string, routingKey string, mandatory bool, immediate bool, msg amqp091.Publishing) (tag uint64, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -264,18 +264,18 @@ func (s *Session) Publish(ctx context.Context, exchange string, routingKey strin
 	return tag, nil
 }
 
-func (s *Session) Nack(tag DeliveryTag, multiple bool, requeue bool) (err error) {
+func (s *Session) Nack(deliveryTag uint64, multiple bool, requeue bool) (err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	return s.channel.Nack(tag, multiple, requeue)
+	return s.channel.Nack(deliveryTag, multiple, requeue)
 }
 
-func (s *Session) Ack(tag DeliveryTag, multiple bool) (err error) {
+func (s *Session) Ack(deliveryTag uint64, multiple bool) (err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	return s.channel.Ack(tag, multiple)
+	return s.channel.Ack(deliveryTag, multiple)
 }
 
 // Consume immediately starts delivering queued messages.
@@ -308,7 +308,7 @@ func (s *Session) Ack(tag DeliveryTag, multiple bool) (err error) {
 // Inflight messages, limited by Channel.Qos will be buffered until received from the returned chan.
 // When the Channel or Connection is closed, all buffered and inflight messages will be dropped.
 // When the consumer identifier tag is cancelled, all inflight messages will be delivered until the returned chan is closed.
-func (s *Session) Consume(queue string, consumer string, autoAck bool, exclusive bool, noLocal bool, noWait bool, args Table) (<-chan Delivery, error) {
+func (s *Session) Consume(queue string, consumer string, autoAck bool, exclusive bool, noLocal bool, noWait bool, args amqp091.Table) (<-chan amqp091.Delivery, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -374,9 +374,9 @@ func (s *Session) Consume(queue string, consumer string, autoAck bool, exclusive
 // The channel may be closed as a result of an error.  Add a NotifyClose listener
 // to respond to any exceptions.
 //
-// Optional amqp.Table of arguments that are specific to the server's implementation of
+// Optional amqp091.Table of arguments that are specific to the server's implementation of
 // the exchange can be sent for exchange types that require extra parameters.
-func (s *Session) ExchangeDeclare(name string, kind string, durable bool, autoDelete bool, internal bool, noWait bool, args Table) error {
+func (s *Session) ExchangeDeclare(name string, kind string, durable bool, autoDelete bool, internal bool, noWait bool, args amqp091.Table) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -452,7 +452,7 @@ func (s *Session) ExchangeDelete(name string, ifUnused bool, noWait bool) error 
 //
 // When the error return value is not nil, you can assume the queue could not be
 // declared with these parameters, and the channel will be closed.
-func (s *Session) QueueDeclare(name string, durable bool, autoDelete bool, exclusive bool, noWait bool, args Table) error {
+func (s *Session) QueueDeclare(name string, durable bool, autoDelete bool, exclusive bool, noWait bool, args amqp091.Table) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -524,7 +524,7 @@ func (s *Session) QueueDelete(name string, ifUnused bool, ifEmpty bool, noWait b
 //
 // When noWait is false and the queue could not be bound, the channel will be
 // closed with an error.
-func (s *Session) QueueBind(name string, routingKey string, exchange string, noWait bool, args Table) error {
+func (s *Session) QueueBind(name string, routingKey string, exchange string, noWait bool, args amqp091.Table) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -536,7 +536,7 @@ func (s *Session) QueueBind(name string, routingKey string, exchange string, noW
 
 // It is possible to send and empty string for the exchange name which means to
 // unbind the queue from the default exchange.
-func (s *Session) QueueUnbind(name string, routingKey string, exchange string, args Table) error {
+func (s *Session) QueueUnbind(name string, routingKey string, exchange string, args amqp091.Table) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -572,7 +572,7 @@ func (s *Session) QueueUnbind(name string, routingKey string, exchange string, a
 // handle these errors.
 //
 // Optional arguments specific to the exchanges bound can also be specified.
-func (s *Session) ExchangeBind(destination string, routingKey string, source string, noWait bool, args Table) error {
+func (s *Session) ExchangeBind(destination string, routingKey string, source string, noWait bool, args amqp091.Table) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -591,7 +591,7 @@ func (s *Session) ExchangeBind(destination string, routingKey string, source str
 // Optional arguments that are specific to the type of exchanges bound can also be
 // provided.  These must match the same arguments specified in ExchangeBind to
 // identify the binding.
-func (s *Session) ExchangeUnbind(destination string, routingKey string, source string, noWait bool, args Table) error {
+func (s *Session) ExchangeUnbind(destination string, routingKey string, source string, noWait bool, args amqp091.Table) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -628,11 +628,11 @@ func (s *Session) Flow(active bool) error {
 
 // flushConfirms removes all previous confirmations pending processing.
 // You can use the returned value
-func (s *Session) flushConfirms() []Confirmation {
+func (s *Session) flushConfirms() []amqp091.Confirmation {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	confirms := make([]Confirmation, 0, len(s.confirms))
+	confirms := make([]amqp091.Confirmation, 0, len(s.confirms))
 flush:
 	for {
 		// Some weird use case where the Channel is being flooded with confirms after connection disruption

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/jxsl13/amqpx/logging"
+	"github.com/rabbitmq/amqp091-go"
 )
 
 type Publisher struct {
@@ -63,7 +64,7 @@ func NewPublisher(p *Pool, options ...PublisherOption) *Publisher {
 	return pub
 }
 
-func (p *Publisher) Publish(exchange string, routingKey string, mandatory bool, immediate bool, msg Publishing) error {
+func (p *Publisher) Publish(exchange string, routingKey string, mandatory bool, immediate bool, msg amqp091.Publishing) error {
 
 	for {
 		err := p.publish(exchange, routingKey, mandatory, immediate, msg)
@@ -76,7 +77,7 @@ func (p *Publisher) Publish(exchange string, routingKey string, mandatory bool, 
 	}
 }
 
-func (p *Publisher) publish(exchange string, routingKey string, mandatory bool, immediate bool, msg Publishing) (err error) {
+func (p *Publisher) publish(exchange string, routingKey string, mandatory bool, immediate bool, msg amqp091.Publishing) (err error) {
 	defer func() {
 		if err != nil {
 			p.warn(exchange, routingKey, err)

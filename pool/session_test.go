@@ -9,6 +9,7 @@ import (
 
 	"github.com/jxsl13/amqpx/logging"
 	"github.com/jxsl13/amqpx/pool"
+	"github.com/rabbitmq/amqp091-go"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -38,7 +39,7 @@ func TestNewSession(t *testing.T) {
 			}()
 
 			queueName := fmt.Sprintf("TestNewSession-Queue-%d", id)
-			err = s.QueueDeclare(queueName, true, false, false, false, pool.QuorumArgs)
+			err = s.QueueDeclare(queueName, true, false, false, false, QuorumArgs)
 			if err != nil {
 				assert.NoError(t, err)
 				return
@@ -94,7 +95,7 @@ func TestNewSession(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 
-			tag, err := s.Publish(ctx, exchangeName, "", true, false, pool.Publishing{
+			tag, err := s.Publish(ctx, exchangeName, "", true, false, amqp091.Publishing{
 				ContentType: "application/json",
 				Body:        []byte(message),
 			})

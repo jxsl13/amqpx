@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/jxsl13/amqpx/logging"
+	"github.com/rabbitmq/amqp091-go"
 )
 
 type Subscriber struct {
@@ -73,7 +74,7 @@ func NewSubscriber(p *Pool, options ...SubscriberOption) *Subscriber {
 	return sub
 }
 
-type HandlerFunc func(Delivery) error
+type HandlerFunc func(amqp091.Delivery) error
 
 type Handler struct {
 	Queue    string
@@ -83,12 +84,12 @@ type Handler struct {
 	Exclusive bool
 	NoLocal   bool
 	NoWait    bool
-	Args      Table
+	Args      amqp091.Table
 
 	HandlerFunc HandlerFunc
 }
 
-func (s *Subscriber) RegisterHandlerFunc(queue string, consumer string, autoAck bool, exclusive bool, noLocal bool, noWait bool, args Table, hf HandlerFunc) {
+func (s *Subscriber) RegisterHandlerFunc(queue string, consumer string, autoAck bool, exclusive bool, noLocal bool, noWait bool, args amqp091.Table, hf HandlerFunc) {
 	if hf == nil {
 		panic("HandlerFunc must not be nil")
 	}
