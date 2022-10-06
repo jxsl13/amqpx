@@ -15,7 +15,7 @@ type Subscriber struct {
 
 	mu       sync.Mutex
 	started  bool
-	handlers []handler
+	handlers []Handler
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -75,7 +75,7 @@ func NewSubscriber(p *Pool, options ...SubscriberOption) *Subscriber {
 
 type HandlerFunc func(Delivery) error
 
-type handler struct {
+type Handler struct {
 	Queue    string
 	Consumer string
 
@@ -88,14 +88,14 @@ type handler struct {
 	HandlerFunc HandlerFunc
 }
 
-func (s *Subscriber) RegisterHandler(queue string, consumer string, autoAck bool, exclusive bool, noLocal bool, noWait bool, args Table, hf HandlerFunc) {
+func (s *Subscriber) RegisterHandlerFunc(queue string, consumer string, autoAck bool, exclusive bool, noLocal bool, noWait bool, args Table, hf HandlerFunc) {
 	if hf == nil {
 		panic("HandlerFunc must not be nil")
 	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.handlers = append(s.handlers, handler{
+	s.handlers = append(s.handlers, Handler{
 		Queue:    queue,
 		Consumer: consumer,
 
@@ -112,6 +112,22 @@ func (s *Subscriber) RegisterHandler(queue string, consumer string, autoAck bool
 		"subscriber": s.pool.Name(),
 		"consumer":   consumer,
 		"queue":      queue,
+	}).Info("registered handler")
+}
+
+func (s *Subscriber) RegisterHandler(handler Handler) {
+	if handler.HandlerFunc == nil {
+		panic("handler.HandlerFunc must not be nil")
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.handlers = append(s.handlers, handler)
+
+	s.log.WithFields(map[string]any{
+		"subscriber": s.pool.Name(),
+		"consumer":   handler.Consumer,
+		"queue":      handler.Queue,
 	}).Info("registered handler")
 }
 
@@ -138,7 +154,7 @@ func (s *Subscriber) Start() {
 	}
 }
 
-func (s *Subscriber) consumer(h handler, wg *sync.WaitGroup) {
+func (s *Subscriber) consumer(h Handler, wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	var err error
@@ -150,7 +166,7 @@ func (s *Subscriber) consumer(h handler, wg *sync.WaitGroup) {
 	}
 }
 
-func (s *Subscriber) consume(h handler) (err error) {
+func (s *Subscriber) consume(h Handler) (err error) {
 	session, err := s.pool.GetSession()
 	if err != nil {
 		return err

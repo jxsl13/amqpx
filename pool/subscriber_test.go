@@ -77,7 +77,7 @@ func TestSubscriber(t *testing.T) {
 			sub := pool.NewSubscriber(p, pool.SubscriberWithContext(ctx))
 			defer sub.Close()
 
-			sub.RegisterHandler(queueName, fmt.Sprintf("Consumer-%s", queueName), false, true, false, false, nil,
+			sub.RegisterHandlerFunc(queueName, fmt.Sprintf("Consumer-%s", queueName), false, true, false, false, nil,
 				func(msg pool.Delivery) error {
 
 					// handler func
