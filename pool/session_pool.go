@@ -13,7 +13,7 @@ type SessionPool struct {
 	pool              *ConnectionPool
 	autoCloseConnPool bool
 
-	transientID atomic.Int64
+	transientID int64
 
 	size        int
 	bufferSize  int
@@ -113,7 +113,7 @@ func (sp *SessionPool) GetTransientSession(ctx context.Context) (*Session, error
 		return nil, err
 	}
 
-	transientId := sp.transientID.Add(1)
+	transientId := atomic.AddInt64(&sp.transientID, 1)
 	return NewSession(conn, fmt.Sprintf("%s-transient-%d", conn.Name(), transientId),
 		SessionWithContext(ctx),
 		SessionWithBufferSize(sp.size),

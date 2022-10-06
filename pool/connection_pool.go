@@ -26,7 +26,7 @@ type ConnectionPool struct {
 	tls         *tls.Config
 	connections *queue.Queue
 
-	transientID atomic.Int64
+	transientID int64
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -156,7 +156,7 @@ func (cp *ConnectionPool) GetConnection() (*Connection, error) {
 // Transient connections may be returned to the pool. The are closed properly upon returning.
 func (cp *ConnectionPool) GetTransientConnection(ctx context.Context) (*Connection, error) {
 
-	tID := cp.transientID.Add(1)
+	tID := atomic.AddInt64(&cp.transientID, 1)
 
 	name := fmt.Sprintf("%s-transient-%d", cp.name, tID)
 	conn, err := NewConnection(cp.url, name,
