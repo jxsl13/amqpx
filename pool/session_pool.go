@@ -99,6 +99,7 @@ func (sp *SessionPool) GetSession() (*Session, error) {
 		if !ok {
 			return nil, fmt.Errorf("failed to get session: %w", ErrClosed)
 		}
+
 		return session, nil
 	}
 }
