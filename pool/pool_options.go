@@ -25,6 +25,20 @@ func WithName(name string) PoolOption {
 	}
 }
 
+// WithNameSuffix adds a suffix to the connection pool name
+func WithNameSuffix(suffix string) PoolOption {
+	return func(po *poolOption) {
+		ConnectionPoolWithNameSuffix(suffix)(&po.cpo)
+	}
+}
+
+// WithNamePrefix adds a prefix to the connection pool name
+func WithNamePrefix(prefix string) PoolOption {
+	return func(po *poolOption) {
+		ConnectionPoolWithNamePrefix(prefix)(&po.cpo)
+	}
+}
+
 // WithLogger allows to set a custom logger for the connection AND session pool
 func WithLogger(logger logging.Logger) PoolOption {
 	return func(po *poolOption) {

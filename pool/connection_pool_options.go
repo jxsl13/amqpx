@@ -50,6 +50,20 @@ func ConnectionPoolWithName(name string) ConnectionPoolOption {
 	}
 }
 
+// ConnectionPoolWithNameSuffix adds a suffix to the connection pool name
+func ConnectionPoolWithNameSuffix(suffix string) ConnectionPoolOption {
+	return func(po *connectionPoolOption) {
+		po.Name += suffix
+	}
+}
+
+// ConnectionPoolWithNamePrefix adds a prefix to the connection pool name
+func ConnectionPoolWithNamePrefix(prefix string) ConnectionPoolOption {
+	return func(po *connectionPoolOption) {
+		po.Name = prefix + po.Name
+	}
+}
+
 // WithHeartbeatInterval allows to set a custom heartbeat interval, that MUST be >= 1 * time.Second
 func ConnectionPoolWithHeartbeatInterval(interval time.Duration) ConnectionPoolOption {
 	if interval < time.Second {
