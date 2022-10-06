@@ -52,6 +52,7 @@ func NewPublisher(p *Pool, options ...PublisherOption) *Publisher {
 		pool:           p,
 		autoClosePool:  option.AutoClosePool,
 		confirmTimeout: option.ConfirmTimeout,
+		publishTimeout: option.PublishTimeout,
 
 		ctx:    ctx,
 		cancel: cancel,
