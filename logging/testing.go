@@ -44,50 +44,64 @@ type TestLogger struct {
 }
 
 func (l *TestLogger) Debugf(format string, args ...any) {
+	l.t.Helper()
 	l.logf(DebugLevel, "DEBUG", format, args...)
 }
 func (l *TestLogger) Infof(format string, args ...any) {
+	l.t.Helper()
 	l.logf(InfoLevel, "INFO", format, args...)
 }
 func (l *TestLogger) Printf(format string, args ...any) {
+	l.t.Helper()
 	l.logf(InfoLevel, "", format, args...)
 }
 func (l *TestLogger) Warnf(format string, args ...any) {
+	l.t.Helper()
 	l.logf(WarnLevel, "WARN", format, args...)
 }
 func (l *TestLogger) Errorf(format string, args ...any) {
+	l.t.Helper()
 	l.logf(ErrorLevel, "ERROR", format, args...)
 }
 func (l *TestLogger) Fatalf(format string, args ...any) {
+	l.t.Helper()
 	l.logf(FatalLevel, "FATAL", format, args...)
 	os.Exit(1)
 }
 func (l *TestLogger) Panicf(format string, args ...any) {
+	l.t.Helper()
 	l.logf(PanicLevel, "PANIC", format, args...)
 	os.Exit(1)
 }
 
 func (l *TestLogger) Debug(args ...any) {
+	l.t.Helper()
 	l.log(DebugLevel, "INFO", args...)
 }
 func (l *TestLogger) Info(args ...any) {
+	l.t.Helper()
 	l.log(InfoLevel, "INFO", args...)
 }
 
 func (l *TestLogger) Print(args ...any) {
+	l.t.Helper()
 	l.log(InfoLevel, "", args...)
 }
 func (l *TestLogger) Warn(args ...any) {
+	l.t.Helper()
 	l.log(WarnLevel, "WARN", args...)
 }
 func (l *TestLogger) Error(args ...any) {
+	l.t.Helper()
 	l.log(ErrorLevel, "ERROR", args...)
 }
 func (l *TestLogger) Fatal(args ...any) {
+	l.t.Helper()
 	l.log(FatalLevel, "FATAL", args...)
 	os.Exit(1)
 }
 func (l *TestLogger) Panic(args ...any) {
+	l.t.Helper()
 	l.log(PanicLevel, "PANIC", args...)
 }
 
@@ -98,6 +112,7 @@ func (l *TestLogger) Output() io.Writer     { return io.Discard }
 func (l *TestLogger) SetOutput(_ io.Writer) {}
 
 func (l *TestLogger) WithError(err error) Logger {
+	l.t.Helper()
 	return newTestLoggerWithFields(l, map[string]any{"error": err})
 }
 func (l *TestLogger) WithField(key string, value any) Logger {
@@ -108,9 +123,6 @@ func (l *TestLogger) WithFields(fields Fields) Logger {
 }
 
 func (l *TestLogger) fieldsMsg(level, msg string) string {
-	if len(l.fields) == 0 {
-		return ""
-	}
 
 	size := len(l.fields) + 1
 	if level != "" {
@@ -121,34 +133,23 @@ func (l *TestLogger) fieldsMsg(level, msg string) string {
 		kv = append(kv, fmt.Sprintf("%s=%v", k, v))
 	}
 
+	prefix := ""
 	if level != "" {
-		level = fmt.Sprintf(`level=%s`, strings.ToLower(level))
+		prefix = fmt.Sprintf("level=%s", strings.ToLower(level))
 	}
-	kv = append(kv, fmt.Sprintf(`msg=%s`, msg))
+
+	prefix += fmt.Sprintf(", msg=%s", msg)
 
 	sort.Strings(kv)
-	return fmt.Sprintf("%s, %s", level, strings.Join(kv, ", "))
+	return fmt.Sprintf("%s, %s", prefix, strings.Join(kv, ", "))
 }
 
 func (l *TestLogger) logf(level Level, prefix, format string, args ...any) {
+	l.t.Helper()
 	if l.level >= level {
 		msg := fmt.Sprintf(format, args...)
-
-		if len(l.fields) == 0 {
-			if len(prefix) > 0 {
-				prefix = "[" + prefix + "] "
-				if level <= FatalLevel {
-					l.t.Fatal(prefix + msg)
-				} else {
-					l.t.Log(prefix + msg)
-				}
-			} else {
-				if level <= FatalLevel {
-					l.t.Fatal(msg)
-				} else {
-					l.t.Log(msg)
-				}
-			}
+		if level <= FatalLevel {
+			l.t.Fatal(l.fieldsMsg(prefix, msg))
 		} else {
 			l.t.Log(l.fieldsMsg(prefix, msg))
 		}
@@ -156,25 +157,12 @@ func (l *TestLogger) logf(level Level, prefix, format string, args ...any) {
 }
 
 func (l *TestLogger) log(level Level, prefix string, args ...any) {
+	l.t.Helper()
 	if l.level >= level {
 		msg := fmt.Sprint(args...)
 
-		if len(l.fields) == 0 {
-			if len(prefix) > 0 {
-				prefix = "[" + prefix + "] "
-				if level <= FatalLevel {
-					l.t.Fatal(prefix + msg)
-				} else {
-					l.t.Log(prefix + msg)
-				}
-			} else {
-				if level <= FatalLevel {
-					l.t.Fatal(msg)
-				} else {
-
-					l.t.Log(msg)
-				}
-			}
+		if level <= FatalLevel {
+			l.t.Fatal(l.fieldsMsg(prefix, msg))
 		} else {
 			l.t.Log(l.fieldsMsg(prefix, msg))
 		}
