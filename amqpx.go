@@ -10,12 +10,14 @@ import (
 )
 
 var (
-	pub *pool.Publisher
-	sub *pool.Subscriber
+	pubPool *pool.Pool
+	pub     *pool.Publisher
+	sub     *pool.Subscriber
 
-	mu         sync.Mutex
-	handlers   = make([]pool.Handler, 0)
-	topologies = make([]TopologyFunc, 0)
+	mu               sync.Mutex
+	handlers         = make([]pool.Handler, 0)
+	topologies       = make([]TopologyFunc, 0)
+	topologyDeleters = make([]TopologyFunc, 0)
 
 	startOnce sync.Once
 	closeOnce sync.Once
@@ -46,7 +48,7 @@ const (
 
 // RegisterTopology registers a topology creating function that is called upon
 // Start. The creation of topologie sis the first step before any publisher or subscriber is started.
-func RegisterTopology(topology TopologyFunc) {
+func RegisterTopologyCreator(topology TopologyFunc) {
 	if topology == nil {
 		panic("topology must not be nil")
 	}
@@ -54,6 +56,19 @@ func RegisterTopology(topology TopologyFunc) {
 	defer mu.Unlock()
 
 	topologies = append(topologies, topology)
+}
+
+// RegisterTopologyDeleter registers a topology finalizer that is executed at the end of
+// amqpx.Close().
+func RegisterTopologyDeleter(finalizer TopologyFunc) {
+	if finalizer == nil {
+		panic("topology must not be nil")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+
+	// prepend, execution in reverse order
+	topologyDeleters = append([]TopologyFunc{finalizer}, topologyDeleters...)
 }
 
 // RegisterHandler registers a handler function for a specific queue.
@@ -120,7 +135,6 @@ func Start(connectUrl string, options ...Option) (err error) {
 		}
 
 		// publisher and subscriber need to have different tcp connections (tcp pushback prevention)
-		var pubPool *pool.Pool
 		pubPool, err = pool.New(
 			connectUrl,
 			option.PublisherConnections,
@@ -145,7 +159,9 @@ func Start(connectUrl string, options ...Option) (err error) {
 
 		}
 
-		pub = pool.NewPublisher(pubPool, append(option.PublisherOptions, pool.PublisherWithAutoClosePool(true))...)
+		// publisher must before subscribers, as subscriber handlers might be using the publisher.
+		// do NOT auto close publisher pool
+		pub = pool.NewPublisher(pubPool, option.PublisherOptions...)
 
 		// create subscriber pool in case handlers were registered
 		if len(handlers) > 0 {
@@ -176,8 +192,16 @@ func Start(connectUrl string, options ...Option) (err error) {
 	return err
 }
 
-func Close() {
+func Close() error {
+	mu.Lock()
+	defer mu.Unlock()
+
+	return close()
+}
+
+func close() (err error) {
 	closeOnce.Do(func() {
+
 		if pub != nil {
 			// close producers first
 			pub.Close()
@@ -185,7 +209,19 @@ func Close() {
 		if sub != nil {
 			sub.Close()
 		}
+
+		if pubPool != nil {
+			topologer := pool.NewTopologer(pubPool)
+			for _, f := range topologyDeleters {
+				e := f(topologer)
+				if e != nil {
+					err = e
+					return
+				}
+			}
+		}
 	})
+	return err
 }
 
 // Publish a message to a specific exchange with a given routingKey.
@@ -194,4 +230,22 @@ func Publish(exchange string, routingKey string, mandatory bool, immediate bool,
 		panic("amqpx package was not started")
 	}
 	return pub.Publish(exchange, routingKey, mandatory, immediate, msg)
+}
+
+// Reset closes the current package and resets its state before it was initialized and started.
+func Reset() {
+	mu.Lock()
+	defer mu.Unlock()
+	close()
+
+	pubPool = nil
+	pub = nil
+	sub = nil
+
+	handlers = make([]pool.Handler, 0)
+	topologies = make([]TopologyFunc, 0)
+	topologyDeleters = make([]TopologyFunc, 0)
+
+	startOnce = sync.Once{}
+	closeOnce = sync.Once{}
 }
