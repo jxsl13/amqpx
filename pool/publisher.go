@@ -72,6 +72,8 @@ func (p *Publisher) Publish(exchange string, routingKey string, mandatory bool, 
 			return nil
 		} else if errors.Is(err, ErrClosed) {
 			return err
+		} else {
+			p.debug(exchange, routingKey, "failed with error: ", err.Error())
 		}
 		// continue in any other error case
 	}
