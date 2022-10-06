@@ -7,14 +7,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jxsl13/amqpx/logging"
 	"github.com/jxsl13/amqpx/pool"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestSubscriber(t *testing.T) {
 
-	sessions := 200 // publisher sessions + consumer sessions
-	p, err := pool.New("amqp://admin:password@localhost:5672", 1, sessions, pool.WithConfirms(true))
+	sessions := 2 // publisher sessions + consumer sessions
+	p, err := pool.New("amqp://admin:password@localhost:5672", 1, sessions, pool.WithConfirms(true), pool.WithLogger(logging.NewTestLogger(t)))
 	if err != nil {
 		assert.NoError(t, err)
 		return

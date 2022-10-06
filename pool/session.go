@@ -41,7 +41,7 @@ func NewSession(conn *Connection, name string, options ...SessionOption) (*Sessi
 
 	// default values
 	option := sessionOption{
-		Logger:      logging.NewNoOpLogger(),
+		Logger:      conn.log, // derive logger form connection
 		Cached:      false,
 		Confirmable: false,
 		BufferSize:  100,
@@ -138,8 +138,11 @@ func (s *Session) connect() (err error) {
 			s.channel = nil
 			s.errors = nil
 			s.confirms = nil
+		} else {
+			s.info("opened session.")
 		}
 	}()
+	s.info("opening session...")
 
 	if s.conn.IsClosed() {
 		// do not reconnect connection explicitly

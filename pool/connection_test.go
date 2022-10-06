@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jxsl13/amqpx/logging"
 	"github.com/jxsl13/amqpx/pool"
 	"github.com/stretchr/testify/assert"
 )
@@ -13,13 +14,17 @@ import (
 func TestNewConnection(t *testing.T) {
 	var wg sync.WaitGroup
 
-	connections := 200
+	connections := 5
 	wg.Add(connections)
 	for i := 0; i < connections; i++ {
 		go func(id int64) {
 			defer wg.Done()
 
-			c, err := pool.NewConnection("amqp://admin:password@localhost:5672", fmt.Sprintf("TestNewConnection-%d", id))
+			c, err := pool.NewConnection(
+				"amqp://admin:password@localhost:5672",
+				fmt.Sprintf("TestNewConnection-%d", id),
+				pool.ConnectionWithLogger(logging.NewTestLogger(t)),
+			)
 			if err != nil {
 				assert.NoError(t, err)
 				return

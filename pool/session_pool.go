@@ -10,7 +10,8 @@ import (
 )
 
 type SessionPool struct {
-	pool *ConnectionPool
+	pool              *ConnectionPool
+	autoCloseConnPool bool
 
 	transientID atomic.Int64
 
@@ -32,10 +33,11 @@ func NewSessionPool(pool *ConnectionPool, size int, options ...SessionPoolOption
 
 	// use sane defaults
 	option := sessionPoolOption{
-		Size:        size,
-		Confirmable: false,
-		BufferSize:  1, // fault tolerance over throughput
-		Logger:      logging.NewNoOpLogger(),
+		AutoClosePool: false, // caller owns the connection pool by default
+		Size:          size,
+		Confirmable:   false,
+		BufferSize:    1,        // fault tolerance over throughput
+		Logger:        pool.log, // derive logger from connection pool
 	}
 
 	for _, o := range options {
@@ -51,7 +53,8 @@ func newSessionPoolFromOption(pool *ConnectionPool, ctx context.Context, option 
 	ctx, cancel := context.WithCancel(ctx)
 
 	sp = &SessionPool{
-		pool: pool,
+		pool:              pool,
+		autoCloseConnPool: option.AutoClosePool,
 
 		size:        option.Size,
 		bufferSize:  option.BufferSize,
@@ -178,8 +181,11 @@ SessionClose:
 			break SessionClose
 		}
 	}
-
 	wg.Wait()
+
+	if sp.autoCloseConnPool {
+		sp.pool.Close()
+	}
 }
 
 func (sp *SessionPool) initCachedSessions() error {

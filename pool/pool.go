@@ -96,3 +96,7 @@ func (p *Pool) Context() context.Context {
 	// return child context because objects using this pool will rely on the session pool
 	return p.sp.ctx
 }
+
+func (p *Pool) Name() string {
+	return p.cp.Name()
+}

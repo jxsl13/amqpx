@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jxsl13/amqpx/logging"
 	"github.com/jxsl13/amqpx/pool"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/goleak"
@@ -15,8 +16,10 @@ func TestMain(m *testing.M) {
 }
 
 func TestNewConnectionPool(t *testing.T) {
-	p, err := pool.NewConnectionPool("amqp://admin:password@localhost:5672", 200,
+	connections := 5
+	p, err := pool.NewConnectionPool("amqp://admin:password@localhost:5672", connections,
 		pool.ConnectionPoolWithName("TestNewConnectionPool"),
+		pool.ConnectionPoolWithLogger(logging.NewTestLogger(t)),
 	)
 	if err != nil {
 		assert.NoError(t, err)
@@ -25,7 +28,7 @@ func TestNewConnectionPool(t *testing.T) {
 	defer p.Close()
 	var wg sync.WaitGroup
 
-	for i := 0; i < 200; i++ {
+	for i := 0; i < connections; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()

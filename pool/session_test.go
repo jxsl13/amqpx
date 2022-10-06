@@ -7,13 +7,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jxsl13/amqpx/logging"
 	"github.com/jxsl13/amqpx/pool"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestNewSession(t *testing.T) {
 
-	c, err := pool.NewConnection("amqp://admin:password@localhost:5672", "TestNewSession")
+	c, err := pool.NewConnection("amqp://admin:password@localhost:5672", "TestNewSession", pool.ConnectionWithLogger(logging.NewTestLogger(t)))
 	if err != nil {
 		assert.NoError(t, err)
 		return
@@ -22,7 +23,7 @@ func TestNewSession(t *testing.T) {
 
 	var wg sync.WaitGroup
 
-	sessions := 200
+	sessions := 5
 	wg.Add(sessions)
 	for id := 0; id < sessions; id++ {
 		go func(id int64) {

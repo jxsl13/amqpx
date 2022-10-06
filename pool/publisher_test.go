@@ -6,14 +6,21 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jxsl13/amqpx/logging"
 	"github.com/jxsl13/amqpx/pool"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestPublisher(t *testing.T) {
-
-	sessions := 100 // publisher sessions + consumer sessions
-	p, err := pool.New("amqp://admin:password@localhost:5672", 1, sessions, pool.WithConfirms(true))
+	connections := 1
+	sessions := 10 // publisher sessions + consumer sessions
+	p, err := pool.New("amqp://admin:password@localhost:5672",
+		connections,
+		sessions,
+		pool.WithName("TestPublisher"),
+		pool.WithConfirms(true),
+		pool.WithLogger(logging.NewTestLogger(t)),
+	)
 	if err != nil {
 		assert.NoError(t, err)
 		return

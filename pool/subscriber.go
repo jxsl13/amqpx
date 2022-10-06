@@ -3,7 +3,10 @@ package pool
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
+
+	"github.com/jxsl13/amqpx/logging"
 )
 
 type Subscriber struct {
@@ -18,6 +21,8 @@ type Subscriber struct {
 	cancel context.CancelFunc
 
 	wg sync.WaitGroup
+
+	log logging.Logger
 }
 
 func (s *Subscriber) Close() {
@@ -45,6 +50,8 @@ func NewSubscriber(p *Pool, options ...SubscriberOption) *Subscriber {
 	option := subscriberOption{
 		Ctx:           p.Context(),
 		AutoClosePool: false,
+
+		Logger: p.sp.log, // derive logger from session pool
 	}
 
 	for _, o := range options {
@@ -59,6 +66,8 @@ func NewSubscriber(p *Pool, options ...SubscriberOption) *Subscriber {
 
 		ctx:    ctx,
 		cancel: cancel,
+
+		log: option.Logger,
 	}
 
 	return sub
@@ -98,6 +107,12 @@ func (s *Subscriber) RegisterHandler(queue string, consumer string, autoAck bool
 
 		HandlerFunc: hf,
 	})
+
+	s.log.WithFields(map[string]any{
+		"subscriber": s.pool.Name(),
+		"consumer":   consumer,
+		"queue":      queue,
+	}).Info("registered handler")
 }
 
 // Start starts the consumers for all registered handler functions
@@ -114,6 +129,7 @@ func (s *Subscriber) Start() {
 		// after starting everything we want to set started to true
 		s.started = true
 
+		s.log.WithField("subscriber", s.pool.Name()).Info("started subscribers.")
 	}()
 
 	for _, h := range s.handlers {
@@ -171,14 +187,22 @@ func (s *Subscriber) consume(h handler) (err error) {
 			)
 		handle:
 			for {
+				s.info(msg.Exchange, msg.RoutingKey, h.Queue, "received message")
 				err = h.HandlerFunc(msg)
-				if err == nil || errors.Is(err, ErrClosed) {
-					break handle
-				}
-
 				if h.AutoAck {
-					// no acks required in this case
-					break handle
+					// no acks required
+					if err == nil {
+						// TODO: potential message loss
+						s.info(msg.Exchange, msg.RoutingKey, h.Queue, "processed message")
+						break handle
+					} else if errors.Is(err, ErrClosed) {
+						// unknown error
+						s.warn(msg.Exchange, msg.RoutingKey, h.Queue, fmt.Errorf("potential message loss: %w", err), string(msg.Body))
+					} else {
+						// unknown error
+						s.error(msg.Exchange, msg.RoutingKey, h.Queue, fmt.Errorf("potential message loss: %w", err), string(msg.Body))
+						break handle
+					}
 				}
 
 			ack:
@@ -195,10 +219,21 @@ func (s *Subscriber) consume(h handler) (err error) {
 							// only returns an error upon shutdown
 							// TODO: potential message loss
 							// transient session for shutdown?
+
+							s.warn(msg.Exchange, msg.RoutingKey, h.Queue, fmt.Errorf("potential message loss: missing (n)ack: %w", err), string(msg.Body))
 							return poolErr
 						}
+						// recovered successfully, retry ack/nack
+						continue ack
 					}
-					break ack
+
+					if err != nil {
+						s.info(msg.Exchange, msg.RoutingKey, h.Queue, "nacked message")
+					} else {
+						s.info(msg.Exchange, msg.RoutingKey, h.Queue, "acked message")
+					}
+					// successfully handled message
+					break handle
 				}
 			}
 		}
@@ -207,4 +242,42 @@ func (s *Subscriber) consume(h handler) (err error) {
 
 func (s *Subscriber) catchShutdown() <-chan struct{} {
 	return s.ctx.Done()
+}
+
+func (s *Subscriber) info(exchange, routingKey, queue string, a ...any) {
+	s.log.WithFields(map[string]any{
+		"subscriber": s.pool.Name(),
+		"exchange":   exchange,
+		"routingKey": routingKey,
+		"queue":      queue,
+	}).Info(a...)
+}
+
+func (s *Subscriber) warn(exchange, routingKey, queue string, err error, a ...any) {
+	s.log.WithFields(map[string]any{
+		"subscriber": s.pool.Name(),
+		"exchange":   exchange,
+		"routingKey": routingKey,
+		"queue":      queue,
+		"error":      err,
+	}).Warn(a...)
+}
+
+func (s *Subscriber) error(exchange, routingKey, queue string, err error, a ...any) {
+	s.log.WithFields(map[string]any{
+		"subscriber": s.pool.Name(),
+		"exchange":   exchange,
+		"routingKey": routingKey,
+		"queue":      queue,
+		"error":      err,
+	}).Error(a...)
+}
+
+func (s *Subscriber) debug(exchange, routingKey, queue string, a ...any) {
+	s.log.WithFields(map[string]any{
+		"subscriber": s.pool.Name(),
+		"exchange":   exchange,
+		"routingKey": routingKey,
+		"queue":      queue,
+	}).Debug(a...)
 }

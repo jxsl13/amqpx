@@ -132,6 +132,7 @@ func (cp *ConnectionPool) deriveConnection(id int, cached bool) (*Connection, er
 		ConnectionWithHeartbeatInterval(cp.heartbeat),
 		ConnectionWithTLS(cp.tls),
 		ConnectionWithCached(cached),
+		ConnectionWithLogger(cp.log),
 	)
 }
 
@@ -244,6 +245,10 @@ func (cp *ConnectionPool) Close() {
 		}
 	}
 	wg.Wait()
+}
+
+func (cp *ConnectionPool) Name() string {
+	return cp.name
 }
 
 func (cp *ConnectionPool) info(a ...any) {

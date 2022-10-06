@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"time"
+
+	"github.com/jxsl13/amqpx/logging"
 )
 
 type Publisher struct {
@@ -14,6 +16,8 @@ type Publisher struct {
 
 	ctx    context.Context
 	cancel context.CancelFunc
+
+	log logging.Logger
 }
 
 func (p *Publisher) Close() {
@@ -35,6 +39,7 @@ func NewPublisher(p *Pool, options ...PublisherOption) *Publisher {
 		PublishTimeout: 15 * time.Second,
 		ConfirmTimeout: 15 * time.Second,
 		AutoClosePool:  false,
+		Logger:         p.sp.log, // derive logger from session pool
 	}
 
 	for _, o := range options {
@@ -50,6 +55,8 @@ func NewPublisher(p *Pool, options ...PublisherOption) *Publisher {
 
 		ctx:    ctx,
 		cancel: cancel,
+
+		log: option.Logger,
 	}
 
 	return pub
@@ -69,13 +76,25 @@ func (p *Publisher) Publish(exchange string, routingKey string, mandatory bool, 
 }
 
 func (p *Publisher) publish(exchange string, routingKey string, mandatory bool, immediate bool, msg Publishing) (err error) {
+	defer func() {
+		if err != nil {
+			p.warn(exchange, routingKey, err)
+		} else {
+			p.info(exchange, routingKey, "published a message")
+		}
+	}()
+
 	s, err := p.pool.GetSession()
 	if err != nil && errors.Is(err, ErrClosed) {
 		return ErrClosed
 	}
 	defer func() {
 		// return session
-		if err == nil || !errors.Is(err, ErrClosed) {
+		if err == nil {
+			p.pool.ReturnSession(s, false)
+		} else if errors.Is(err, ErrClosed) {
+			// TODO: potential message loss upon shutdown
+			// might try a transient session for this one
 			p.pool.ReturnSession(s, false)
 		} else {
 			p.pool.ReturnSession(s, true)
@@ -98,4 +117,29 @@ func (p *Publisher) publish(exchange string, routingKey string, mandatory bool, 
 	defer confirmCancel()
 
 	return s.AwaitConfirm(confirmCtx, tag)
+}
+
+func (p *Publisher) info(exchange, routingKey string, a ...any) {
+	p.log.WithFields(map[string]any{
+		"publisher":  p.pool.cp.Name(),
+		"exchange":   exchange,
+		"routingKey": routingKey,
+	}).Info(a...)
+}
+
+func (p *Publisher) warn(exchange, routingKey string, err error, a ...any) {
+	p.log.WithFields(map[string]any{
+		"publisher":  p.pool.cp.Name(),
+		"exchange":   exchange,
+		"routingKey": routingKey,
+		"error":      err,
+	}).Warn(a...)
+}
+
+func (p *Publisher) debug(exchange, routingKey string, a ...any) {
+	p.log.WithFields(map[string]any{
+		"publisher":  p.pool.cp.Name(),
+		"exchange":   exchange,
+		"routingKey": routingKey,
+	}).Debug(a...)
 }

@@ -9,7 +9,8 @@ type sessionPoolOption struct {
 	Confirmable bool // whether published messages require confirmation awaiting
 	BufferSize  int  // size of the sessio internal confirmation and error buffers.
 
-	Logger logging.Logger
+	AutoClosePool bool // whether to close the internal connection pool automatically
+	Logger        logging.Logger
 }
 
 type SessionPoolOption func(*sessionPoolOption)
@@ -36,5 +37,14 @@ func SessionPoolWithBufferSize(size int) SessionPoolOption {
 func SessionPoolWithConfirms(requirePublishConfirms bool) SessionPoolOption {
 	return func(po *sessionPoolOption) {
 		po.Confirmable = requirePublishConfirms
+	}
+}
+
+// SessionPoolWithAutoCloseConnectionPool allows to close the internal connection pool automatically.
+// This is helpful in case you have a session pool that is the onl yuser of the connection pool.
+// You are basically passing ownership of the connection pool to the session pool with this.
+func SessionPoolWithAutoCloseConnectionPool(autoClose bool) SessionPoolOption {
+	return func(po *sessionPoolOption) {
+		po.AutoClosePool = autoClose
 	}
 }

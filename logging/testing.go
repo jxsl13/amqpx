@@ -118,16 +118,16 @@ func (l *TestLogger) fieldsMsg(level, msg string) string {
 	}
 	kv := make([]string, 0, size)
 	for k, v := range l.fields {
-		kv = append(kv, fmt.Sprintf("%q: %v", k, v))
+		kv = append(kv, fmt.Sprintf("%s=%v", k, v))
 	}
 
 	if level != "" {
-		kv = append(kv, fmt.Sprintf(`"level": %s`, strings.ToLower(level)))
+		level = fmt.Sprintf(`level=%s`, strings.ToLower(level))
 	}
-	kv = append(kv, fmt.Sprintf(`"msg": %s`, msg))
+	kv = append(kv, fmt.Sprintf(`msg=%s`, msg))
 
 	sort.Strings(kv)
-	return strings.Join(kv, ", ")
+	return fmt.Sprintf("%s, %s", level, strings.Join(kv, ", "))
 }
 
 func (l *TestLogger) logf(level Level, prefix, format string, args ...any) {
