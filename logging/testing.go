@@ -21,7 +21,7 @@ func NewTestLogger(t *testing.T) *TestLogger {
 
 func newTestLoggerWithFields(l *TestLogger, fields Fields) *TestLogger {
 	n := &TestLogger{
-		level:  DebugLevel,
+		level:  l.level,
 		t:      l.t,
 		fields: make(map[string]any, len(fields)+len(l.fields)),
 	}
@@ -144,27 +144,32 @@ func (l *TestLogger) fieldsMsg(level, msg string) string {
 	return fmt.Sprintf("%s, %s", prefix, strings.Join(kv, ", "))
 }
 
-func (l *TestLogger) logf(level Level, prefix, format string, args ...any) {
+func (l *TestLogger) logf(reqLevel Level, prefix, format string, args ...any) {
 	l.t.Helper()
-	if l.level >= level {
-		msg := fmt.Sprintf(format, args...)
-		if level <= FatalLevel {
-			l.t.Fatal(l.fieldsMsg(prefix, msg))
-		} else {
-			l.t.Log(l.fieldsMsg(prefix, msg))
-		}
+	if l.level < reqLevel {
+		return
 	}
+
+	msg := fmt.Sprintf(format, args...)
+	if reqLevel <= FatalLevel {
+		l.t.Fatal(l.fieldsMsg(prefix, msg))
+	} else {
+		l.t.Log(l.fieldsMsg(prefix, msg))
+	}
+
 }
 
-func (l *TestLogger) log(level Level, prefix string, args ...any) {
+func (l *TestLogger) log(reqLevel Level, prefix string, args ...any) {
 	l.t.Helper()
-	if l.level >= level {
-		msg := fmt.Sprint(args...)
-
-		if level <= FatalLevel {
-			l.t.Fatal(l.fieldsMsg(prefix, msg))
-		} else {
-			l.t.Log(l.fieldsMsg(prefix, msg))
-		}
+	if l.level < reqLevel {
+		return
 	}
+	msg := fmt.Sprint(args...)
+
+	if reqLevel <= FatalLevel {
+		l.t.Fatal(l.fieldsMsg(prefix, msg))
+	} else {
+		l.t.Log(l.fieldsMsg(prefix, msg))
+	}
+
 }
