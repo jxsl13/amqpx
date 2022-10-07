@@ -27,6 +27,9 @@ type Subscriber struct {
 }
 
 func (s *Subscriber) Close() {
+	s.debugSimple("closing subscriber...")
+	defer s.infoSimple("closed")
+
 	s.cancel()
 	s.wg.Wait()
 
@@ -74,8 +77,10 @@ func NewSubscriber(p *Pool, options ...SubscriberOption) *Subscriber {
 	return sub
 }
 
+// HandlerFunc is basically a handler for incoming messages/events.
 type HandlerFunc func(amqp091.Delivery) error
 
+// Handler is a struct that contains all parameters needed in order to register a handler function.
 type Handler struct {
 	Queue    string
 	Consumer string
@@ -89,6 +94,25 @@ type Handler struct {
 	HandlerFunc HandlerFunc
 }
 
+// RegisterHandlerFunc registers a consumer function that starts a consumer upon subscriber startup.
+// The consumer is identified by a string that is unique and scoped for all consumers on this channel.
+// An empty string will cause the library to generate a unique identity.
+// The consumer identity will be included in every Delivery in the ConsumerTag field
+//
+// When autoAck (also known as noAck) is true, the server will acknowledge deliveries to this consumer prior to writing the delivery to the network. When autoAck is true, the consumer should not call Delivery.Ack.
+// Automatically acknowledging deliveries means that some deliveries may get lost if the consumer is unable to process them after the server delivers them. See http://www.rabbitmq.com/confirms.html for more details.
+//
+// When exclusive is true, the server will ensure that this is the sole consumer from this queue. When exclusive is false, the server will fairly distribute deliveries across multiple consumers.
+//
+// The noLocal flag is not supported by RabbitMQ.
+// It's advisable to use separate connections for Channel.Publish and Channel.Consume so not to have TCP pushback on publishing affect the ability to consume messages, so this parameter is here mostly for completeness.
+//
+// When noWait is true, do not wait for the server to confirm the request and immediately begin deliveries. If it is not possible to consume, a channel exception will be raised and the channel will be closed.
+// Optional arguments can be provided that have specific semantics for the queue or server.
+//
+// Inflight messages, limited by Channel.Qos will be buffered until received from the returned chan.
+// When the Channel or Connection is closed, all buffered and inflight messages will be dropped.
+// When the consumer identifier tag is cancelled, all inflight messages will be delivered until the returned chan is closed.
 func (s *Subscriber) RegisterHandlerFunc(queue string, consumer string, autoAck bool, exclusive bool, noLocal bool, noWait bool, args amqp091.Table, hf HandlerFunc) {
 	if hf == nil {
 		panic("HandlerFunc must not be nil")
@@ -142,11 +166,12 @@ func (s *Subscriber) Start() {
 	if s.started {
 		panic("subscriber cannot be started more than once")
 	}
+
+	s.debugSimple("starting subscriber...")
 	defer func() {
 		// after starting everything we want to set started to true
 		s.started = true
-
-		s.log.WithField("subscriber", s.pool.Name()).Info("started subscribers.")
+		s.infoSimple("started")
 	}()
 
 	for _, h := range s.handlers {
@@ -168,17 +193,25 @@ func (s *Subscriber) consumer(h Handler, wg *sync.WaitGroup) {
 }
 
 func (s *Subscriber) consume(h Handler) (err error) {
+	s.debugConsumer(h.Consumer, "starting consumer...")
+
 	session, err := s.pool.GetSession()
 	if err != nil {
 		return err
 	}
 	defer func() {
-		if err == nil || errors.Is(err, ErrClosed) {
-			// no error or graceful shutdown
+		if err == nil {
+			// no error
 			s.pool.ReturnSession(session, false)
+			s.infoConsumer(h.Consumer, "closed")
+		} else if errors.Is(err, ErrClosed) {
+			// graceful shutdown
+			s.pool.ReturnSession(session, false)
+			s.infoConsumer(h.Consumer, "closed")
 		} else {
 			// actual error
 			s.pool.ReturnSession(session, true)
+			s.warnConsumer(h.Consumer, err, "closed unexpectedly")
 		}
 	}()
 
@@ -187,7 +220,7 @@ func (s *Subscriber) consume(h Handler) (err error) {
 	if err != nil {
 		return err
 	}
-
+	s.infoConsumer(h.Consumer, "started")
 	for {
 		select {
 		case <-s.catchShutdown():
@@ -204,20 +237,20 @@ func (s *Subscriber) consume(h Handler) (err error) {
 			)
 		handle:
 			for {
-				s.info(msg.Exchange, msg.RoutingKey, h.Queue, "received message")
+				s.infoHandler(h.Consumer, msg.Exchange, msg.RoutingKey, h.Queue, "received message")
 				err = h.HandlerFunc(msg)
 				if h.AutoAck {
 					// no acks required
 					if err == nil {
 						// TODO: potential message loss
-						s.info(msg.Exchange, msg.RoutingKey, h.Queue, "processed message")
+						s.infoHandler(h.Consumer, msg.Exchange, msg.RoutingKey, h.Queue, "processed message")
 						break handle
 					} else if errors.Is(err, ErrClosed) {
 						// unknown error
-						s.warn(msg.Exchange, msg.RoutingKey, h.Queue, fmt.Errorf("potential message loss: %w", err), string(msg.Body))
+						s.warnHandler(h.Consumer, msg.Exchange, msg.RoutingKey, h.Queue, fmt.Errorf("potential message loss: %w", err), string(msg.Body))
 					} else {
 						// unknown error
-						s.error(msg.Exchange, msg.RoutingKey, h.Queue, fmt.Errorf("potential message loss: %w", err), string(msg.Body))
+						s.errorHandler(h.Consumer, msg.Exchange, msg.RoutingKey, h.Queue, fmt.Errorf("potential message loss: %w", err), string(msg.Body))
 						break handle
 					}
 				}
@@ -237,7 +270,7 @@ func (s *Subscriber) consume(h Handler) (err error) {
 							// TODO: potential message loss
 							// transient session for shutdown?
 
-							s.warn(msg.Exchange, msg.RoutingKey, h.Queue, fmt.Errorf("potential message loss: missing (n)ack: %w", err), string(msg.Body))
+							s.warnHandler(h.Consumer, msg.Exchange, msg.RoutingKey, h.Queue, fmt.Errorf("potential message loss: missing (n)ack: %w", err), string(msg.Body))
 							return poolErr
 						}
 						// recovered successfully, retry ack/nack
@@ -245,9 +278,9 @@ func (s *Subscriber) consume(h Handler) (err error) {
 					}
 
 					if err != nil {
-						s.info(msg.Exchange, msg.RoutingKey, h.Queue, "nacked message")
+						s.infoHandler(h.Consumer, msg.Exchange, msg.RoutingKey, h.Queue, "nacked message")
 					} else {
-						s.info(msg.Exchange, msg.RoutingKey, h.Queue, "acked message")
+						s.infoHandler(h.Consumer, msg.Exchange, msg.RoutingKey, h.Queue, "acked message")
 					}
 					// successfully handled message
 					break handle
@@ -261,18 +294,20 @@ func (s *Subscriber) catchShutdown() <-chan struct{} {
 	return s.ctx.Done()
 }
 
-func (s *Subscriber) info(exchange, routingKey, queue string, a ...any) {
+func (s *Subscriber) infoHandler(consumer, exchange, routingKey, queue string, a ...any) {
 	s.log.WithFields(map[string]any{
 		"subscriber": s.pool.Name(),
+		"consumer":   consumer,
 		"exchange":   exchange,
 		"routingKey": routingKey,
 		"queue":      queue,
 	}).Info(a...)
 }
 
-func (s *Subscriber) warn(exchange, routingKey, queue string, err error, a ...any) {
+func (s *Subscriber) warnHandler(consumer, exchange, routingKey, queue string, err error, a ...any) {
 	s.log.WithFields(map[string]any{
 		"subscriber": s.pool.Name(),
+		"consumer":   consumer,
 		"exchange":   exchange,
 		"routingKey": routingKey,
 		"queue":      queue,
@@ -280,9 +315,10 @@ func (s *Subscriber) warn(exchange, routingKey, queue string, err error, a ...an
 	}).Warn(a...)
 }
 
-func (s *Subscriber) error(exchange, routingKey, queue string, err error, a ...any) {
+func (s *Subscriber) errorHandler(consumer, exchange, routingKey, queue string, err error, a ...any) {
 	s.log.WithFields(map[string]any{
 		"subscriber": s.pool.Name(),
+		"consumer":   consumer,
 		"exchange":   exchange,
 		"routingKey": routingKey,
 		"queue":      queue,
@@ -290,11 +326,46 @@ func (s *Subscriber) error(exchange, routingKey, queue string, err error, a ...a
 	}).Error(a...)
 }
 
-func (s *Subscriber) debug(exchange, routingKey, queue string, a ...any) {
+func (s *Subscriber) debugHandler(consumer, exchange, routingKey, queue string, a ...any) {
 	s.log.WithFields(map[string]any{
 		"subscriber": s.pool.Name(),
+		"consumer":   consumer,
 		"exchange":   exchange,
 		"routingKey": routingKey,
 		"queue":      queue,
 	}).Debug(a...)
+}
+
+func (s *Subscriber) infoSimple(a ...any) {
+	s.log.WithFields(map[string]any{
+		"subscriber": s.pool.Name(),
+	}).Info(a...)
+}
+
+func (s *Subscriber) debugSimple(a ...any) {
+	s.log.WithFields(map[string]any{
+		"subscriber": s.pool.Name(),
+	}).Debug(a...)
+}
+
+func (s *Subscriber) debugConsumer(consumer string, a ...any) {
+	s.log.WithFields(map[string]any{
+		"subscriber": s.pool.Name(),
+		"consumer":   consumer,
+	}).Debug(a...)
+}
+
+func (s *Subscriber) warnConsumer(consumer string, err error, a ...any) {
+	s.log.WithFields(map[string]any{
+		"subscriber": s.pool.Name(),
+		"consumer":   consumer,
+		"error":      err,
+	}).Warn(a...)
+}
+
+func (s *Subscriber) infoConsumer(consumer string, a ...any) {
+	s.log.WithFields(map[string]any{
+		"subscriber": s.pool.Name(),
+		"consumer":   consumer,
+	}).Info(a...)
 }

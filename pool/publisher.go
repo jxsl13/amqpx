@@ -22,6 +22,9 @@ type Publisher struct {
 }
 
 func (p *Publisher) Close() {
+	p.debugSimple("closing publisher...")
+	defer p.infoSimple("closed")
+
 	p.cancel()
 
 	if p.autoClosePool {
@@ -61,6 +64,7 @@ func NewPublisher(p *Pool, options ...PublisherOption) *Publisher {
 		log: option.Logger,
 	}
 
+	pub.infoSimple("publisher initialized")
 	return pub
 }
 
@@ -73,7 +77,7 @@ func (p *Publisher) Publish(exchange string, routingKey string, mandatory bool, 
 		} else if errors.Is(err, ErrClosed) {
 			return err
 		} else {
-			p.debug(exchange, routingKey, "failed with error: ", err.Error())
+			p.warn(exchange, routingKey, err, "publish failed, retrying")
 		}
 		// continue in any other error case
 	}
@@ -134,8 +138,6 @@ func (p *Publisher) Get(queue string, autoAck bool) (msg *amqp091.Delivery, ok b
 		if err == nil {
 			p.pool.ReturnSession(s, false)
 		} else if errors.Is(err, ErrClosed) {
-			// TODO: potential message loss upon shutdown
-			// might try a transient session for this one
 			p.pool.ReturnSession(s, false)
 		} else {
 			p.pool.ReturnSession(s, true)
@@ -147,7 +149,7 @@ func (p *Publisher) Get(queue string, autoAck bool) (msg *amqp091.Delivery, ok b
 
 func (p *Publisher) info(exchange, routingKey string, a ...any) {
 	p.log.WithFields(map[string]any{
-		"publisher":  p.pool.cp.Name(),
+		"publisher":  p.pool.Name(),
 		"exchange":   exchange,
 		"routingKey": routingKey,
 	}).Info(a...)
@@ -155,7 +157,7 @@ func (p *Publisher) info(exchange, routingKey string, a ...any) {
 
 func (p *Publisher) warn(exchange, routingKey string, err error, a ...any) {
 	p.log.WithFields(map[string]any{
-		"publisher":  p.pool.cp.Name(),
+		"publisher":  p.pool.Name(),
 		"exchange":   exchange,
 		"routingKey": routingKey,
 		"error":      err,
@@ -164,8 +166,20 @@ func (p *Publisher) warn(exchange, routingKey string, err error, a ...any) {
 
 func (p *Publisher) debug(exchange, routingKey string, a ...any) {
 	p.log.WithFields(map[string]any{
-		"publisher":  p.pool.cp.Name(),
+		"publisher":  p.pool.Name(),
 		"exchange":   exchange,
 		"routingKey": routingKey,
+	}).Debug(a...)
+}
+
+func (p *Publisher) infoSimple(a ...any) {
+	p.log.WithFields(map[string]any{
+		"publisher": p.pool.Name(),
+	}).Info(a...)
+}
+
+func (p *Publisher) debugSimple(a ...any) {
+	p.log.WithFields(map[string]any{
+		"publisher": p.pool.Name(),
 	}).Debug(a...)
 }

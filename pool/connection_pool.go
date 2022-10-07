@@ -222,7 +222,7 @@ func (cp *ConnectionPool) ReturnConnection(conn *Connection, flag bool) {
 // Any returned sessions or connections will be closed properly.
 func (cp *ConnectionPool) Close() {
 
-	cp.debug("closing...")
+	cp.debug("closing connection pool...")
 	defer cp.info("closed")
 
 	wg := &sync.WaitGroup{}

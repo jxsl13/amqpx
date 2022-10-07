@@ -93,7 +93,7 @@ func (s *Session) Close() (err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.debug("closing...")
+	s.debug("closing session...")
 	defer func() {
 		if err != nil {
 			s.warn(err, "closed")
