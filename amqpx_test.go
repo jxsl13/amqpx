@@ -5,6 +5,7 @@ import (
 	"os/signal"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/jxsl13/amqpx"
 	"github.com/jxsl13/amqpx/logging"
@@ -77,20 +78,48 @@ func TestAMQPXPub(t *testing.T) {
 		assert.NoError(t, err)
 		return
 	}
+	defer func() {
+		// will be canceled when the event has reache dthe third handler
+		err = amqpx.Close()
+		assert.NoError(t, err)
+	}()
+
+	event := "TestAMQPXPub - event content"
 
 	// publish event to first queue
 	err = amqpx.Publish("exchange-01", "event-01", false, false, amqpx.Publishing{
 		ContentType: "application/json",
-		Body:        []byte("TestAMQPXPub - event content"),
+		Body:        []byte(event),
 	})
 	if err != nil {
 		assert.NoError(t, err)
 		return
 	}
 
-	// will be canceled when the event has reache dthe third handler
-	err = amqpx.Close()
-	assert.NoError(t, err)
+	var (
+		msg *amqpx.Delivery
+		ok  bool
+	)
+	for i := 0; i < 20; i++ {
+		msg, ok, err = amqpx.Get("queue-01", false)
+		if err != nil {
+			assert.NoError(t, err)
+			return
+		}
+		if !ok {
+			time.Sleep(100 * time.Millisecond)
+			continue
+		}
+		break
+	}
+
+	if msg == nil || !ok {
+		assert.NotNil(t, msg)
+		assert.True(t, ok)
+		return
+	}
+
+	assert.Equal(t, event, string(msg.Body))
 }
 
 func TestAMQPXSubAndPub(t *testing.T) {
@@ -114,6 +143,8 @@ func TestAMQPXSubAndPub(t *testing.T) {
 	err := amqpx.Start(
 		amqpx.NewURL("localhost", 5672, "admin", "password"),
 		amqpx.WithLogger(log),
+		amqpx.WithPublisherConnections(1),
+		amqpx.WithPublisherSessions(2),
 	)
 	if err != nil {
 		assert.NoError(t, err)

@@ -123,6 +123,28 @@ func (p *Publisher) publish(exchange string, routingKey string, mandatory bool, 
 	return s.AwaitConfirm(confirmCtx, tag)
 }
 
+// Get is only supposed to be used for testing, do not use get for polling any broker queues.
+func (p *Publisher) Get(queue string, autoAck bool) (msg *amqp091.Delivery, ok bool, err error) {
+	s, err := p.pool.GetSession()
+	if err != nil && errors.Is(err, ErrClosed) {
+		return nil, false, ErrClosed
+	}
+	defer func() {
+		// return session
+		if err == nil {
+			p.pool.ReturnSession(s, false)
+		} else if errors.Is(err, ErrClosed) {
+			// TODO: potential message loss upon shutdown
+			// might try a transient session for this one
+			p.pool.ReturnSession(s, false)
+		} else {
+			p.pool.ReturnSession(s, true)
+		}
+	}()
+
+	return s.Get(queue, autoAck)
+}
+
 func (p *Publisher) info(exchange, routingKey string, a ...any) {
 	p.log.WithFields(map[string]any{
 		"publisher":  p.pool.cp.Name(),

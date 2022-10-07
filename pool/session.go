@@ -264,6 +264,15 @@ func (s *Session) Publish(ctx context.Context, exchange string, routingKey strin
 	return tag, nil
 }
 
+// Get is only supposed to be used for testing purposes, do not us eit to poll the queue periodically.
+func (s *Session) Get(queue string, autoAck bool) (msg *amqp091.Delivery, ok bool, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	m, ok, err := s.channel.Get(queue, autoAck)
+	return &m, ok, err
+}
+
 func (s *Session) Nack(deliveryTag uint64, multiple bool, requeue bool) (err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
