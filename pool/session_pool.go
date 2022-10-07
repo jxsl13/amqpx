@@ -162,7 +162,7 @@ func (sp *SessionPool) catchShutdown() <-chan struct{} {
 func (sp *SessionPool) Close() {
 
 	sp.info("closing session pool...")
-	defer sp.info("closed.")
+	defer sp.info("closed")
 
 	wg := &sync.WaitGroup{}
 
