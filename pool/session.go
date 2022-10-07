@@ -325,7 +325,7 @@ func (s *Session) Consume(queue string, consumer string, autoAck bool, exclusive
 
 	if consumer == "" {
 		// use our own consumer naming
-		consumer = fmt.Sprintf("%s-%s-%s", defaultAppName(), s.conn.Name(), s.Name())
+		consumer = s.Name()
 	}
 
 	c, err := s.channel.Consume(queue, consumer, autoAck, exclusive, noLocal, noWait, args)
