@@ -134,7 +134,7 @@ func TestAMQPXSubAndPub(t *testing.T) {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGINT)
 	defer cancel()
 
-	// eventContent := "TestAMQPXSubAndPub - event content"
+	eventContent := "TestAMQPXSubAndPub - event content"
 
 	amqpx.RegisterHandler("queue-01", "", false, false, false, false, nil, func(msg amqpx.Delivery) error {
 		log.Info("subscriber of queue-01")
@@ -146,7 +146,7 @@ func TestAMQPXSubAndPub(t *testing.T) {
 		amqpx.NewURL("localhost", 5672, "admin", "password"),
 		amqpx.WithLogger(log),
 		amqpx.WithPublisherConnections(1),
-		amqpx.WithPublisherSessions(2),
+		amqpx.WithPublisherSessions(5),
 	)
 	if err != nil {
 		assert.NoError(t, err)
@@ -154,16 +154,16 @@ func TestAMQPXSubAndPub(t *testing.T) {
 	}
 
 	// publish event to first queue
-	/*
-		err = amqpx.Publish("exchange-01", "event-01", false, false, amqpx.Publishing{
-			ContentType: "application/json",
-			Body:        []byte(eventContent),
-		})
-		if err != nil {
-			assert.NoError(t, err)
-			return
-		}
-	*/
+
+	err = amqpx.Publish("exchange-01", "event-01", false, false, amqpx.Publishing{
+		ContentType: "application/json",
+		Body:        []byte(eventContent),
+	})
+	if err != nil {
+		assert.NoError(t, err)
+		return
+	}
+
 	// will be canceled when the event has reache dthe third handler
 	<-ctx.Done()
 	log.Info("context canceled, closing test.")
