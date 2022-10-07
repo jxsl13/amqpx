@@ -1,6 +1,11 @@
 # amqpx
 
-`amqpx` is a wrapper for `github.com/rabbitmq/amqp091-go`.
+[![Go Reference](https://pkg.go.dev/badge/github.com/jxsl13/amqpx.svg)](https://pkg.go.dev/github.com/jxsl13/amqpx)
+[![Go Report Card](https://goreportcard.com/badge/github.com/jxsl13/amqpx)](https://goreportcard.com/report/github.com/jxsl13/amqpx)
+[![GitHub go.mod Go version of a Go module](https://img.shields.io/github/go-mod/go-version/gomods/athens.svg)](https://github.com/gomods/athens)
+
+
+`amqpx` is a robust and easy to use wrapper for `github.com/rabbitmq/amqp091-go`.
 
 **Core features**
 - connection pooling
