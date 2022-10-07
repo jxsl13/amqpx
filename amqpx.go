@@ -219,6 +219,10 @@ func close() (err error) {
 					return
 				}
 			}
+
+			// finally close the publisher pool
+			// which is also used for topology.
+			pubPool.Close()
 		}
 	})
 	return err
@@ -230,6 +234,14 @@ func Publish(exchange string, routingKey string, mandatory bool, immediate bool,
 		panic("amqpx package was not started")
 	}
 	return pub.Publish(exchange, routingKey, mandatory, immediate, msg)
+}
+
+// Get is only supposed to be used for testing, do not use get for polling any broker queues.
+func Get(queue string, autoAck bool) (msg *Delivery, ok bool, err error) {
+	if pub == nil {
+		panic("amqpx package was not started")
+	}
+	return pub.Get(queue, autoAck)
 }
 
 // Reset closes the current package and resets its state before it was initialized and started.
