@@ -10,20 +10,13 @@ import (
 )
 
 var (
-	pubPool *pool.Pool
-	pub     *pool.Publisher
-	sub     *pool.Subscriber
-
-	mu               sync.Mutex
-	handlers         = make([]pool.Handler, 0)
-	topologies       = make([]TopologyFunc, 0)
-	topologyDeleters = make([]TopologyFunc, 0)
-
-	startOnce sync.Once
-	closeOnce sync.Once
+	// global variable, as we usually only need a single connection
+	amqpx = New()
 )
 
 type (
+	Table = amqp091.Table
+
 	Topologer    = pool.Topologer
 	TopologyFunc func(*Topologer) error
 
@@ -35,7 +28,7 @@ type (
 
 var (
 	// QuorumArgs is the argument you need to pass in order to create a quorum queue.
-	QuorumQueue = amqp091.Table{
+	QuorumQueue = Table{
 		"x-queue-type": "quorum",
 	}
 )
@@ -46,42 +39,83 @@ const (
 	DeadLetterExchangeKey = "x-dead-letter-exchange"
 )
 
+type AMQPX struct {
+	pubPool *pool.Pool
+	pub     *pool.Publisher
+	sub     *pool.Subscriber
+
+	mu               sync.Mutex
+	handlers         []pool.Handler
+	topologies       []TopologyFunc
+	topologyDeleters []TopologyFunc
+
+	startOnce sync.Once
+	closeOnce sync.Once
+}
+
+func New() *AMQPX {
+	return &AMQPX{
+		pubPool: nil,
+		pub:     nil,
+		sub:     nil,
+
+		handlers:         make([]pool.Handler, 0),
+		topologies:       make([]TopologyFunc, 0),
+		topologyDeleters: make([]TopologyFunc, 0),
+	}
+}
+
+// NewURL creates a new conenction string for the NewSessionFactory
+// hostname: 	e.g. localhost
+// port:        e.g. 5672
+// username:	e.g. username
+// password:    e.g. password
+// vhost:       e.g. "" or "/"
+func NewURL(hostname string, port int, username, password string, vhost ...string) string {
+	vhoststr := ""
+	if len(vhost) > 0 {
+		vhoststr = strings.TrimLeft(vhost[0], "/")
+	}
+
+	return fmt.Sprintf("amqp://%s:%s@%s:%d/%s", username, password, hostname, port, vhoststr)
+}
+
 // RegisterTopology registers a topology creating function that is called upon
 // Start. The creation of topologie sis the first step before any publisher or subscriber is started.
-func RegisterTopologyCreator(topology TopologyFunc) {
+func (a *AMQPX) RegisterTopologyCreator(topology TopologyFunc) {
 	if topology == nil {
 		panic("topology must not be nil")
 	}
-	mu.Lock()
-	defer mu.Unlock()
+	a.mu.Lock()
+	defer a.mu.Unlock()
 
-	topologies = append(topologies, topology)
+	a.topologies = append(a.topologies, topology)
 }
 
 // RegisterTopologyDeleter registers a topology finalizer that is executed at the end of
 // amqpx.Close().
-func RegisterTopologyDeleter(finalizer TopologyFunc) {
+func (a *AMQPX) RegisterTopologyDeleter(finalizer TopologyFunc) {
 	if finalizer == nil {
 		panic("topology must not be nil")
 	}
-	mu.Lock()
-	defer mu.Unlock()
+	a.mu.Lock()
+	defer a.mu.Unlock()
 
 	// prepend, execution in reverse order
-	topologyDeleters = append([]TopologyFunc{finalizer}, topologyDeleters...)
+	a.topologyDeleters = append([]TopologyFunc{finalizer}, a.topologyDeleters...)
 }
 
 // RegisterHandler registers a handler function for a specific queue.
 // consumer can be set to a unique consumer name (if left empty, a unique name will be generated)
-func RegisterHandler(queue string, consumer string, autoAck bool, exclusive bool, noLocal bool, noWait bool, args amqp091.Table, handlerFunc HandlerFunc) {
+func (a *AMQPX) RegisterHandler(queue string, consumer string, autoAck bool, exclusive bool, noLocal bool, noWait bool, args Table, handlerFunc HandlerFunc) {
 	if handlerFunc == nil {
 		panic("handlerFunc must not be nil")
 	}
 
-	mu.Lock()
-	defer mu.Unlock()
+	a.mu.Lock()
+	defer a.mu.Unlock()
 
-	handlers = append(handlers, pool.Handler{
+	a.handlers = append(a.handlers, pool.Handler{
 		Queue:       queue,
 		Consumer:    consumer,
 		AutoAck:     autoAck,
@@ -93,21 +127,6 @@ func RegisterHandler(queue string, consumer string, autoAck bool, exclusive bool
 	})
 }
 
-// NewURL creates a new conenction string for the NewSessionFactory
-// hostname: 	e.g. localhost
-// port:        e.g. 5672
-// username:	e.g. username
-// password:    e.g. password
-// vhost:       e.g. "" or "/" or ""
-func NewURL(hostname string, port int, username, password string, vhost ...string) string {
-	vhoststr := ""
-	if len(vhost) > 0 {
-		vhoststr = strings.TrimLeft(vhost[0], "/")
-	}
-
-	return fmt.Sprintf("amqp://%s:%s@%s:%d/%s", username, password, hostname, port, vhoststr)
-}
-
 // Start starts the subscriber and publisher pools.
 // In case no handlers were registered, no subscriber pool will be started.
 // connectUrl has the form: amqp://username:password@localhost:5672
@@ -116,10 +135,10 @@ func NewURL(hostname string, port int, username, password string, vhost ...strin
 // settings like publish confirmations or a custom context which can signal an application shutdown.
 // This customcontext does not replace the Close() call. Always defer a Close() call.
 // Start is a non-blocking operation.
-func Start(connectUrl string, options ...Option) (err error) {
-	startOnce.Do(func() {
-		mu.Lock()
-		defer mu.Unlock()
+func (a *AMQPX) Start(connectUrl string, options ...Option) (err error) {
+	a.startOnce.Do(func() {
+		a.mu.Lock()
+		defer a.mu.Unlock()
 
 		// sane defaults
 		option := option{
@@ -135,7 +154,7 @@ func Start(connectUrl string, options ...Option) (err error) {
 		}
 
 		// publisher and subscriber need to have different tcp connections (tcp pushback prevention)
-		pubPool, err = pool.New(
+		a.pubPool, err = pool.New(
 			connectUrl,
 			option.PublisherConnections,
 			option.PublisherSessions,
@@ -149,11 +168,11 @@ func Start(connectUrl string, options ...Option) (err error) {
 		}
 
 		// use publisher pool for topology
-		if len(topologies) > 0 {
+		if len(a.topologies) > 0 {
 			// create topology
-			topologer := pool.NewTopologer(pubPool)
+			topologer := pool.NewTopologer(a.pubPool)
 
-			for _, t := range topologies {
+			for _, t := range a.topologies {
 				err = t(topologer)
 				if err != nil {
 					return
@@ -164,11 +183,11 @@ func Start(connectUrl string, options ...Option) (err error) {
 
 		// publisher must before subscribers, as subscriber handlers might be using the publisher.
 		// do NOT auto close publisher pool
-		pub = pool.NewPublisher(pubPool, option.PublisherOptions...)
+		a.pub = pool.NewPublisher(a.pubPool, option.PublisherOptions...)
 
 		// create subscriber pool in case handlers were registered
-		if len(handlers) > 0 {
-			sessions := len(handlers)
+		if len(a.handlers) > 0 {
+			sessions := len(a.handlers)
 			connections := option.SubscriberConnections
 			if connections < 0 || sessions < connections {
 				connections = sessions
@@ -187,37 +206,37 @@ func Start(connectUrl string, options ...Option) (err error) {
 			if err != nil {
 				return
 			}
-			sub = pool.NewSubscriber(subPool, pool.SubscriberWithAutoClosePool(true))
-			for _, h := range handlers {
-				sub.RegisterHandler(h)
+			a.sub = pool.NewSubscriber(subPool, pool.SubscriberWithAutoClosePool(true))
+			for _, h := range a.handlers {
+				a.sub.RegisterHandler(h)
 			}
-			sub.Start()
+			a.sub.Start()
 		}
 	})
 	return err
 }
 
-func Close() error {
-	mu.Lock()
-	defer mu.Unlock()
+func (a *AMQPX) Close() error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 
-	return close()
+	return a.close()
 }
 
-func close() (err error) {
-	closeOnce.Do(func() {
+func (a *AMQPX) close() (err error) {
+	a.closeOnce.Do(func() {
 
-		if pub != nil {
+		if a.pub != nil {
 			// close producers first
-			pub.Close()
+			a.pub.Close()
 		}
-		if sub != nil {
-			sub.Close()
+		if a.sub != nil {
+			a.sub.Close()
 		}
 
-		if pubPool != nil {
-			topologer := pool.NewTopologer(pubPool)
-			for _, f := range topologyDeleters {
+		if a.pubPool != nil {
+			topologer := pool.NewTopologer(a.pubPool)
+			for _, f := range a.topologyDeleters {
 				e := f(topologer)
 				if e != nil {
 					err = e
@@ -227,42 +246,91 @@ func close() (err error) {
 
 			// finally close the publisher pool
 			// which is also used for topology.
-			pubPool.Close()
+			a.pubPool.Close()
 		}
 	})
 	return err
 }
 
 // Publish a message to a specific exchange with a given routingKey.
-func Publish(exchange string, routingKey string, mandatory bool, immediate bool, msg Publishing) error {
-	if pub == nil {
+func (a *AMQPX) Publish(exchange string, routingKey string, mandatory bool, immediate bool, msg Publishing) error {
+	if a.pub == nil {
 		panic("amqpx package was not started")
 	}
-	return pub.Publish(exchange, routingKey, mandatory, immediate, msg)
+	return a.pub.Publish(exchange, routingKey, mandatory, immediate, msg)
+}
+
+// Get is only supposed to be used for testing, do not use get for polling any broker queues.
+func (a *AMQPX) Get(queue string, autoAck bool) (msg *Delivery, ok bool, err error) {
+	if a.pub == nil {
+		panic("amqpx package was not started")
+	}
+	return a.pub.Get(queue, autoAck)
+}
+
+// Reset closes the current package and resets its state before it was initialized and started.
+func (a *AMQPX) Reset() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.close()
+
+	a.pubPool = nil
+	a.pub = nil
+	a.sub = nil
+
+	a.handlers = make([]pool.Handler, 0)
+	a.topologies = make([]TopologyFunc, 0)
+	a.topologyDeleters = make([]TopologyFunc, 0)
+
+	a.startOnce = sync.Once{}
+	a.closeOnce = sync.Once{}
+}
+
+// RegisterTopology registers a topology creating function that is called upon
+// Start. The creation of topologie sis the first step before any publisher or subscriber is started.
+func RegisterTopologyCreator(topology TopologyFunc) {
+	amqpx.RegisterTopologyCreator(topology)
+}
+
+// RegisterTopologyDeleter registers a topology finalizer that is executed at the end of
+// amqpx.Close().
+func RegisterTopologyDeleter(finalizer TopologyFunc) {
+	amqpx.RegisterTopologyDeleter(finalizer)
+}
+
+// RegisterHandler registers a handler function for a specific queue.
+// consumer can be set to a unique consumer name (if left empty, a unique name will be generated)
+func RegisterHandler(queue string, consumer string, autoAck bool, exclusive bool, noLocal bool, noWait bool, args Table, handlerFunc HandlerFunc) {
+	amqpx.RegisterHandler(queue, consumer, autoAck, exclusive, noLocal, noWait, args, handlerFunc)
+}
+
+// Start starts the subscriber and publisher pools.
+// In case no handlers were registered, no subscriber pool will be started.
+// connectUrl has the form: amqp://username:password@localhost:5672
+// pubSessions is the number of pooled sessions (channels) for the publisher.
+// options are optional pool connection options. They might also contain publisher specific
+// settings like publish confirmations or a custom context which can signal an application shutdown.
+// This customcontext does not replace the Close() call. Always defer a Close() call.
+// Start is a non-blocking operation.
+func Start(connectUrl string, options ...Option) (err error) {
+	return amqpx.Start(connectUrl, options...)
+}
+
+func Close() error {
+	return amqpx.Close()
+}
+
+// Publish a message to a specific exchange with a given routingKey.
+func Publish(exchange string, routingKey string, mandatory bool, immediate bool, msg Publishing) error {
+	return amqpx.Publish(exchange, routingKey, mandatory, immediate, msg)
 }
 
 // Get is only supposed to be used for testing, do not use get for polling any broker queues.
 func Get(queue string, autoAck bool) (msg *Delivery, ok bool, err error) {
-	if pub == nil {
-		panic("amqpx package was not started")
-	}
-	return pub.Get(queue, autoAck)
+	return amqpx.Get(queue, autoAck)
 }
 
 // Reset closes the current package and resets its state before it was initialized and started.
 func Reset() {
-	mu.Lock()
-	defer mu.Unlock()
-	close()
-
-	pubPool = nil
-	pub = nil
-	sub = nil
-
-	handlers = make([]pool.Handler, 0)
-	topologies = make([]TopologyFunc, 0)
-	topologyDeleters = make([]TopologyFunc, 0)
-
-	startOnce = sync.Once{}
-	closeOnce = sync.Once{}
+	amqpx.Reset()
 }
