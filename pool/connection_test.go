@@ -40,3 +40,22 @@ func TestNewConnection(t *testing.T) {
 
 	wg.Wait()
 }
+
+func TestNewConnectionDisconnect(t *testing.T) {
+
+	c, err := pool.NewConnection(
+		"amqp://admin:password@localhost:5672",
+		"TestNewConnection",
+		pool.ConnectionWithLogger(logging.NewTestLogger(t)),
+	)
+	if err != nil {
+		assert.NoError(t, err)
+		return
+	}
+	defer c.Close()
+
+	Disconnect(t, time.Second, 0, 2*time.Second)
+
+	assert.NoError(t, c.Recover())
+	assert.NoError(t, c.Error())
+}

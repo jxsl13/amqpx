@@ -145,7 +145,7 @@ func (ch *Connection) connect() error {
 		amqp.Config{
 			Heartbeat:       ch.heartbeat,
 			Dial:            amqp.DefaultDial(ch.connTimeout),
-			TLSClientConfig: ch.tls,
+			TLSClientConfig: ch.tls.Clone(),
 			Properties: amqp.Table{
 				"connection_name": ch.name,
 			},
@@ -339,7 +339,7 @@ func (ch *Connection) recover() error {
 
 	ch.flagged = false
 
-	ch.info("recovered.")
+	ch.info("recovered")
 	return nil
 }
 
