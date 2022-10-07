@@ -90,3 +90,8 @@ Test flags you might want to add:
 - see test logs
 - detect data races
 - do not cache test results
+
+Starting the test environment:
+```shell
+docker-compose up -d
+```
