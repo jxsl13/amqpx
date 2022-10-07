@@ -12,7 +12,7 @@ type Pool struct {
 	sp *SessionPool
 }
 
-func New(connectUrl string, numConns, numSessions int, options ...PoolOption) (*Pool, error) {
+func New(connectUrl string, numConns, numSessions int, options ...Option) (*Pool, error) {
 	if numConns < 1 {
 		panic("pool size is negative or 0")
 	}
