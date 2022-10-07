@@ -79,3 +79,14 @@ func main() {
 }
 
 ```
+
+
+## Development
+
+Test flags you might want to add:
+```shell
+-v -race -count=1
+```
+- see test logs
+- detect data races
+- do not cache test results

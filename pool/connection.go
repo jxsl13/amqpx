@@ -100,16 +100,25 @@ func NewConnection(connectUrl, name string, options ...ConnectionOption) (*Conne
 	return conn, nil
 }
 
-func (ch *Connection) info(a ...any) {
-	ch.log.WithField("connection", ch.Name()).Info(a...)
-}
+func (ch *Connection) Close() (err error) {
+	ch.mu.Lock()
+	defer ch.mu.Unlock()
 
-func (ch *Connection) warn(err error, a ...any) {
-	ch.log.WithField("connection", ch.Name()).WithField("error", err.Error()).Warn(a...)
-}
+	ch.debug("closing...")
+	defer func() {
+		if err != nil {
+			ch.warn(err, "closed")
+		} else {
+			ch.info("closed")
+		}
+	}()
 
-func (ch *Connection) debug(a ...any) {
-	ch.log.WithField("connection", ch.Name()).Debug(a...)
+	ch.cancel() // close derived context
+	if ch.conn != nil && !ch.conn.IsClosed() {
+		return ch.conn.Close() // close internal channel
+	}
+
+	return nil
 }
 
 // Flag flags the connection as broken which must be recovered.
@@ -145,7 +154,7 @@ func (ch *Connection) connect() error {
 	amqpConn, err := amqp.DialConfig(ch.url,
 		amqp.Config{
 			Heartbeat:       ch.heartbeat,
-			Dial:            amqp.DefaultDial(ch.connTimeout),
+			Dial:            defaultDial(ch.ctx, ch.connTimeout),
 			TLSClientConfig: ch.tls.Clone(),
 			Properties: amqp.Table{
 				"connection_name": ch.name,
@@ -227,26 +236,6 @@ func (ch *Connection) IsClosed() bool {
 	// connection closed 							-> cannot access it
 	// connection not closed but shutdown triggered -> is closed
 	return ch.conn == nil || ch.conn.IsClosed()
-}
-
-func (ch *Connection) Close() (err error) {
-	ch.mu.Lock()
-	defer ch.mu.Unlock()
-
-	ch.debug("closing...")
-	defer func() {
-		if err != nil {
-			ch.warn(err, "closed")
-		} else {
-			ch.info("closed")
-		}
-	}()
-
-	ch.cancel() // close derived context
-	if ch.conn != nil && !ch.conn.IsClosed() {
-		return ch.conn.Close() // close internal channel
-	}
-	return nil
 }
 
 // Error returns the first error from the errors channel
@@ -370,4 +359,16 @@ func (ch *Connection) isShutdown() bool {
 	default:
 		return false
 	}
+}
+
+func (ch *Connection) info(a ...any) {
+	ch.log.WithField("connection", ch.Name()).Info(a...)
+}
+
+func (ch *Connection) warn(err error, a ...any) {
+	ch.log.WithField("connection", ch.Name()).WithField("error", err.Error()).Warn(a...)
+}
+
+func (ch *Connection) debug(a ...any) {
+	ch.log.WithField("connection", ch.Name()).Debug(a...)
 }
