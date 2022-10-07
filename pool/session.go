@@ -93,12 +93,12 @@ func (s *Session) Close() (err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.info("closing...")
+	s.debug("closing...")
 	defer func() {
 		if err != nil {
-			s.warn(err, "closed.")
+			s.warn(err, "closed")
 		} else {
-			s.info("closed.")
+			s.info("closed")
 		}
 	}()
 	s.cancel()
@@ -138,11 +138,13 @@ func (s *Session) connect() (err error) {
 			s.channel = nil
 			s.errors = nil
 			s.confirms = nil
+
+			s.warn(err, "failed to open session")
 		} else {
-			s.info("opened session.")
+			s.info("opened session")
 		}
 	}()
-	s.info("opening session...")
+	s.debug("opening session...")
 
 	if s.conn.IsClosed() {
 		// do not reconnect connection explicitly

@@ -67,12 +67,12 @@ func newSessionPoolFromOption(pool *ConnectionPool, ctx context.Context, option 
 		log: option.Logger,
 	}
 
-	sp.info("initializing session pool")
+	sp.debug("initializing pool sessions...")
 	defer func() {
 		if err != nil {
-			sp.error(err, "initialization failed.")
+			sp.error(err, "failed to initialize pool sessions")
 		} else {
-			sp.info("initialized.")
+			sp.info("initialized")
 		}
 	}()
 

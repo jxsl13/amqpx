@@ -93,12 +93,12 @@ func newConnectionPoolFromOption(connectUrl string, option connectionPoolOption)
 		log: option.Logger,
 	}
 
-	cp.info("initializing pool connections")
+	cp.debug("initializing pool connections")
 	defer func() {
 		if err != nil {
 			cp.error(err, "failed to initialize pool connections")
 		} else {
-			cp.info("initialized.")
+			cp.info("initialized")
 		}
 	}()
 
@@ -222,8 +222,8 @@ func (cp *ConnectionPool) ReturnConnection(conn *Connection, flag bool) {
 // Any returned sessions or connections will be closed properly.
 func (cp *ConnectionPool) Close() {
 
-	cp.info("closing...")
-	defer cp.info("closed.")
+	cp.debug("closing...")
+	defer cp.info("closed")
 
 	wg := &sync.WaitGroup{}
 

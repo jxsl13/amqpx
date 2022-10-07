@@ -140,7 +140,7 @@ func (ch *Connection) connect() error {
 		return nil
 	}
 
-	ch.info("connecting...")
+	ch.debug("connecting...")
 	amqpConn, err := amqp.DialConfig(ch.url,
 		amqp.Config{
 			Heartbeat:       ch.heartbeat,
@@ -154,7 +154,7 @@ func (ch *Connection) connect() error {
 		return fmt.Errorf("%w: %v", ErrConnectionFailed, err)
 	}
 
-	ch.info("connected.")
+	ch.info("connected")
 	// override upon reconnect
 	ch.conn = amqpConn
 	ch.errors = make(chan *amqp.Error, 10)
@@ -234,12 +234,12 @@ func (ch *Connection) Close() (err error) {
 	ch.mu.Lock()
 	defer ch.mu.Unlock()
 
-	ch.info("closing...")
+	ch.debug("closing...")
 	defer func() {
 		if err != nil {
-			ch.warn(err, "closed.")
+			ch.warn(err, "closed")
 		} else {
-			ch.info("closed.")
+			ch.info("closed")
 		}
 	}()
 

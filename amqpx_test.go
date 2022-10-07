@@ -73,6 +73,8 @@ func TestAMQPXPub(t *testing.T) {
 	err := amqpx.Start(
 		amqpx.NewURL("localhost", 5672, "admin", "password"),
 		amqpx.WithLogger(log),
+		amqpx.WithPublisherConnections(1),
+		amqpx.WithPublisherSessions(2),
 	)
 	if err != nil {
 		assert.NoError(t, err)
