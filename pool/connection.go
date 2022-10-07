@@ -125,7 +125,7 @@ func (ch *Connection) Flag(flagged bool) {
 }
 
 // Connect tries to connect (or reconnect)
-// Does not block indefinitly, but returns an error
+// Does not block indefinitely, but returns an error
 // upon connection failure.
 func (ch *Connection) Connect() error {
 	ch.mu.Lock()

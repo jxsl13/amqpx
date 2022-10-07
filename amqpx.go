@@ -65,7 +65,7 @@ func New() *AMQPX {
 	}
 }
 
-// NewURL creates a new conenction string for the NewSessionFactory
+// NewURL creates a new connection string for the NewSessionFactory
 // hostname: 	e.g. localhost
 // port:        e.g. 5672
 // username:	e.g. username

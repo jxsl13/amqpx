@@ -88,7 +88,7 @@ func WithConfirmTimeout(timeout time.Duration) Option {
 }
 
 // WithPublishTimeout is the timout that we attempt to try sending our message to the broker
-// before aborting. This does not affect the overall time of publishing, as publishing is retried indefinitly.
+// before aborting. This does not affect the overall time of publishing, as publishing is retried indefinitely.
 func WithPublishTimeout(timeout time.Duration) Option {
 	return func(o *option) {
 		o.PublisherOptions = append(o.PublisherOptions, pool.PublisherWithPublishTimeout(timeout))
