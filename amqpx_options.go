@@ -10,7 +10,7 @@ import (
 )
 
 type option struct {
-	PoolOptions []pool.PoolOption
+	PoolOptions []pool.Option
 
 	PublisherOptions []pool.PublisherOption
 
@@ -130,5 +130,15 @@ func WithSubscriberConnections(connections int) Option {
 	}
 	return func(o *option) {
 		o.SubscriberConnections = connections
+	}
+}
+
+// WithPoolOption is a functionthat allows to directly manipulate the options of the underlying pool.
+// DO NOT USE this option unless you have read the source code enough in order to understand what configutaion options
+// influence what behavior.
+// This might make sense if you want to change the pool name prefix or suffix.
+func WithPoolOption(po pool.Option) Option {
+	return func(o *option) {
+		o.PoolOptions = append(o.PoolOptions, po)
 	}
 }
