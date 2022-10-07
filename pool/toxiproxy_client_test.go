@@ -38,12 +38,14 @@ func Disconnect(t *testing.T, block, timeout, duration time.Duration) {
 		proxy := NewProxy(t)
 
 		time.Sleep(time.Until(start))
+		log.Debug("disabled rabbitmq connection")
 		err := proxy.Disable()
 		if err != nil {
 			log.Fatal(err)
 		}
 
 		time.Sleep(duration)
+		log.Debug("enabled rabbitmq connection")
 		err = proxy.Enable()
 		if err != nil {
 			log.Fatal(err)

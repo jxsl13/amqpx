@@ -33,7 +33,7 @@ func TestNewConnection(t *testing.T) {
 				assert.Error(t, c.Error())
 			}()
 			defer c.Close()
-			time.Sleep(5 * time.Second)
+			time.Sleep(2 * time.Second)
 			assert.NoError(t, c.Error())
 		}(int64(i))
 	}

@@ -136,8 +136,9 @@ func (ch *Connection) Connect() error {
 func (ch *Connection) connect() error {
 
 	// not closed, reuse
-	if !ch.isClosed() {
-		return nil
+	if ch.conn != nil && !ch.conn.IsClosed() {
+		// ignore errors
+		_ = ch.conn.Close()
 	}
 
 	ch.debug("connecting...")
@@ -182,11 +183,14 @@ func (ch *Connection) pauseOnFlowControl() {
 	timer := time.NewTimer(time.Second)
 	defer func() {
 		if !timer.Stop() {
-			<-timer.C
+			select {
+			case <-timer.C:
+			default:
+			}
 		}
 	}()
 
-	for !ch.isClosed() {
+	for !ch.conn.IsClosed() && !ch.isShutdown() {
 
 		select {
 		case blocker, ok := <-ch.blockers: // Check for flow control issues.
@@ -216,18 +220,13 @@ func (ch *Connection) pauseOnFlowControl() {
 	}
 }
 
-// not threadsafe
-func (ch *Connection) isClosed() bool {
-	return ch.flagged || ch.conn == nil || ch.conn.IsClosed() || ch.isShutdown()
-}
-
 func (ch *Connection) IsClosed() bool {
 	ch.mu.Lock()
 	defer ch.mu.Unlock()
 
 	// connection closed 							-> cannot access it
 	// connection not closed but shutdown triggered -> is closed
-	return ch.isClosed()
+	return ch.conn == nil || ch.conn.IsClosed()
 }
 
 func (ch *Connection) Close() (err error) {
@@ -299,18 +298,18 @@ func (ch *Connection) Recover() error {
 func (ch *Connection) recover() error {
 	healthy := ch.error() == nil
 
-	if healthy && !ch.isClosed() {
+	if healthy && !ch.conn.IsClosed() {
 		ch.pauseOnFlowControl()
 		return nil
 	}
 
 	timer := time.NewTimer(0)
-	if !timer.Stop() {
-		<-timer.C
-	}
 	defer func() {
 		if !timer.Stop() {
-			<-timer.C
+			select {
+			case <-timer.C:
+			default:
+			}
 		}
 	}()
 
@@ -318,16 +317,17 @@ func (ch *Connection) recover() error {
 	for retry := 0; ; retry++ {
 		err := ch.connect()
 		if err != nil {
+
 			// reset to exponential backoff
+			if !timer.Stop() {
+				<-timer.C
+			}
 			timer.Reset(ch.errorBackoff(retry))
 			select {
 			case <-ch.catchShutdown():
 				// catch shutdown signal
 				return fmt.Errorf("connection recovery failed: connection %w", ErrClosed)
 			case <-timer.C:
-				if !timer.Stop() {
-					<-timer.C
-				}
 				// retry after sleep
 				continue
 			}
@@ -341,6 +341,12 @@ func (ch *Connection) recover() error {
 
 	ch.info("recovered")
 	return nil
+}
+
+func (c *Connection) channel() (*amqp.Channel, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.conn.Channel()
 }
 
 // IsCached returns true in case this session is supposed to be returned to a session pool.

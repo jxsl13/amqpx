@@ -151,7 +151,7 @@ func (s *Session) connect() (err error) {
 		return ErrClosed
 	}
 
-	channel, err := s.conn.conn.Channel()
+	channel, err := s.conn.channel()
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrConnectionFailed, err)
 	}
