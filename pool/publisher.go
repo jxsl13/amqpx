@@ -164,14 +164,6 @@ func (p *Publisher) warn(exchange, routingKey string, err error, a ...any) {
 	}).Warn(a...)
 }
 
-func (p *Publisher) debug(exchange, routingKey string, a ...any) {
-	p.log.WithFields(map[string]any{
-		"publisher":  p.pool.Name(),
-		"exchange":   exchange,
-		"routingKey": routingKey,
-	}).Debug(a...)
-}
-
 func (p *Publisher) infoSimple(a ...any) {
 	p.log.WithFields(map[string]any{
 		"publisher": p.pool.Name(),

@@ -236,10 +236,6 @@ func (sp *SessionPool) info(a ...any) {
 	sp.log.WithField("sessionPool", sp.pool.name).Info(a...)
 }
 
-func (sp *SessionPool) warn(err error, a ...any) {
-	sp.log.WithField("sessionPool", sp.pool.name).WithField("error", err.Error()).Warn(a...)
-}
-
 func (sp *SessionPool) error(err error, a ...any) {
 	sp.log.WithField("sessionPool", sp.pool.name).WithField("error", err.Error()).Error(a...)
 }

@@ -326,16 +326,6 @@ func (s *Subscriber) errorHandler(consumer, exchange, routingKey, queue string, 
 	}).Error(a...)
 }
 
-func (s *Subscriber) debugHandler(consumer, exchange, routingKey, queue string, a ...any) {
-	s.log.WithFields(map[string]any{
-		"subscriber": s.pool.Name(),
-		"consumer":   consumer,
-		"exchange":   exchange,
-		"routingKey": routingKey,
-		"queue":      queue,
-	}).Debug(a...)
-}
-
 func (s *Subscriber) infoSimple(a ...any) {
 	s.log.WithFields(map[string]any{
 		"subscriber": s.pool.Name(),

@@ -255,10 +255,6 @@ func (cp *ConnectionPool) info(a ...any) {
 	cp.log.WithField("connectionPool", cp.name).Info(a...)
 }
 
-func (cp *ConnectionPool) warn(err error, a ...any) {
-	cp.log.WithField("connectionPool", cp.name).WithField("error", err.Error()).Warn(a...)
-}
-
 func (cp *ConnectionPool) error(err error, a ...any) {
 	cp.log.WithField("connectionPool", cp.name).WithField("error", err.Error()).Error(a...)
 }
