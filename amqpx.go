@@ -123,7 +123,7 @@ func Start(connectUrl string, options ...Option) (err error) {
 
 		// sane defaults
 		option := option{
-			PoolOptions:           make([]pool.PoolOption, 0),
+			PoolOptions:           make([]pool.Option, 0),
 			PublisherOptions:      make([]pool.PublisherOption, 0),
 			PublisherConnections:  1,
 			PublisherSessions:     10,
@@ -139,7 +139,10 @@ func Start(connectUrl string, options ...Option) (err error) {
 			connectUrl,
 			option.PublisherConnections,
 			option.PublisherSessions,
-			append(option.PoolOptions, pool.WithNameSuffix("-pub"))...,
+			append([]pool.Option{
+				pool.WithNameSuffix("-pub"),
+				pool.WithConfirms(true),
+			}, option.PoolOptions...)..., // allow to overwrite defaults
 		)
 		if err != nil {
 			return
@@ -177,7 +180,9 @@ func Start(connectUrl string, options ...Option) (err error) {
 				connectUrl,
 				connections,
 				sessions,
-				append(option.PoolOptions, pool.WithNameSuffix("-sub"))...,
+				append([]pool.Option{
+					pool.WithNameSuffix("-sub"),
+				}, option.PoolOptions...)..., // allow the user to overwrite the defaults.
 			)
 			if err != nil {
 				return
