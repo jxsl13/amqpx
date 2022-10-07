@@ -1,5 +1,5 @@
-version: '2'
 
+version: '3.3'
 services:
   rabbitmq:
     image: docker.io/bitnami/rabbitmq:3.10
@@ -7,8 +7,9 @@ services:
       - '4369:4369'
       - '5551:5551'
       - '5552:5552'
-      - '5672:5672'
+      #- '5672:5672' # proxied through toxiproxy
       - '25672:25672'
+      # user interface
       - '15672:15672'
     environment:
       RABBITMQ_NODE_TYPE: stats
@@ -16,8 +17,22 @@ services:
       RABBITMQ_PASSWORD: password
       RABBITMQ_DISK_FREE_RELATIVE_LIMIT: 0.1
       RABBITMQ_VM_MEMORY_HIGH_WATERMARK: 0.5
-    #volumes:
-    #  - 'rabbitmq_data:/bitnami/rabbitmq/mnesia'
-#volumes:
-#  rabbitmq_data:
-#    driver: local
+    networks:
+      - rabbitnet
+
+  toxiproxy:
+    image: ghcr.io/shopify/toxiproxy:2.5.0
+    command:
+      - -host=0.0.0.0
+      - -config=/toxiproxy.json
+    ports:
+      - 8474:8474
+      - 5672:5672
+    networks:
+      - rabbitnet
+    volumes:
+      - ./docker/toxiproxy.json:/toxiproxy.json
+
+
+networks:
+  rabbitnet:

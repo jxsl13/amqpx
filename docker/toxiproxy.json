@@ -1,0 +1,8 @@
+[
+    {
+      "name": "rabbitmq",
+      "listen": "[::]:5672",
+      "upstream": "rabbitmq:5672",
+      "enabled": true
+    }
+  ]
