@@ -76,7 +76,7 @@ func (l *TestLogger) Panicf(format string, args ...any) {
 
 func (l *TestLogger) Debug(args ...any) {
 	l.t.Helper()
-	l.log(DebugLevel, "INFO", args...)
+	l.log(DebugLevel, "DEBUG", args...)
 }
 func (l *TestLogger) Info(args ...any) {
 	l.t.Helper()
