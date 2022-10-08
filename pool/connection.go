@@ -273,7 +273,7 @@ func (ch *Connection) error() error {
 		case e, ok := <-ch.errors:
 			if !ok {
 				// because the amqp library might close this
-				// channel, we asume that closing was done due to
+				// channel, we assume that closing was done due to
 				// a library error
 				return fmt.Errorf("connection and errors channel %w", ErrClosed)
 			}
