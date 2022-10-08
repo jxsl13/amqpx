@@ -305,7 +305,7 @@ func (ch *Connection) recover() error {
 		ch.pauseOnFlowControl()
 		return nil
 	}
-	ch.lastConnLoss = time.Now()
+
 	timer := time.NewTimer(0)
 	defer func() {
 		if !timer.Stop() {
@@ -318,6 +318,7 @@ func (ch *Connection) recover() error {
 
 	ch.info("recovering")
 	for retry := 0; ; retry++ {
+		ch.lastConnLoss = time.Now()
 		err := ch.connect()
 		if err != nil {
 
