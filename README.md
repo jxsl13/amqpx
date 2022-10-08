@@ -95,3 +95,8 @@ Starting the test environment:
 ```shell
 docker-compose up -d
 ```
+
+Starting the tests:
+```shell
+go test -v -race -count=1 ./...
+```
