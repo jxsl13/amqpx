@@ -87,7 +87,7 @@ The `amqpx` package provides a single type which incoorporates everything needed
 
 The `pool` package provides all of the implementation details .
 
-### AMQPX
+### amqpx.AMQPX
 
 The `AMQPX` struct consists at least one connection pool, a `Publisher`, a `Subscriber` and a `Topologer`.
 Upon `Start(..)` and upon `Close()` a `Topologer` is created which creates the topology or destroys a topology based on one or *multiple* functions that were registered via `RegisterTopologyCreator` or `RegisterTopologyDeleter`.
