@@ -43,19 +43,40 @@ func TestNewConnection(t *testing.T) {
 
 func TestNewConnectionDisconnect(t *testing.T) {
 
-	c, err := pool.NewConnection(
-		"amqp://admin:password@localhost:5672",
-		"TestNewConnection",
-		pool.ConnectionWithLogger(logging.NewTestLogger(t)),
-	)
-	if err != nil {
-		assert.NoError(t, err)
-		return
+	var wg sync.WaitGroup
+
+	connections := 100 // don't go below 100
+	wg.Add(connections)
+
+	// disconnect in a second for a second
+	wait := Disconnect(t, 0, 10*time.Millisecond*time.Duration(connections), 5*time.Second)
+	defer wait() // wait for goroutine to properly close & unblock the proxy
+
+	for i := 0; i < connections; i++ {
+		go func(id int64) {
+			defer wg.Done()
+
+			c, err := pool.NewConnection(
+				"amqp://admin:password@localhost:5672",
+				fmt.Sprintf("TestNewConnectionDisconnect-%d", id),
+				pool.ConnectionWithLogger(logging.NewTestLogger(t)),
+			)
+			if err != nil {
+				assert.NoError(t, err)
+				return
+			}
+			defer func() {
+				assert.Error(t, c.Error())
+			}()
+			defer c.Close()
+
+			wait() // wait for connection to work again.
+
+			assert.NoError(t, c.Recover())
+			assert.NoError(t, c.Error())
+		}(int64(i))
 	}
-	defer c.Close()
 
-	Disconnect(t, time.Second, 0, 2*time.Second)
+	wg.Wait()
 
-	assert.NoError(t, c.Recover())
-	assert.NoError(t, c.Error())
 }

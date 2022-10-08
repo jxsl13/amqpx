@@ -23,7 +23,8 @@ type Connection struct {
 
 	tls *tls.Config
 
-	conn *amqp.Connection
+	conn         *amqp.Connection
+	lastConnLoss time.Time
 
 	errorBackoff BackoffFunc
 
@@ -114,6 +115,19 @@ func (ch *Connection) Close() (err error) {
 	}()
 
 	ch.cancel() // close derived context
+
+	// wait for dangling goroutines to timeout before closing.
+	// upon recovery the standard library still has some goroutines open
+	// that are only closed upon some tcp connection timeout.
+	// Those routinges poll the network.
+	awaitTimeout := time.Until(ch.lastConnLoss.Add(10 * time.Second))
+	if awaitTimeout > 0 {
+		// in long running applications that were able to reestablish their connection
+		// this sleep should not affect their shutdown duration much.
+		// in short runing applications like the tests, shtdown takes longer.
+		time.Sleep(awaitTimeout)
+	}
+
 	if ch.conn != nil && !ch.conn.IsClosed() {
 		return ch.conn.Close() // close internal channel
 	}
@@ -291,7 +305,7 @@ func (ch *Connection) recover() error {
 		ch.pauseOnFlowControl()
 		return nil
 	}
-
+	ch.lastConnLoss = time.Now()
 	timer := time.NewTimer(0)
 	defer func() {
 		if !timer.Stop() {

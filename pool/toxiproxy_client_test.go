@@ -1,6 +1,7 @@
 package pool_test
 
 import (
+	"sync"
 	"testing"
 	"time"
 
@@ -31,9 +32,13 @@ func NewProxy(t *testing.T) *toxiproxy.Proxy {
 }
 
 // https://github.com/Shopify/toxiproxy#toxics
-func Disconnect(t *testing.T, block, timeout, duration time.Duration) {
+func Disconnect(t *testing.T, block, timeout, duration time.Duration) (wait func()) {
 	start := time.Now().Add(timeout)
+	var wg sync.WaitGroup
+
+	wg.Add(1)
 	go func(start time.Time) {
+		defer wg.Done()
 		log := logging.NewTestLogger(t)
 		proxy := NewProxy(t)
 
@@ -53,5 +58,9 @@ func Disconnect(t *testing.T, block, timeout, duration time.Duration) {
 	}(start)
 	if block > 0 {
 		time.Sleep(block)
+	}
+
+	return func() {
+		wg.Wait()
 	}
 }
