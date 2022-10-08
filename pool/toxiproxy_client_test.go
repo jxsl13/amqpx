@@ -32,7 +32,7 @@ func NewProxy(t *testing.T) *toxiproxy.Proxy {
 }
 
 // https://github.com/Shopify/toxiproxy#toxics
-func DisconnectWithStop(t *testing.T, block, timeout, duration time.Duration) (wait func()) {
+func DisconnectWithStopped(t *testing.T, block, timeout, duration time.Duration) (wait func()) {
 	start := time.Now().Add(timeout)
 	var wg sync.WaitGroup
 
@@ -66,7 +66,7 @@ func DisconnectWithStop(t *testing.T, block, timeout, duration time.Duration) (w
 }
 
 // https://github.com/Shopify/toxiproxy#toxics
-func DisconnectWithStartStop(t *testing.T, block, timeout, duration time.Duration) (awaitStarted, awaitStopped func()) {
+func DisconnectWithStartedStopped(t *testing.T, block, timeout, duration time.Duration) (awaitStarted, awaitStopped func()) {
 	start := time.Now().Add(timeout)
 	var (
 		wgStart sync.WaitGroup
@@ -100,4 +100,44 @@ func DisconnectWithStartStop(t *testing.T, block, timeout, duration time.Duratio
 	}
 
 	return func() { wgStart.Wait() }, func() { wgStop.Wait() }
+}
+
+func DisconnectWithStartStartedStopped(t *testing.T, duration time.Duration) (disconnect, awaitStarted, awaitStopped func()) {
+	var (
+		wgStart sync.WaitGroup
+		wgStop  sync.WaitGroup
+	)
+	disconnect = func() {
+		wgStart.Add(1)
+		wgStop.Add(1)
+		go func() {
+			defer wgStop.Done()
+			log := logging.NewTestLogger(t)
+			proxy := NewProxy(t)
+
+			log.Debug("disabled rabbitmq connection")
+			err := proxy.Disable()
+			if err != nil {
+				log.Fatal(err)
+			}
+			wgStart.Done()
+
+			time.Sleep(duration)
+			log.Debug("enabled rabbitmq connection")
+			err = proxy.Enable()
+			if err != nil {
+				log.Fatal(err)
+			}
+		}()
+	}
+
+	awaitStarted = func() {
+		wgStart.Wait()
+	}
+
+	awaitStopped = func() {
+		wgStop.Wait()
+	}
+
+	return disconnect, awaitStarted, awaitStopped
 }
