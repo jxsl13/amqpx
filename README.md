@@ -81,6 +81,34 @@ func main() {
 
 ```
 
+## Types
+
+The `amqpx` package provides a single type which incoorporates everything needed for consuming and publishing messages.
+
+The `pool` package provides all of the implementation details .
+
+### AMQPX
+
+The `AMQPX` struct consists at least one connection pool, a `Publisher`, a `Subscriber` and a `Topologer`.
+Upon `Start(..)` and upon `Close()` a `Topologer` is created which creates the topology or destroys a topology based on one or *multiple* functions that were registered via `RegisterTopologyCreator` or `RegisterTopologyDeleter`.
+After the topology has been created, a `Publisher` is instantiated from a publisher connection and session `Pool`. 
+The `Publisher` can be used to publish messages to specific *exchanges* with a given *routing key*.
+In case you register an event handler function via `RegisterHandler`, then another connection and session `Pool` is created which is then used to instantiate a `Subscriber`. The `Subscriber` communicates via one or multiple separate TCP connections in order to prevent interference between the `Publisher` and `Subscriber`.
+
+The `amqpx` package defines a global variable that allows the package `amqpx` to be used like the `AMQPX` object.
+
+### pool.Topologer
+
+The `Topologer` allows to create, delete, bind or unbind *exchanges* or *queues*
+
+### pool.Publisher
+
+The `Publisher` allows to publish individual events or messages to *exchanges* with a given *routing key*.
+
+### pool.Subscriber
+
+The `Subscriber` allows to register event handler functions that *consume messages from individual queues*. 
+A `Subscriber` must be `Start()`ed in order for it to create consumer goroutines that process events from broker queues.
 
 ## Development
 
