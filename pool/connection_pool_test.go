@@ -53,7 +53,7 @@ func TestNewConnectionPoolDisconnect(t *testing.T) {
 	defer p.Close()
 	var wg sync.WaitGroup
 
-	awaitStarted, awaitStopped := DisconnectWithStartStop(t, 0, time.Duration(connections)*10*time.Millisecond, 2*time.Second)
+	awaitStarted, awaitStopped := DisconnectWithStartedStopped(t, 0, time.Duration(connections)*10*time.Millisecond, 2*time.Second)
 	defer awaitStopped()
 
 	for i := 0; i < connections; i++ {
