@@ -212,10 +212,8 @@ func TestNewSessionDisconnect(t *testing.T) {
 				started8()
 				stopped8()
 
-				i, err := s.QueueDelete(queueName, false, false, false)
+				_, err := s.QueueDelete(queueName, false, false, false)
 				assert.NoError(t, err)
-				assert.Equal(t, 0, i)
-
 			}()
 
 			start3()
@@ -301,4 +299,5 @@ func TestNewSessionDisconnect(t *testing.T) {
 	}
 
 	wg.Wait()
+	time.Sleep(10 * time.Second) // await dangling io goroutines to timeout
 }
