@@ -14,7 +14,8 @@
 - reconnect handling
 - clean shutdown handling
 - sane defaults
-- robustness over performance (publisher & subscriber acks)
+- robustness over performance by default (publisher & subscriber acks)
+- every default can be changed to your liking
 
 This library is highly inspired by `https://github.com/houseofcat/turbocookedrabbit`
 
