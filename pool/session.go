@@ -2,6 +2,7 @@ package pool
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 
@@ -101,6 +102,7 @@ func (s *Session) Close() (err error) {
 			s.info("closed")
 		}
 	}()
+
 	s.cancel()
 	if s.channel == nil || s.channel.IsClosed() {
 		return nil
@@ -136,8 +138,11 @@ func (s *Session) connect() (err error) {
 		// reset state in case of an error
 		if err != nil {
 			s.channel = nil
-			s.errors = nil
-			s.confirms = nil
+			s.errors = make(chan *amqp091.Error)
+			s.confirms = make(chan amqp091.Confirmation)
+
+			close(s.errors)
+			close(s.confirms)
 
 			s.warn(err, "failed to open session")
 		} else {
@@ -180,9 +185,14 @@ func (s *Session) connect() (err error) {
 func (s *Session) Recover() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.recover()
+}
+
+func (s *Session) recover() error {
 
 	// tries to recover session forever
 	for {
+
 		err := s.conn.Recover() // recovers connection with a backoff mechanism
 		if err != nil {
 			// upon shutdown this will fail
@@ -203,6 +213,8 @@ func (s *Session) Recover() error {
 
 // AwaitConfirm tries to await a confirmation from the broker for a published message
 // You may check for ErrNack in order to see whether the broker rejected the message temporatily.
+// AwaitConfirm cannot be retried in case the channel dies.
+// You must resend your message and attempt to await it again.
 func (s *Session) AwaitConfirm(ctx context.Context, expectedTag uint64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -214,7 +226,7 @@ func (s *Session) AwaitConfirm(ctx context.Context, expectedTag uint64) error {
 	select {
 	case confirm, ok := <-s.confirms:
 		if !ok {
-			return ErrClosed
+			return fmt.Errorf("confirms channel %w", ErrClosed)
 		}
 		if !confirm.Ack {
 
@@ -254,16 +266,37 @@ func (s *Session) Publish(ctx context.Context, exchange string, routingKey strin
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	tag = 0
-	if s.confirmable {
-		tag = s.channel.GetNextPublishSeqNo()
-	}
+	return s.retryPublish(func() (uint64, error) {
+		tag = 0
+		if s.confirmable {
+			tag = s.channel.GetNextPublishSeqNo()
+		}
 
-	err = s.channel.PublishWithContext(ctx, exchange, routingKey, mandatory, immediate, msg)
-	if err != nil {
+		err = s.channel.PublishWithContext(ctx, exchange, routingKey, mandatory, immediate, msg)
+		if err != nil {
+			return 0, err
+		}
+		return tag, err
+	})
+}
+
+func (s *Session) retryPublish(f func() (uint64, error)) (tag uint64, err error) {
+	for {
+		tag, err := f()
+		if err == nil {
+			return tag, nil
+		}
+
+		if ae, ok := err.(*amqp091.Error); (ok && !ae.Recover) || errors.Is(err, amqp091.ErrClosed) {
+			err = s.recover()
+			if err != nil {
+				// recover only returns an error upon shutdown
+				return 0, err
+			}
+			continue
+		}
 		return 0, err
 	}
-	return tag, nil
 }
 
 // Get is only supposed to be used for testing purposes, do not us eit to poll the queue periodically.
@@ -271,10 +304,35 @@ func (s *Session) Get(queue string, autoAck bool) (msg *amqp091.Delivery, ok boo
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	m, ok, err := s.channel.Get(queue, autoAck)
-	return &m, ok, err
+	return s.retryGet(func() (*amqp091.Delivery, bool, error) {
+		m, ok, err := s.channel.Get(queue, autoAck)
+		return &m, ok, err
+	})
 }
 
+func (s *Session) retryGet(f func() (*amqp091.Delivery, bool, error)) (msg *amqp091.Delivery, ok bool, err error) {
+	for {
+		msg, ok, err := f()
+		if err == nil {
+			return msg, ok, nil
+		}
+
+		if ae, ok := err.(*amqp091.Error); (ok && !ae.Recover) || errors.Is(err, amqp091.ErrClosed) {
+			err = s.recover()
+			if err != nil {
+				// recover only returns an error upon shutdown
+				return nil, false, err
+			}
+			continue
+		}
+
+		return msg, ok, err
+	}
+}
+
+// Nack rejects the message.
+// In case the underlying channel dies, you cannot send a nack for the processed message.
+// You might receive the message again from the broker, as it expects a n/ack
 func (s *Session) Nack(deliveryTag uint64, multiple bool, requeue bool) (err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -282,6 +340,9 @@ func (s *Session) Nack(deliveryTag uint64, multiple bool, requeue bool) (err err
 	return s.channel.Nack(deliveryTag, multiple, requeue)
 }
 
+// Ack confirms the processing of the message.
+// In case the underlying channel dies, you cannot send a nack for the processed message.
+// You might receive the message again from the broker, as it expects a n/ack
 func (s *Session) Ack(deliveryTag uint64, multiple bool) (err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -328,13 +389,62 @@ func (s *Session) Consume(queue string, consumer string, autoAck bool, exclusive
 		consumer = s.Name()
 	}
 
-	c, err := s.channel.Consume(queue, consumer, autoAck, exclusive, noLocal, noWait, args)
+	// retries to connect and attempts to start a consumer
+	c, err := s.consumeRetry(func() (<-chan amqp091.Delivery, error) {
+		return s.channel.Consume(queue, consumer, autoAck, exclusive, noLocal, noWait, args)
+	})
 	if err != nil {
 		return nil, err
 	}
 	s.consumers[consumer] = true
 
 	return c, nil
+}
+
+func (s *Session) consumeRetry(f func() (<-chan amqp091.Delivery, error)) (<-chan amqp091.Delivery, error) {
+	for {
+		c, err := f()
+		if err == nil {
+			return c, nil
+		} else if errors.Is(err, amqp091.ErrClosed) {
+			err = s.recover()
+			if err != nil {
+				// recover only returns an error upon shutdown
+				return nil, err
+			}
+			continue
+		} else if ae, ok := err.(*amqp091.Error); ok {
+			if !ae.Recover {
+				err = s.recover()
+				if err != nil {
+					// recover only returns an error upon shutdown
+					return nil, err
+				}
+				continue
+			}
+			// user error, must be handled by user
+		}
+		return nil, err
+	}
+}
+
+func (s *Session) retry(f func() error) error {
+	for {
+		err := f()
+		if err == nil {
+			return nil
+		}
+		if ae, ok := err.(*amqp091.Error); (ok && !ae.Recover) || errors.Is(err, amqp091.ErrClosed) {
+			err = s.recover()
+			if err != nil {
+				// recover only returns an error upon shutdown
+				return err
+			}
+			continue
+		}
+
+		return err
+	}
 }
 
 // ExchangeDeclare declares an exchange on the server. If the exchange does not
@@ -391,7 +501,9 @@ func (s *Session) ExchangeDeclare(name string, kind string, durable bool, autoDe
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	return s.channel.ExchangeDeclare(name, kind, durable, autoDelete, internal, noWait, args)
+	return s.retry(func() error {
+		return s.channel.ExchangeDeclare(name, kind, durable, autoDelete, internal, noWait, args)
+	})
 }
 
 // ExchangeDelete removes the named exchange from the server. When an exchange is
@@ -410,7 +522,9 @@ func (s *Session) ExchangeDelete(name string, ifUnused bool, noWait bool) error 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	return s.channel.ExchangeDelete(name, ifUnused, noWait)
+	return s.retry(func() error {
+		return s.channel.ExchangeDelete(name, ifUnused, noWait)
+	})
 }
 
 // QueueDeclare declares a queue to hold messages and deliver to consumers.
@@ -467,8 +581,10 @@ func (s *Session) QueueDeclare(name string, durable bool, autoDelete bool, exclu
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	_, err := s.channel.QueueDeclare(name, durable, autoDelete, exclusive, noWait, args)
-	return err
+	return s.retry(func() error {
+		_, err := s.channel.QueueDeclare(name, durable, autoDelete, exclusive, noWait, args)
+		return err
+	})
 }
 
 // QueueDelete removes the queue from the server including all bindings then
@@ -491,7 +607,28 @@ func (s *Session) QueueDelete(name string, ifUnused bool, ifEmpty bool, noWait b
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	return s.channel.QueueDelete(name, ifUnused, ifEmpty, noWait)
+	return s.retryQueueDelete(func() (int, error) {
+		return s.channel.QueueDelete(name, ifUnused, ifEmpty, noWait)
+	})
+}
+
+func (s *Session) retryQueueDelete(f func() (int, error)) (int, error) {
+	for {
+		i, err := f()
+		if err == nil {
+			return i, nil
+		}
+		if ae, ok := err.(*amqp091.Error); (ok && !ae.Recover) || errors.Is(err, amqp091.ErrClosed) {
+			err = s.recover()
+			if err != nil {
+				// recover only returns an error upon shutdown
+				return 0, err
+			}
+			continue
+		}
+
+		return i, err
+	}
 }
 
 // QueueBind binds an exchange to a queue so that publishings to the exchange will
@@ -539,7 +676,9 @@ func (s *Session) QueueBind(name string, routingKey string, exchange string, noW
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	return s.channel.QueueBind(name, routingKey, exchange, noWait, args)
+	return s.retry(func() error {
+		return s.channel.QueueBind(name, routingKey, exchange, noWait, args)
+	})
 }
 
 // QueueUnbind removes a binding between an exchange and queue matching the key and
@@ -551,7 +690,9 @@ func (s *Session) QueueUnbind(name string, routingKey string, exchange string, a
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	return s.channel.QueueUnbind(name, routingKey, exchange, args)
+	return s.retry(func() error {
+		return s.channel.QueueUnbind(name, routingKey, exchange, args)
+	})
 }
 
 // ExchangeBind binds an exchange to another exchange to create inter-exchange
@@ -587,7 +728,9 @@ func (s *Session) ExchangeBind(destination string, routingKey string, source str
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	return s.channel.ExchangeBind(destination, routingKey, source, noWait, args)
+	return s.retry(func() error {
+		return s.channel.ExchangeBind(destination, routingKey, source, noWait, args)
+	})
 }
 
 // ExchangeUnbind unbinds the destination exchange from the source exchange on the
@@ -606,7 +749,9 @@ func (s *Session) ExchangeUnbind(destination string, routingKey string, source s
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	return s.channel.ExchangeUnbind(destination, routingKey, source, noWait, args)
+	return s.retry(func() error {
+		return s.channel.ExchangeUnbind(destination, routingKey, source, noWait, args)
+	})
 }
 
 // Flow allows to enable or disable flow from the message broker
@@ -634,7 +779,9 @@ func (s *Session) Flow(active bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	return s.channel.Flow(active)
+	return s.retry(func() error {
+		return s.channel.Flow(active)
+	})
 }
 
 // flushConfirms removes all previous confirmations pending processing.
@@ -662,6 +809,41 @@ flush:
 		}
 	}
 	return confirms
+}
+
+// Error returns the first error from the errors channel
+// and flushes all other pending errors from the channel
+// In case that there are no errors, nil is returned.
+func (s *Session) Error() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.error()
+}
+
+// not threadsafe
+func (s *Session) error() error {
+	var (
+		err error = nil
+	)
+	for {
+		select {
+		case <-s.catchShutdown():
+			return fmt.Errorf("session %w", ErrClosed)
+		case e, ok := <-s.errors:
+			if !ok {
+				return amqp091.ErrClosed
+			}
+			// only overwrite with the first error
+			if err == nil {
+				err = e
+			} else {
+				// flush all other errors after the first one
+				continue
+			}
+		default:
+			return err
+		}
+	}
 }
 
 // IsCached returns true in case this session is supposed to be returned to a session pool.

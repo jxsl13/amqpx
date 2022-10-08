@@ -205,7 +205,7 @@ func (t *Topologer) QueueDeclare(name string, durable bool, autoDelete bool, exc
 // from the server.  The purged message count will not be meaningful. If the queue
 // could not be deleted, a channel exception will be raised and the channel will
 // be closed.
-func (t *Topologer) QueueDelete(name string, ifUnused bool, ifEmpty bool, noWait bool) (i int, err error) {
+func (t *Topologer) QueueDelete(name string, ifUnused bool, ifEmpty bool, noWait bool) (purged int, err error) {
 	s, err := t.pool.GetSession()
 	if err != nil {
 		return 0, err
