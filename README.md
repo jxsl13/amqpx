@@ -14,7 +14,7 @@
 - reconnect handling
 - clean shutdown handling
 - sane defaults
-- robustness over performance by default (publisher & subscriber acks)
+- resilience & robustness over performance by default (publisher & subscriber acks)
 - every default can be changed to your liking
 
 This library is highly inspired by `https://github.com/houseofcat/turbocookedrabbit`
@@ -90,7 +90,7 @@ The `pool` package provides all of the implementation details .
 ### `amqpx.AMQPX`
 The `AMQPX` struct consists at least one connection pool, a `Publisher`, a `Subscriber` and a `Topologer`.
 Upon `Start(..)` and upon `Close()` a `Topologer` is created which creates the topology or destroys a topology based on one or *multiple* functions that were registered via `RegisterTopologyCreator` or `RegisterTopologyDeleter`.
-After the topology has been created, a `Publisher` is instantiated from a publisher connection and session `Pool`. 
+After the topology has been created, a `Publisher` is instantiated from a publisher connection and session `Pool`.
 The `Publisher` can be used to publish messages to specific *exchanges* with a given *routing key*.
 In case you register an event handler function via `RegisterHandler`, then another connection and session `Pool` is created which is then used to instantiate a `Subscriber`. The `Subscriber` communicates via one or multiple separate TCP connections in order to prevent interference between the `Publisher` and `Subscriber`.
 
@@ -103,7 +103,7 @@ The `Topologer` allows to create, delete, bind or unbind *exchanges* or *queues*
 The `Publisher` allows to publish individual events or messages to *exchanges* with a given *routing key*.
 
 ### `pool.Subscriber`
-The `Subscriber` allows to register event handler functions that *consume messages from individual queues*. 
+The `Subscriber` allows to register event handler functions that *consume messages from individual queues*.
 A `Subscriber` must be `Start()`ed in order for it to create consumer goroutines that process events from broker queues.
 
 ## Development
