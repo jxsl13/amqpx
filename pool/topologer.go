@@ -1,6 +1,8 @@
 package pool
 
 import (
+	"context"
+
 	"github.com/jxsl13/amqpx/logging"
 	"github.com/rabbitmq/amqp091-go"
 )
@@ -29,6 +31,13 @@ func NewTopologer(p *Pool, options ...TopologerOption) *Topologer {
 		log:  option.Logger,
 	}
 	return top
+}
+
+func (t *Topologer) getSession() (*Session, error) {
+	if t.pool.SessionPoolSize() == 0 {
+		return t.pool.GetTransientSession(context.Background())
+	}
+	return t.pool.GetSession()
 }
 
 // ExchangeDeclare declares an exchange on the server. If the exchange does not
@@ -82,7 +91,7 @@ func NewTopologer(p *Pool, options ...TopologerOption) *Topologer {
 // Optional amqp.Table of arguments that are specific to the server's implementation of
 // the exchange can be sent for exchange types that require extra parameters.
 func (t *Topologer) ExchangeDeclare(name string, kind string, durable bool, autoDelete bool, internal bool, noWait bool, args amqp091.Table) (err error) {
-	s, err := t.pool.GetSession()
+	s, err := t.getSession()
 	if err != nil {
 		return err
 	}
@@ -109,7 +118,7 @@ func (t *Topologer) ExchangeDeclare(name string, kind string, durable bool, auto
 // been deleted.  Failing to delete the channel could close the channel.  Add a
 // NotifyClose listener to respond to these channel exceptions.
 func (t *Topologer) ExchangeDelete(name string, ifUnused bool, noWait bool) (err error) {
-	s, err := t.pool.GetSession()
+	s, err := t.getSession()
 	if err != nil {
 		return err
 	}
@@ -175,7 +184,7 @@ func (t *Topologer) ExchangeDelete(name string, ifUnused bool, noWait bool) (err
 // When the error return value is not nil, you can assume the queue could not be
 // declared with these parameters, and the channel will be closed.
 func (t *Topologer) QueueDeclare(name string, durable bool, autoDelete bool, exclusive bool, noWait bool, args amqp091.Table) (err error) {
-	s, err := t.pool.GetSession()
+	s, err := t.getSession()
 	if err != nil {
 		return err
 	}
@@ -206,7 +215,7 @@ func (t *Topologer) QueueDeclare(name string, durable bool, autoDelete bool, exc
 // could not be deleted, a channel exception will be raised and the channel will
 // be closed.
 func (t *Topologer) QueueDelete(name string, ifUnused bool, ifEmpty bool, noWait bool) (purged int, err error) {
-	s, err := t.pool.GetSession()
+	s, err := t.getSession()
 	if err != nil {
 		return 0, err
 	}
@@ -262,7 +271,7 @@ func (t *Topologer) QueueDelete(name string, ifUnused bool, ifEmpty bool, noWait
 // When noWait is false and the queue could not be bound, the channel will be
 // closed with an error.
 func (t *Topologer) QueueBind(name string, routingKey string, exchange string, noWait bool, args amqp091.Table) (err error) {
-	s, err := t.pool.GetSession()
+	s, err := t.getSession()
 	if err != nil {
 		return err
 	}
@@ -282,7 +291,7 @@ func (t *Topologer) QueueBind(name string, routingKey string, exchange string, n
 // It is possible to send and empty string for the exchange name which means to
 // unbind the queue from the default exchange.
 func (t *Topologer) QueueUnbind(name string, routingKey string, exchange string, args amqp091.Table) (err error) {
-	s, err := t.pool.GetSession()
+	s, err := t.getSession()
 	if err != nil {
 		return err
 	}
@@ -326,7 +335,7 @@ func (t *Topologer) QueueUnbind(name string, routingKey string, exchange string,
 //
 // Optional arguments specific to the exchanges bound can also be specified.
 func (t *Topologer) ExchangeBind(destination string, routingKey string, source string, noWait bool, args amqp091.Table) (err error) {
-	s, err := t.pool.GetSession()
+	s, err := t.getSession()
 	if err != nil {
 		return err
 	}
@@ -353,7 +362,7 @@ func (t *Topologer) ExchangeBind(destination string, routingKey string, source s
 // provided.  These must match the same arguments specified in ExchangeBind to
 // identify the binding.
 func (t *Topologer) ExchangeUnbind(destination string, routingKey string, source string, noWait bool, args amqp091.Table) (err error) {
-	s, err := t.pool.GetSession()
+	s, err := t.getSession()
 	if err != nil {
 		return err
 	}

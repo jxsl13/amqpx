@@ -100,3 +100,11 @@ func (p *Pool) Context() context.Context {
 func (p *Pool) Name() string {
 	return p.cp.Name()
 }
+
+func (p *Pool) ConnectionPoolSize() int {
+	return p.cp.Size()
+}
+
+func (p *Pool) SessionPoolSize() int {
+	return p.sp.Size()
+}

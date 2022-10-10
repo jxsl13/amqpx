@@ -262,3 +262,7 @@ func (cp *ConnectionPool) error(err error, a ...any) {
 func (cp *ConnectionPool) debug(a ...any) {
 	cp.log.WithField("connectionPool", cp.name).Debug(a...)
 }
+
+func (cp *ConnectionPool) Size() int {
+	return cp.size
+}
