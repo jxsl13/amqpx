@@ -136,9 +136,10 @@ func (a *AMQPX) RegisterHandler(queue string, consumer string, autoAck bool, exc
 // This customcontext does not replace the Close() call. Always defer a Close() call.
 // Start is a non-blocking operation.
 func (a *AMQPX) Start(connectUrl string, options ...Option) (err error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
 	a.startOnce.Do(func() {
-		a.mu.Lock()
-		defer a.mu.Unlock()
 
 		// sane defaults
 		option := option{
@@ -257,6 +258,9 @@ func (a *AMQPX) Publish(exchange string, routingKey string, mandatory bool, imme
 	if a.pub == nil {
 		panic("amqpx package was not started")
 	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
 	return a.pub.Publish(exchange, routingKey, mandatory, immediate, msg)
 }
 
@@ -265,6 +269,11 @@ func (a *AMQPX) Get(queue string, autoAck bool) (msg *Delivery, ok bool, err err
 	if a.pub == nil {
 		panic("amqpx package was not started")
 	}
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	// publisher is used because this is a testing method for the publisher
 	return a.pub.Get(queue, autoAck)
 }
 
