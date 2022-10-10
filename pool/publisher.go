@@ -68,10 +68,10 @@ func NewPublisher(p *Pool, options ...PublisherOption) *Publisher {
 	return pub
 }
 
-func (p *Publisher) Publish(exchange string, routingKey string, mandatory bool, immediate bool, msg amqp091.Publishing) error {
+func (p *Publisher) Publish(exchange string, routingKey string, msg Publishing) error {
 
 	for {
-		err := p.publish(exchange, routingKey, mandatory, immediate, msg)
+		err := p.publish(exchange, routingKey, msg)
 		if err == nil {
 			return nil
 		} else if errors.Is(err, ErrClosed) {
@@ -83,7 +83,7 @@ func (p *Publisher) Publish(exchange string, routingKey string, mandatory bool, 
 	}
 }
 
-func (p *Publisher) publish(exchange string, routingKey string, mandatory bool, immediate bool, msg amqp091.Publishing) (err error) {
+func (p *Publisher) publish(exchange string, routingKey string, msg Publishing) (err error) {
 	defer func() {
 		if err != nil {
 			p.warn(exchange, routingKey, err)
@@ -112,7 +112,7 @@ func (p *Publisher) publish(exchange string, routingKey string, mandatory bool, 
 	pubCtx, pubCancel := context.WithTimeout(p.ctx, p.publishTimeout)
 	defer pubCancel()
 
-	tag, err := s.Publish(pubCtx, exchange, routingKey, mandatory, immediate, msg)
+	tag, err := s.Publish(pubCtx, exchange, routingKey, msg)
 	if err != nil && errors.Is(err, ErrClosed) {
 		return err
 	}

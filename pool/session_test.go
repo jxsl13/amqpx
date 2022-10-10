@@ -9,7 +9,6 @@ import (
 
 	"github.com/jxsl13/amqpx/logging"
 	"github.com/jxsl13/amqpx/pool"
-	"github.com/rabbitmq/amqp091-go"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -43,29 +42,29 @@ func TestNewSession(t *testing.T) {
 			}()
 
 			queueName := fmt.Sprintf("TestNewSession-Queue-%d", id)
-			err = s.QueueDeclare(queueName, true, false, false, false, QuorumArgs)
+			err = s.QueueDeclare(queueName)
 			if err != nil {
 				assert.NoError(t, err)
 				return
 			}
 			defer func() {
-				i, err := s.QueueDelete(queueName, false, false, false)
+				i, err := s.QueueDelete(queueName)
 				assert.NoError(t, err)
 				assert.Equal(t, 0, i)
 			}()
 
 			exchangeName := fmt.Sprintf("TestNewSession-Exchange-%d", id)
-			err = s.ExchangeDeclare(exchangeName, "topic", true, false, false, false, nil)
+			err = s.ExchangeDeclare(exchangeName, "topic")
 			if err != nil {
 				assert.NoError(t, err)
 				return
 			}
 			defer func() {
-				err := s.ExchangeDelete(exchangeName, false, false)
+				err := s.ExchangeDelete(exchangeName)
 				assert.NoError(t, err)
 			}()
 
-			err = s.QueueBind(queueName, "#", exchangeName, false, nil)
+			err = s.QueueBind(queueName, "#", exchangeName)
 			if err != nil {
 				assert.NoError(t, err)
 				return
@@ -75,7 +74,13 @@ func TestNewSession(t *testing.T) {
 				assert.NoError(t, err)
 			}()
 
-			delivery, err := s.Consume(queueName, fmt.Sprintf("Consumer-%s", queueName), false, true, false, false, nil)
+			delivery, err := s.Consume(
+				queueName,
+				pool.ConsumeOptions{
+					ConsumerTag: fmt.Sprintf("Consumer-%s", queueName),
+					Exclusive:   true,
+				},
+			)
 			if err != nil {
 				assert.NoError(t, err)
 				return
@@ -102,7 +107,8 @@ func TestNewSession(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 
-			tag, err := s.Publish(ctx, exchangeName, "", true, false, amqp091.Publishing{
+			tag, err := s.Publish(ctx, exchangeName, "", pool.Publishing{
+				Mandatory:   true,
 				ContentType: "application/json",
 				Body:        []byte(message),
 			})
@@ -178,7 +184,7 @@ func TestNewSessionDisconnect(t *testing.T) {
 			started()
 
 			exchangeName := fmt.Sprintf("TestNewSession-Exchange-%d", id)
-			err = s.ExchangeDeclare(exchangeName, "topic", true, false, false, false, nil)
+			err = s.ExchangeDeclare(exchangeName, "topic")
 			if err != nil {
 				assert.NoError(t, err)
 				return
@@ -190,7 +196,7 @@ func TestNewSessionDisconnect(t *testing.T) {
 				start9()
 				started9()
 
-				err := s.ExchangeDelete(exchangeName, false, false)
+				err := s.ExchangeDelete(exchangeName)
 				assert.NoError(t, err)
 
 				stopped9()
@@ -200,7 +206,7 @@ func TestNewSessionDisconnect(t *testing.T) {
 			started2()
 
 			queueName := fmt.Sprintf("TestNewSession-Queue-%d", id)
-			err = s.QueueDeclare(queueName, true, false, false, false, QuorumArgs)
+			err = s.QueueDeclare(queueName)
 			if err != nil {
 				assert.NoError(t, err)
 				return
@@ -212,14 +218,14 @@ func TestNewSessionDisconnect(t *testing.T) {
 				started8()
 				stopped8()
 
-				_, err := s.QueueDelete(queueName, false, false, false)
+				_, err := s.QueueDelete(queueName)
 				assert.NoError(t, err)
 			}()
 
 			start3()
 			started3()
 
-			err = s.QueueBind(queueName, "#", exchangeName, false, nil)
+			err = s.QueueBind(queueName, "#", exchangeName)
 			if err != nil {
 				assert.NoError(t, err)
 				return
@@ -239,7 +245,13 @@ func TestNewSessionDisconnect(t *testing.T) {
 			start4()
 			started4()
 
-			delivery, err := s.Consume(queueName, fmt.Sprintf("Consumer-%s", queueName), false, true, false, false, nil)
+			delivery, err := s.Consume(
+				queueName,
+				pool.ConsumeOptions{
+					ConsumerTag: fmt.Sprintf("Consumer-%s", queueName),
+					Exclusive:   true,
+				},
+			)
 			if err != nil {
 				assert.NoError(t, err)
 				return
@@ -270,7 +282,8 @@ func TestNewSessionDisconnect(t *testing.T) {
 			var once sync.Once
 
 			for {
-				tag, err := s.Publish(context.Background(), exchangeName, "", true, false, amqp091.Publishing{
+				tag, err := s.Publish(context.Background(), exchangeName, "", pool.Publishing{
+					Mandatory:   true,
 					ContentType: "application/json",
 					Body:        []byte(message),
 				})

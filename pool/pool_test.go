@@ -7,18 +7,12 @@ import (
 
 	"github.com/jxsl13/amqpx/logging"
 	"github.com/jxsl13/amqpx/pool"
-	"github.com/rabbitmq/amqp091-go"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/goleak"
 )
 
 func TestMain(m *testing.M) {
 	goleak.VerifyTestMain(m)
-}
-
-// QuorumArgs is the argument you need to pass in order to create a quorum queue.
-var QuorumArgs = amqp091.Table{
-	"x-queue-type": "quorum",
 }
 
 func TestNew(t *testing.T) {

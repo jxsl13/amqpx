@@ -6,6 +6,13 @@ import (
 	"time"
 
 	"github.com/jxsl13/amqpx/logging"
+	"github.com/rabbitmq/amqp091-go"
+)
+
+var (
+	QuorumQueue = amqp091.Table{
+		"x-queue-type": "quorum",
+	}
 )
 
 type Pool struct {

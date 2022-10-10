@@ -8,7 +8,6 @@ import (
 
 	"github.com/jxsl13/amqpx/logging"
 	"github.com/jxsl13/amqpx/pool"
-	"github.com/rabbitmq/amqp091-go"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -43,29 +42,29 @@ func TestPublisher(t *testing.T) {
 			}
 
 			queueName := fmt.Sprintf("TestPublisher-Queue-%d", id)
-			err = s.QueueDeclare(queueName, true, false, false, false, QuorumArgs)
+			err = s.QueueDeclare(queueName)
 			if err != nil {
 				assert.NoError(t, err)
 				return
 			}
 			defer func() {
-				i, err := s.QueueDelete(queueName, false, false, false)
+				i, err := s.QueueDelete(queueName)
 				assert.NoError(t, err)
 				assert.Equal(t, 0, i)
 			}()
 
 			exchangeName := fmt.Sprintf("TestPublisher-Exchange-%d", id)
-			err = s.ExchangeDeclare(exchangeName, "fanout", true, false, false, false, nil)
+			err = s.ExchangeDeclare(exchangeName, "topic")
 			if err != nil {
 				assert.NoError(t, err)
 				return
 			}
 			defer func() {
-				err := s.ExchangeDelete(exchangeName, false, false)
+				err := s.ExchangeDelete(exchangeName)
 				assert.NoError(t, err)
 			}()
 
-			err = s.QueueBind(queueName, "#", exchangeName, false, nil)
+			err = s.QueueBind(queueName, "#", exchangeName)
 			if err != nil {
 				assert.NoError(t, err)
 				return
@@ -75,7 +74,13 @@ func TestPublisher(t *testing.T) {
 				assert.NoError(t, err)
 			}()
 
-			delivery, err := s.Consume(queueName, fmt.Sprintf("Consumer-%s", queueName), false, true, false, false, nil)
+			delivery, err := s.Consume(
+				queueName,
+				pool.ConsumeOptions{
+					ConsumerTag: fmt.Sprintf("Consumer-%s", queueName),
+					Exclusive:   true,
+				},
+			)
 			if err != nil {
 				assert.NoError(t, err)
 				return
@@ -99,7 +104,8 @@ func TestPublisher(t *testing.T) {
 			pub := pool.NewPublisher(p)
 			defer pub.Close()
 
-			pub.Publish(exchangeName, "", true, false, amqp091.Publishing{
+			pub.Publish(exchangeName, "", pool.Publishing{
+				Mandatory:   true,
 				ContentType: "application/json",
 				Body:        []byte(message),
 			})

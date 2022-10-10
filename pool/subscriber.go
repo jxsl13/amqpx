@@ -82,15 +82,8 @@ type HandlerFunc func(amqp091.Delivery) error
 
 // Handler is a struct that contains all parameters needed in order to register a handler function.
 type Handler struct {
-	Queue    string
-	Consumer string
-
-	AutoAck   bool
-	Exclusive bool
-	NoLocal   bool
-	NoWait    bool
-	Args      amqp091.Table
-
+	Queue string
+	ConsumeOptions
 	HandlerFunc HandlerFunc
 }
 
@@ -113,29 +106,35 @@ type Handler struct {
 // Inflight messages, limited by Channel.Qos will be buffered until received from the returned chan.
 // When the Channel or Connection is closed, all buffered and inflight messages will be dropped.
 // When the consumer identifier tag is cancelled, all inflight messages will be delivered until the returned chan is closed.
-func (s *Subscriber) RegisterHandlerFunc(queue string, consumer string, autoAck bool, exclusive bool, noLocal bool, noWait bool, args amqp091.Table, hf HandlerFunc) {
+func (s *Subscriber) RegisterHandlerFunc(queue string, hf HandlerFunc, options ...ConsumeOptions) {
 	if hf == nil {
 		panic("HandlerFunc must not be nil")
+	}
+
+	option := ConsumeOptions{
+		ConsumerTag: "",
+		AutoAck:     false,
+		Exclusive:   false,
+		NoLocal:     false,
+		NoWait:      false,
+		Args:        nil,
+	}
+	if len(options) > 0 {
+		option = options[0]
 	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.handlers = append(s.handlers, Handler{
-		Queue:    queue,
-		Consumer: consumer,
-
-		AutoAck:   autoAck,
-		Exclusive: exclusive,
-		NoLocal:   noLocal,
-		NoWait:    noWait,
-		Args:      args,
+		Queue:          queue,
+		ConsumeOptions: option,
 
 		HandlerFunc: hf,
 	})
 
 	s.log.WithFields(map[string]any{
 		"subscriber": s.pool.Name(),
-		"consumer":   consumer,
+		"consumer":   option.ConsumerTag,
 		"queue":      queue,
 	}).Info("registered handler")
 }
@@ -151,7 +150,7 @@ func (s *Subscriber) RegisterHandler(handler Handler) {
 
 	s.log.WithFields(map[string]any{
 		"subscriber": s.pool.Name(),
-		"consumer":   handler.Consumer,
+		"consumer":   handler.ConsumerTag,
 		"queue":      handler.Queue,
 	}).Info("registered handler")
 }
@@ -193,7 +192,7 @@ func (s *Subscriber) consumer(h Handler, wg *sync.WaitGroup) {
 }
 
 func (s *Subscriber) consume(h Handler) (err error) {
-	s.debugConsumer(h.Consumer, "starting consumer...")
+	s.debugConsumer(h.ConsumerTag, "starting consumer...")
 
 	session, err := s.pool.GetSession()
 	if err != nil {
@@ -203,24 +202,27 @@ func (s *Subscriber) consume(h Handler) (err error) {
 		if err == nil {
 			// no error
 			s.pool.ReturnSession(session, false)
-			s.infoConsumer(h.Consumer, "closed")
+			s.infoConsumer(h.ConsumerTag, "closed")
 		} else if errors.Is(err, ErrClosed) {
 			// graceful shutdown
 			s.pool.ReturnSession(session, false)
-			s.infoConsumer(h.Consumer, "closed")
+			s.infoConsumer(h.ConsumerTag, "closed")
 		} else {
 			// actual error
 			s.pool.ReturnSession(session, true)
-			s.warnConsumer(h.Consumer, err, "closed unexpectedly")
+			s.warnConsumer(h.ConsumerTag, err, "closed unexpectedly")
 		}
 	}()
 
 	// got a working session
-	delivery, err := session.Consume(h.Queue, h.Consumer, h.AutoAck, h.Exclusive, h.NoLocal, h.NoWait, h.Args)
+	delivery, err := session.Consume(
+		h.Queue,
+		h.ConsumeOptions,
+	)
 	if err != nil {
 		return err
 	}
-	s.infoConsumer(h.Consumer, "started")
+	s.infoConsumer(h.ConsumerTag, "started")
 	for {
 		select {
 		case <-s.catchShutdown():
@@ -237,20 +239,20 @@ func (s *Subscriber) consume(h Handler) (err error) {
 			)
 		handle:
 			for {
-				s.infoHandler(h.Consumer, msg.Exchange, msg.RoutingKey, h.Queue, "received message")
+				s.infoHandler(h.ConsumerTag, msg.Exchange, msg.RoutingKey, h.Queue, "received message")
 				err = h.HandlerFunc(msg)
 				if h.AutoAck {
 					// no acks required
 					if err == nil {
 						// TODO: potential message loss
-						s.infoHandler(h.Consumer, msg.Exchange, msg.RoutingKey, h.Queue, "processed message")
+						s.infoHandler(h.ConsumerTag, msg.Exchange, msg.RoutingKey, h.Queue, "processed message")
 						break handle
 					} else if errors.Is(err, ErrClosed) {
 						// unknown error
-						s.warnHandler(h.Consumer, msg.Exchange, msg.RoutingKey, h.Queue, fmt.Errorf("potential message loss: %w", err), string(msg.Body))
+						s.warnHandler(h.ConsumerTag, msg.Exchange, msg.RoutingKey, h.Queue, fmt.Errorf("potential message loss: %w", err), string(msg.Body))
 					} else {
 						// unknown error
-						s.errorHandler(h.Consumer, msg.Exchange, msg.RoutingKey, h.Queue, fmt.Errorf("potential message loss: %w", err), string(msg.Body))
+						s.errorHandler(h.ConsumerTag, msg.Exchange, msg.RoutingKey, h.Queue, fmt.Errorf("potential message loss: %w", err), string(msg.Body))
 						break handle
 					}
 				}
@@ -270,7 +272,7 @@ func (s *Subscriber) consume(h Handler) (err error) {
 							// TODO: potential message loss
 							// transient session for shutdown?
 
-							s.warnHandler(h.Consumer, msg.Exchange, msg.RoutingKey, h.Queue, fmt.Errorf("potential message loss: missing (n)ack: %w", err), string(msg.Body))
+							s.warnHandler(h.ConsumerTag, msg.Exchange, msg.RoutingKey, h.Queue, fmt.Errorf("potential message loss: missing (n)ack: %w", err), string(msg.Body))
 							return poolErr
 						}
 						// recovered successfully, retry ack/nack
@@ -278,9 +280,9 @@ func (s *Subscriber) consume(h Handler) (err error) {
 					}
 
 					if err != nil {
-						s.infoHandler(h.Consumer, msg.Exchange, msg.RoutingKey, h.Queue, "nacked message")
+						s.infoHandler(h.ConsumerTag, msg.Exchange, msg.RoutingKey, h.Queue, "nacked message")
 					} else {
-						s.infoHandler(h.Consumer, msg.Exchange, msg.RoutingKey, h.Queue, "acked message")
+						s.infoHandler(h.ConsumerTag, msg.Exchange, msg.RoutingKey, h.Queue, "acked message")
 					}
 					// successfully handled message
 					break handle

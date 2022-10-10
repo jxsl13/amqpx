@@ -39,29 +39,29 @@ func TestSubscriber(t *testing.T) {
 			defer p.ReturnSession(ts, false)
 
 			queueName := fmt.Sprintf("TestSubscriber-Queue-%d", id)
-			err = ts.QueueDeclare(queueName, true, false, false, false, QuorumArgs)
+			err = ts.QueueDeclare(queueName)
 			if err != nil {
 				assert.NoError(t, err)
 				return
 			}
 			defer func() {
-				i, err := ts.QueueDelete(queueName, false, false, false)
+				i, err := ts.QueueDelete(queueName)
 				assert.NoError(t, err)
 				assert.Equal(t, 0, i)
 			}()
 
 			exchangeName := fmt.Sprintf("TestSubscriber-Exchange-%d", id)
-			err = ts.ExchangeDeclare(exchangeName, "fanout", true, false, false, false, nil)
+			err = ts.ExchangeDeclare(exchangeName, "topic")
 			if err != nil {
 				assert.NoError(t, err)
 				return
 			}
 			defer func() {
-				err := ts.ExchangeDelete(exchangeName, false, false)
+				err := ts.ExchangeDelete(exchangeName)
 				assert.NoError(t, err)
 			}()
 
-			err = ts.QueueBind(queueName, "#", exchangeName, false, nil)
+			err = ts.QueueBind(queueName, "#", exchangeName)
 			if err != nil {
 				assert.NoError(t, err)
 				return
@@ -78,7 +78,7 @@ func TestSubscriber(t *testing.T) {
 			sub := pool.NewSubscriber(p, pool.SubscriberWithContext(ctx))
 			defer sub.Close()
 
-			sub.RegisterHandlerFunc(queueName, fmt.Sprintf("Consumer-%s", queueName), false, true, false, false, nil,
+			sub.RegisterHandlerFunc(queueName,
 				func(msg amqp091.Delivery) error {
 
 					// handler func
@@ -89,14 +89,20 @@ func TestSubscriber(t *testing.T) {
 					// close subscriber from within handler
 					cancel()
 					return nil
-				})
+				},
+				pool.ConsumeOptions{
+					ConsumerTag: fmt.Sprintf("Consumer-%s", queueName),
+					Exclusive:   true,
+				},
+			)
 			sub.Start()
 			time.Sleep(5 * time.Second)
 
 			pub := pool.NewPublisher(p)
 			defer pub.Close()
 
-			pub.Publish(exchangeName, "", true, false, amqp091.Publishing{
+			pub.Publish(exchangeName, "", pool.Publishing{
+				Mandatory:   true,
 				ContentType: "application/json",
 				Body:        []byte(message),
 			})

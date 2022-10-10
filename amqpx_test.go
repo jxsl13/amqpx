@@ -19,47 +19,47 @@ func TestMain(m *testing.M) {
 
 func createTopology(t *amqpx.Topologer) error {
 	// documentation: https://www.cloudamqp.com/blog/part4-rabbitmq-for-beginners-exchanges-routing-keys-bindings.html#:~:text=The%20routing%20key%20is%20a%20message%20attribute%20added%20to%20the,routing%20key%20of%20the%20message.
-	err := t.ExchangeDeclare("exchange-01", "topic", true, false, false, false, nil)
+	err := t.ExchangeDeclare("exchange-01", "topic")
 	if err != nil {
 		return err
 	}
 
-	err = t.QueueDeclare("queue-01", true, false, false, false, amqpx.QuorumQueue)
+	err = t.QueueDeclare("queue-01")
 	if err != nil {
 		return err
 	}
 
-	err = t.QueueBind("queue-01", "event-01", "exchange-01", false, nil)
+	err = t.QueueBind("queue-01", "event-01", "exchange-01")
 	if err != nil {
 		return err
 	}
 
-	err = t.ExchangeDeclare("exchange-02", "topic", true, false, false, false, nil)
+	err = t.ExchangeDeclare("exchange-02", "topic")
 	if err != nil {
 		return err
 	}
 
-	err = t.QueueDeclare("queue-02", true, false, false, false, amqpx.QuorumQueue)
+	err = t.QueueDeclare("queue-02")
 	if err != nil {
 		return err
 	}
 
-	err = t.QueueBind("queue-02", "event-02", "exchange-02", false, nil)
+	err = t.QueueBind("queue-02", "event-02", "exchange-02")
 	if err != nil {
 		return err
 	}
 
-	err = t.ExchangeDeclare("exchange-03", "topic", true, false, false, false, nil)
+	err = t.ExchangeDeclare("exchange-03", "topic")
 	if err != nil {
 		return err
 	}
 
-	err = t.QueueDeclare("queue-03", true, false, false, false, amqpx.QuorumQueue)
+	err = t.QueueDeclare("queue-03")
 	if err != nil {
 		return err
 	}
 
-	err = t.QueueBind("queue-03", "event-03", "exchange-03", false, nil)
+	err = t.QueueBind("queue-03", "event-03", "exchange-03")
 	if err != nil {
 		return err
 	}
@@ -67,32 +67,32 @@ func createTopology(t *amqpx.Topologer) error {
 }
 
 func deleteTopology(t *amqpx.Topologer) error {
-	_, err := t.QueueDelete("queue-01", false, false, false)
+	_, err := t.QueueDelete("queue-01")
 	if err != nil {
 		return err
 	}
 
-	_, err = t.QueueDelete("queue-02", false, false, false)
+	_, err = t.QueueDelete("queue-02")
 	if err != nil {
 		return err
 	}
 
-	_, err = t.QueueDelete("queue-03", false, false, false)
+	_, err = t.QueueDelete("queue-03")
 	if err != nil {
 		return err
 	}
 
-	err = t.ExchangeDelete("exchange-01", false, false)
+	err = t.ExchangeDelete("exchange-01")
 	if err != nil {
 		return err
 	}
 
-	err = t.ExchangeDelete("exchange-02", false, false)
+	err = t.ExchangeDelete("exchange-02")
 	if err != nil {
 		return err
 	}
 
-	err = t.ExchangeDelete("exchange-03", false, false)
+	err = t.ExchangeDelete("exchange-03")
 	if err != nil {
 		return err
 	}
@@ -126,7 +126,7 @@ func TestAMQPXPub(t *testing.T) {
 	event := "TestAMQPXPub - event content"
 
 	// publish event to first queue
-	err = amqpx.Publish("exchange-01", "event-01", false, false, amqpx.Publishing{
+	err = amqpx.Publish("exchange-01", "event-01", amqpx.Publishing{
 		ContentType: "application/json",
 		Body:        []byte(event),
 	})
@@ -173,7 +173,7 @@ func TestAMQPXSubAndPub(t *testing.T) {
 
 	eventContent := "TestAMQPXSubAndPub - event content"
 
-	amqpx.RegisterHandler("queue-01", "", false, false, false, false, nil, func(msg amqpx.Delivery) error {
+	amqpx.RegisterHandler("queue-01", func(msg amqpx.Delivery) error {
 		log.Info("subscriber of queue-01")
 		cancel()
 		return nil
@@ -192,7 +192,7 @@ func TestAMQPXSubAndPub(t *testing.T) {
 
 	// publish event to first queue
 
-	err = amqpx.Publish("exchange-01", "event-01", false, false, amqpx.Publishing{
+	err = amqpx.Publish("exchange-01", "event-01", amqpx.Publishing{
 		ContentType: "application/json",
 		Body:        []byte(eventContent),
 	})
@@ -221,10 +221,10 @@ func TestAMQPXSubAndPubMulti(t *testing.T) {
 	eventContent := "TestAMQPXSubAndPub - event content"
 
 	// publish -> queue-01 -> subscriber-01 -> queue-02 -> subscriber-02 -> queue-03 -> subscriber-03 -> cancel context
-	amqpx.RegisterHandler("queue-01", "subscriber-01", false, false, false, false, nil, func(msg amqpx.Delivery) error {
+	amqpx.RegisterHandler("queue-01", func(msg amqpx.Delivery) error {
 		log.Info("handler of subscriber-01")
 
-		err := amqpx.Publish("exchange-02", "event-02", false, false, amqpx.Publishing{
+		err := amqpx.Publish("exchange-02", "event-02", amqpx.Publishing{
 			ContentType: msg.ContentType,
 			Body:        msg.Body,
 		})
@@ -234,12 +234,14 @@ func TestAMQPXSubAndPubMulti(t *testing.T) {
 		}
 
 		return nil
-	})
+	},
+		amqpx.ConsumeOptions{ConsumerTag: "subscriber-01"},
+	)
 
-	amqpx.RegisterHandler("queue-02", "subscriber-02", false, false, false, false, nil, func(msg amqpx.Delivery) error {
+	amqpx.RegisterHandler("queue-02", func(msg amqpx.Delivery) error {
 		log.Info("handler of subscriber-02")
 
-		err := amqpx.Publish("exchange-03", "event-03", false, false, amqpx.Publishing{
+		err := amqpx.Publish("exchange-03", "event-03", amqpx.Publishing{
 			ContentType: msg.ContentType,
 			Body:        msg.Body,
 		})
@@ -249,13 +251,13 @@ func TestAMQPXSubAndPubMulti(t *testing.T) {
 		}
 
 		return nil
-	})
+	}, amqpx.ConsumeOptions{ConsumerTag: "subscriber-02"})
 
-	amqpx.RegisterHandler("queue-03", "subscriber-03", false, false, false, false, nil, func(msg amqpx.Delivery) error {
+	amqpx.RegisterHandler("queue-03", func(msg amqpx.Delivery) error {
 		log.Info("handler of subscriber-03: canceling context!")
 		cancel()
 		return nil
-	})
+	}, amqpx.ConsumeOptions{ConsumerTag: "subscriber-03"})
 
 	err := amqpx.Start(
 		amqpx.NewURL("localhost", 5672, "admin", "password"),
@@ -270,7 +272,7 @@ func TestAMQPXSubAndPubMulti(t *testing.T) {
 
 	// publish event to first queue
 
-	err = amqpx.Publish("exchange-01", "event-01", false, false, amqpx.Publishing{
+	err = amqpx.Publish("exchange-01", "event-01", amqpx.Publishing{
 		ContentType: "application/json",
 		Body:        []byte(eventContent),
 	})

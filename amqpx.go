@@ -23,14 +23,22 @@ type (
 	Delivery    = amqp091.Delivery
 	HandlerFunc = func(Delivery) error
 
-	Publishing = amqp091.Publishing
+	ConsumeOptions = pool.ConsumeOptions
+	Publishing     = pool.Publishing
+
+	ExchangeDeclareOptions = pool.ExchangeDeclareOptions
+	ExchangeDeleteOptions  = pool.ExchangeDeclareOptions
+	ExchangeBindOptions    = pool.ExchangeBindOptions
+	ExchangeUnbindOptions  = pool.ExchangeUnbindOptions
+
+	QueueDeclareOptions = pool.QueueDeclareOptions
+	QueueDeleteOptions  = pool.QueueDeleteOptions
+	QueueBindOptions    = pool.QueueBindOptions
 )
 
 var (
-	// QuorumArgs is the argument you need to pass in order to create a quorum queue.
-	QuorumQueue = Table{
-		"x-queue-type": "quorum",
-	}
+	// QuorumQueue is the argument you need to pass in order to create a quorum queue.
+	QuorumQueue = pool.QuorumQueue
 )
 
 const (
@@ -107,7 +115,7 @@ func (a *AMQPX) RegisterTopologyDeleter(finalizer TopologyFunc) {
 
 // RegisterHandler registers a handler function for a specific queue.
 // consumer can be set to a unique consumer name (if left empty, a unique name will be generated)
-func (a *AMQPX) RegisterHandler(queue string, consumer string, autoAck bool, exclusive bool, noLocal bool, noWait bool, args Table, handlerFunc HandlerFunc) {
+func (a *AMQPX) RegisterHandler(queue string, handlerFunc HandlerFunc, option ...ConsumeOptions) {
 	if handlerFunc == nil {
 		panic("handlerFunc must not be nil")
 	}
@@ -115,15 +123,15 @@ func (a *AMQPX) RegisterHandler(queue string, consumer string, autoAck bool, exc
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
+	o := ConsumeOptions{}
+	if len(option) > 0 {
+		o = option[0]
+	}
+
 	a.handlers = append(a.handlers, pool.Handler{
-		Queue:       queue,
-		Consumer:    consumer,
-		AutoAck:     autoAck,
-		Exclusive:   exclusive,
-		NoLocal:     noLocal,
-		NoWait:      noWait,
-		Args:        args,
-		HandlerFunc: handlerFunc,
+		Queue:          queue,
+		ConsumeOptions: o,
+		HandlerFunc:    handlerFunc,
 	})
 }
 
@@ -253,14 +261,14 @@ func (a *AMQPX) close() (err error) {
 }
 
 // Publish a message to a specific exchange with a given routingKey.
-func (a *AMQPX) Publish(exchange string, routingKey string, mandatory bool, immediate bool, msg Publishing) error {
+func (a *AMQPX) Publish(exchange string, routingKey string, msg Publishing) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.pub == nil {
 		panic("amqpx package was not started")
 	}
 
-	return a.pub.Publish(exchange, routingKey, mandatory, immediate, msg)
+	return a.pub.Publish(exchange, routingKey, msg)
 }
 
 // Get is only supposed to be used for testing, do not use get for polling any broker queues.
@@ -307,8 +315,8 @@ func RegisterTopologyDeleter(finalizer TopologyFunc) {
 
 // RegisterHandler registers a handler function for a specific queue.
 // consumer can be set to a unique consumer name (if left empty, a unique name will be generated)
-func RegisterHandler(queue string, consumer string, autoAck bool, exclusive bool, noLocal bool, noWait bool, args Table, handlerFunc HandlerFunc) {
-	amqpx.RegisterHandler(queue, consumer, autoAck, exclusive, noLocal, noWait, args, handlerFunc)
+func RegisterHandler(queue string, handlerFunc HandlerFunc, option ...ConsumeOptions) {
+	amqpx.RegisterHandler(queue, handlerFunc, option...)
 }
 
 // Start starts the subscriber and publisher pools.
@@ -328,8 +336,8 @@ func Close() error {
 }
 
 // Publish a message to a specific exchange with a given routingKey.
-func Publish(exchange string, routingKey string, mandatory bool, immediate bool, msg Publishing) error {
-	return amqpx.Publish(exchange, routingKey, mandatory, immediate, msg)
+func Publish(exchange string, routingKey string, msg Publishing) error {
+	return amqpx.Publish(exchange, routingKey, msg)
 }
 
 // Get is only supposed to be used for testing, do not use get for polling any broker queues.
