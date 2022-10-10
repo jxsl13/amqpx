@@ -15,7 +15,7 @@ type Pool struct {
 
 func New(connectUrl string, numConns, numSessions int, options ...Option) (*Pool, error) {
 	if numConns < 1 {
-		return nil, fmt.Errorf("%w: %d", ErrInvalidPoolSize, numConns)
+		return nil, fmt.Errorf("%w: %d", errInvalidPoolSize, numConns)
 	}
 
 	if numSessions < 1 {

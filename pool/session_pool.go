@@ -28,7 +28,7 @@ type SessionPool struct {
 
 func NewSessionPool(pool *ConnectionPool, numSessions int, options ...SessionPoolOption) (*SessionPool, error) {
 	if numSessions < 1 {
-		return nil, fmt.Errorf("%w: %d", ErrInvalidPoolSize, numSessions)
+		return nil, fmt.Errorf("%w: %d", errInvalidPoolSize, numSessions)
 	}
 
 	// use sane defaults

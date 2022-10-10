@@ -6,7 +6,7 @@ var (
 	ErrInvalidConnectURL = errors.New("invalid connection url")
 	ErrConnectionFailed  = errors.New("connection failed")
 
-	ErrInvalidPoolSize          = errors.New("invalid pool size")
+	errInvalidPoolSize          = errors.New("invalid pool size")
 	ErrPoolInitializationFailed = errors.New("pool initialization failed")
 	ErrClosed                   = errors.New("closed")
 )

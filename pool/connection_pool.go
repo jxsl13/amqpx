@@ -36,15 +36,15 @@ type ConnectionPool struct {
 
 // NewConnectionPool creates a new connection pool which has a maximum size it
 // can become and an idle size of connections that are always open.
-func NewConnectionPool(connectUrl string, size int, options ...ConnectionPoolOption) (*ConnectionPool, error) {
-	if size < 1 {
-		panic("max pool size is negative or 0")
+func NewConnectionPool(connectUrl string, numConns int, options ...ConnectionPoolOption) (*ConnectionPool, error) {
+	if numConns < 1 {
+		return nil, fmt.Errorf("%w: %d", errInvalidPoolSize, numConns)
 	}
 
 	// use sane defaults
 	option := connectionPoolOption{
 		Name: defaultAppName(),
-		Size: size,
+		Size: numConns,
 
 		Ctx: context.Background(),
 
