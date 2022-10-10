@@ -220,7 +220,6 @@ func (a *AMQPX) Start(connectUrl string, options ...Option) (err error) {
 func (a *AMQPX) Close() error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-
 	return a.close()
 }
 
@@ -255,23 +254,22 @@ func (a *AMQPX) close() (err error) {
 
 // Publish a message to a specific exchange with a given routingKey.
 func (a *AMQPX) Publish(exchange string, routingKey string, mandatory bool, immediate bool, msg Publishing) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	if a.pub == nil {
 		panic("amqpx package was not started")
 	}
-	a.mu.Lock()
-	defer a.mu.Unlock()
 
 	return a.pub.Publish(exchange, routingKey, mandatory, immediate, msg)
 }
 
 // Get is only supposed to be used for testing, do not use get for polling any broker queues.
 func (a *AMQPX) Get(queue string, autoAck bool) (msg *Delivery, ok bool, err error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	if a.pub == nil {
 		panic("amqpx package was not started")
 	}
-
-	a.mu.Lock()
-	defer a.mu.Unlock()
 
 	// publisher is used because this is a testing method for the publisher
 	return a.pub.Get(queue, autoAck)
