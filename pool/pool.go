@@ -2,6 +2,7 @@ package pool
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/jxsl13/amqpx/logging"
@@ -14,7 +15,7 @@ type Pool struct {
 
 func New(connectUrl string, numConns, numSessions int, options ...Option) (*Pool, error) {
 	if numConns < 1 {
-		panic("pool size is negative or 0")
+		return nil, fmt.Errorf("%w: %d", ErrInvalidPoolSize, numConns)
 	}
 
 	if numSessions < 1 {

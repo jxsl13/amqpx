@@ -26,15 +26,15 @@ type SessionPool struct {
 	log logging.Logger
 }
 
-func NewSessionPool(pool *ConnectionPool, size int, options ...SessionPoolOption) (*SessionPool, error) {
-	if size < 1 {
-		panic("max pool size is negative or 0")
+func NewSessionPool(pool *ConnectionPool, numSessions int, options ...SessionPoolOption) (*SessionPool, error) {
+	if numSessions < 1 {
+		return nil, fmt.Errorf("%w: %d", ErrInvalidPoolSize, numSessions)
 	}
 
 	// use sane defaults
 	option := sessionPoolOption{
 		AutoClosePool: false, // caller owns the connection pool by default
-		Size:          size,
+		Size:          numSessions,
 		Confirmable:   false,
 		BufferSize:    1,        // fault tolerance over throughput
 		Logger:        pool.log, // derive logger from connection pool
