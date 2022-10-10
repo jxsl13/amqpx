@@ -10,7 +10,7 @@
 `amqpx` is a robust and easy to use wrapper for `github.com/rabbitmq/amqp091-go`.
 
 **Core features**
-- connection pooling
+- connection & session (channel) pooling
 - reconnect handling
 - clean shutdown handling
 - sane defaults
