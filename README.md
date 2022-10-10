@@ -44,19 +44,19 @@ func main() {
 
 	amqpx.RegisterTopologyCreator(func(t *amqpx.Topologer) error {
 		// error handling omitted for brevity
-		t.ExchangeDeclare("example-exchange", "topic", true, false, false, false, nil)
-		t.QueueDeclare("example-queue", true, false, false, false, amqpx.QuorumQueue)
-		t.QueueBind("example-queue", "route.name.v1", "example-exchange", false, nil)
+		t.ExchangeDeclare("example-exchange", "topic") // durable exchange by default
+		t.QueueDeclare("example-queue")                // durable quorum queue by default
+		t.QueueBind("example-queue", "route.name.v1", "example-exchange")
 		return nil
 	})
 	amqpx.RegisterTopologyDeleter(func(t *amqpx.Topologer) error {
 		// error handling omitted for brevity
-		t.QueueDelete("example-queue", false, false, false)
-		t.ExchangeDelete("example-exchange", false, false)
+		t.QueueDelete("example-queue")
+		t.ExchangeDelete("example-exchange")
 		return nil
 	})
 
-	amqpx.RegisterHandler("example-queue", "", false, false, false, false, nil, func(msg amqpx.Delivery) error {
+	amqpx.RegisterHandler("example-queue", func(msg amqpx.Delivery) error {
 		fmt.Println("received message:", string(msg.Body))
 		fmt.Println("canceling context")
 		cancel()
@@ -71,7 +71,7 @@ func main() {
 	)
 	defer amqpx.Close()
 
-	amqpx.Publish("example-exchange", "route.name.v1", false, false, amqpx.Publishing{
+	amqpx.Publish("example-exchange", "route.name.v1", amqpx.Publishing{
 		ContentType: "application/json",
 		Body:        []byte("my test event"),
 	})
