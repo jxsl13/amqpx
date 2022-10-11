@@ -279,8 +279,8 @@ func (s *Subscriber) consume(h Handler) (err error) {
 						// only returns an error upon shutdown
 						return poolErr
 					}
-					// recovered successfully, retry ack/nack
-					// do not retry, because th ebroker will requeue the un(n)acked message
+
+					// do not retry, because the broker will requeue the un(n)acked message
 					// after a timeout of by default 30 minutes.
 					break handle
 				}
