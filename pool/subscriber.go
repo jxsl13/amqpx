@@ -244,49 +244,56 @@ func (s *Subscriber) consume(h Handler) (err error) {
 				if h.AutoAck {
 					// no acks required
 					if err == nil {
-						// TODO: potential message loss
 						s.infoHandler(h.ConsumerTag, msg.Exchange, msg.RoutingKey, h.Queue, "processed message")
 						break handle
 					} else if errors.Is(err, ErrClosed) {
 						// unknown error
 						s.warnHandler(h.ConsumerTag, msg.Exchange, msg.RoutingKey, h.Queue, fmt.Errorf("potential message loss: %w", err), string(msg.Body))
+						return err
 					} else {
-						// unknown error
-						s.errorHandler(h.ConsumerTag, msg.Exchange, msg.RoutingKey, h.Queue, fmt.Errorf("potential message loss: %w", err), string(msg.Body))
-						break handle
-					}
-				}
-
-			ack:
-				for {
-					if err != nil {
-						ackErr = session.Nack(msg.DeliveryTag, false, true)
-					} else {
-						ackErr = session.Ack(msg.DeliveryTag, false)
-					}
-
-					if ackErr != nil {
+						// unknown error -> recover & retry
 						poolErr = session.Recover()
 						if poolErr != nil {
 							// only returns an error upon shutdown
-							// TODO: potential message loss
-							// transient session for shutdown?
-
-							s.warnHandler(h.ConsumerTag, msg.Exchange, msg.RoutingKey, h.Queue, fmt.Errorf("potential message loss: missing (n)ack: %w", err), string(msg.Body))
+							s.errorHandler(h.ConsumerTag, msg.Exchange, msg.RoutingKey, h.Queue, fmt.Errorf("potential message loss: %w", err), string(msg.Body))
 							return poolErr
 						}
-						// recovered successfully, retry ack/nack
-						continue ack
+						continue handle
 					}
+				}
 
-					if err != nil {
-						s.infoHandler(h.ConsumerTag, msg.Exchange, msg.RoutingKey, h.Queue, "nacked message")
-					} else {
-						s.infoHandler(h.ConsumerTag, msg.Exchange, msg.RoutingKey, h.Queue, "acked message")
+				// processing failed
+				if err != nil {
+					// requeue message if possible
+					ackErr = session.Nack(msg.DeliveryTag, false, true)
+				} else {
+					ackErr = session.Ack(msg.DeliveryTag, false)
+				}
+
+				// if (n)ack fails, we know that the connection died
+				// potentially before when processing already.
+				if ackErr != nil {
+					s.warnHandler(h.ConsumerTag, msg.Exchange, msg.RoutingKey, h.Queue, ackErr, "(n)ack failed")
+					poolErr = session.Recover()
+					if poolErr != nil {
+						// only returns an error upon shutdown
+						return poolErr
 					}
-					// successfully handled message
+					// recovered successfully, retry ack/nack
+					// do not retry, because th ebroker will requeue the un(n)acked message
+					// after a timeout of by default 30 minutes.
 					break handle
 				}
+
+				// (n)acked successfully
+				if err != nil {
+					s.infoHandler(h.ConsumerTag, msg.Exchange, msg.RoutingKey, h.Queue, "nacked message")
+				} else {
+					s.infoHandler(h.ConsumerTag, msg.Exchange, msg.RoutingKey, h.Queue, "acked message")
+				}
+				// successfully handled message
+				break handle
+
 			}
 		}
 	}
