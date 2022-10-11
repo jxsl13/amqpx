@@ -246,10 +246,6 @@ func (s *Subscriber) consume(h Handler) (err error) {
 					if err == nil {
 						s.infoHandler(h.ConsumerTag, msg.Exchange, msg.RoutingKey, h.Queue, "processed message")
 						break handle
-					} else if errors.Is(err, ErrClosed) {
-						// unknown error
-						s.warnHandler(h.ConsumerTag, msg.Exchange, msg.RoutingKey, h.Queue, fmt.Errorf("potential message loss: %w", err))
-						return err
 					} else {
 						// unknown error -> recover & retry
 						poolErr = session.Recover()
