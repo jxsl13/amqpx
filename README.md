@@ -25,7 +25,7 @@ This library is highly inspired by `https://github.com/houseofcat/turbocookedrab
 go get github.com/jxsl13/amqpx
 ```
 
-Example
+### Example
 ```go
 package main
 
@@ -80,6 +80,85 @@ func main() {
 }
 
 ```
+
+
+### Example with optional paramters
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"os/signal"
+
+	"github.com/jxsl13/amqpx"
+	"github.com/jxsl13/amqpx/logging"
+)
+
+func ExampleConsumer(cancel func()) amqpx.HandlerFunc {
+	return func(msg amqpx.Delivery) error {
+		fmt.Println("received message:", string(msg.Body))
+		fmt.Println("canceling context")
+		cancel()
+
+		// return error for nack + requeue
+		return nil
+	}
+}
+
+func main() {
+	ctx, cancel := signal.NotifyContext(context.Background())
+	defer cancel()
+
+	amqpx.RegisterTopologyCreator(func(t *amqpx.Topologer) error {
+		// error handling omitted for brevity
+
+		t.ExchangeDeclare("example-exchange", "topic",
+			amqpx.ExchangeDeclareOptions{
+				Durable: true,
+			},
+		)
+		t.QueueDeclare("example-queue",
+			amqpx.QueueDeclareOptions{
+				Durable: true,
+				Args:    amqpx.QuorumQueue,
+			},
+		)
+		t.QueueBind("example-queue", "route.name.v1.event", "example-exchange")
+		return nil
+	})
+	amqpx.RegisterTopologyDeleter(func(t *amqpx.Topologer) error {
+		// error handling omitted for brevity
+		t.QueueDelete("example-queue")
+		t.ExchangeDelete("example-exchange")
+		return nil
+	})
+
+	amqpx.RegisterHandler("example-queue",
+		ExampleConsumer(cancel),
+		amqpx.ConsumeOptions{
+			ConsumerTag: "example-queue-cunsumer",
+			Exclusive:   true,
+		},
+	)
+
+	amqpx.Start(
+		amqpx.NewURL("localhost", 5672, "admin", "password"), // or amqp://username@password:localhost:5672
+		amqpx.WithLogger(logging.NewNoOpLogger()),            // provide a logger that implements the logging.Logger interface (logrus adapter is provided)
+	)
+	defer amqpx.Close()
+
+	amqpx.Publish("example-exchange", "route.name.v1.event", amqpx.Publishing{
+		ContentType: "application/json",
+		Body:        []byte("my test event"),
+	})
+
+	<-ctx.Done()
+}
+
+```
+
 
 ## Types
 
