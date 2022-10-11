@@ -27,7 +27,7 @@ type (
 	Publishing     = pool.Publishing
 
 	ExchangeDeclareOptions = pool.ExchangeDeclareOptions
-	ExchangeDeleteOptions  = pool.ExchangeDeclareOptions
+	ExchangeDeleteOptions  = pool.ExchangeDeleteOptions
 	ExchangeBindOptions    = pool.ExchangeBindOptions
 	ExchangeUnbindOptions  = pool.ExchangeUnbindOptions
 
