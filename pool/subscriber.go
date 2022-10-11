@@ -271,7 +271,7 @@ func (s *Subscriber) consume(h Handler) (err error) {
 				}
 
 				// if (n)ack fails, we know that the connection died
-				// potentially before when processing already.
+				// potentially before processing already.
 				if ackErr != nil {
 					s.warnHandler(h.ConsumerTag, msg.Exchange, msg.RoutingKey, h.Queue, ackErr, "(n)ack failed")
 					poolErr = session.Recover()
