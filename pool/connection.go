@@ -158,7 +158,7 @@ func (ch *Connection) Connect() error {
 
 func (ch *Connection) connect() error {
 
-	// not closed, reuse
+	// not closed, close before reconnecting
 	if ch.conn != nil && !ch.conn.IsClosed() {
 		// ignore errors
 		_ = ch.conn.Close()
