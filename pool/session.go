@@ -11,6 +11,10 @@ import (
 	"github.com/rabbitmq/amqp091-go"
 )
 
+const (
+	notImplemented = 540
+)
+
 // Session is
 type Session struct {
 	name        string
@@ -189,6 +193,16 @@ func (s *Session) Recover() error {
 	return s.recover()
 }
 
+func (s *Session) tryRecover(err error) error {
+	if err == nil {
+		return nil
+	}
+	if !recoverable(err) {
+		return err
+	}
+	return s.recover()
+}
+
 func (s *Session) recover() error {
 
 	// tries to recover session forever
@@ -339,16 +353,10 @@ func (s *Session) retryPublish(f func() (uint64, error)) (tag uint64, err error)
 		if err == nil {
 			return tag, nil
 		}
-
-		if ae, ok := err.(*amqp091.Error); (ok && !ae.Recover) || errors.Is(err, amqp091.ErrClosed) {
-			err = s.recover()
-			if err != nil {
-				// recover only returns an error upon shutdown
-				return 0, err
-			}
-			continue
+		err = s.tryRecover(err)
+		if err != nil {
+			return 0, err
 		}
-		return 0, err
 	}
 }
 
@@ -369,17 +377,10 @@ func (s *Session) retryGet(f func() (*amqp091.Delivery, bool, error)) (msg *amqp
 		if err == nil {
 			return msg, ok, nil
 		}
-
-		if ae, ok := err.(*amqp091.Error); (ok && !ae.Recover) || errors.Is(err, amqp091.ErrClosed) {
-			err = s.recover()
-			if err != nil {
-				// recover only returns an error upon shutdown
-				return nil, false, err
-			}
-			continue
+		err = s.tryRecover(err)
+		if err != nil {
+			return nil, false, err
 		}
-
-		return msg, ok, err
 	}
 }
 
@@ -485,25 +486,11 @@ func (s *Session) consumeRetry(f func() (<-chan amqp091.Delivery, error)) (<-cha
 		c, err := f()
 		if err == nil {
 			return c, nil
-		} else if errors.Is(err, amqp091.ErrClosed) {
-			err = s.recover()
-			if err != nil {
-				// recover only returns an error upon shutdown
-				return nil, err
-			}
-			continue
-		} else if ae, ok := err.(*amqp091.Error); ok {
-			if !ae.Recover {
-				err = s.recover()
-				if err != nil {
-					// recover only returns an error upon shutdown
-					return nil, err
-				}
-				continue
-			}
-			// user error, must be handled by user
 		}
-		return nil, err
+		err = s.tryRecover(err)
+		if err != nil {
+			return nil, err
+		}
 	}
 }
 
@@ -513,17 +500,27 @@ func (s *Session) retry(f func() error) error {
 		if err == nil {
 			return nil
 		}
-		if ae, ok := err.(*amqp091.Error); (ok && !ae.Recover) || errors.Is(err, amqp091.ErrClosed) {
-			err = s.recover()
-			if err != nil {
-				// recover only returns an error upon shutdown
-				return err
-			}
-			continue
+		err = s.tryRecover(err)
+		if err != nil {
+			return err
 		}
-
-		return err
 	}
+}
+
+func recoverable(err error) bool {
+
+	if ae, ok := err.(*amqp091.Error); ok {
+		switch ae.Code {
+		case notImplemented:
+			return false
+		default:
+			// not recoverable by changing user input
+			// because of potential connection loss
+			return !ae.Recover
+		}
+	}
+
+	return errors.Is(err, amqp091.ErrClosed)
 }
 
 type ExchangeDeclareOptions struct {
@@ -801,16 +798,10 @@ func (s *Session) retryQueueDelete(f func() (int, error)) (int, error) {
 		if err == nil {
 			return i, nil
 		}
-		if ae, ok := err.(*amqp091.Error); (ok && !ae.Recover) || errors.Is(err, amqp091.ErrClosed) {
-			err = s.recover()
-			if err != nil {
-				// recover only returns an error upon shutdown
-				return 0, err
-			}
-			continue
+		err = s.tryRecover(err)
+		if err != nil {
+			return 0, err
 		}
-
-		return i, err
 	}
 }
 
