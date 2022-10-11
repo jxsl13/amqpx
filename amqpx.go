@@ -234,12 +234,12 @@ func (a *AMQPX) Close() error {
 func (a *AMQPX) close() (err error) {
 	a.closeOnce.Do(func() {
 
-		if a.pub != nil {
-			// close producers first
-			a.pub.Close()
-		}
 		if a.sub != nil {
 			a.sub.Close()
+		}
+
+		if a.pub != nil {
+			a.pub.Close()
 		}
 
 		if a.pubPool != nil {
