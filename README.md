@@ -46,7 +46,7 @@ func main() {
 		// error handling omitted for brevity
 		t.ExchangeDeclare("example-exchange", "topic") // durable exchange by default
 		t.QueueDeclare("example-queue")                // durable quorum queue by default
-		t.QueueBind("example-queue", "route.name.v1", "example-exchange")
+		t.QueueBind("example-queue", "route.name.v1.event", "example-exchange")
 		return nil
 	})
 	amqpx.RegisterTopologyDeleter(func(t *amqpx.Topologer) error {
@@ -61,7 +61,7 @@ func main() {
 		fmt.Println("canceling context")
 		cancel()
 
-		// return error for nack + retry
+		// return error for nack + requeue
 		return nil
 	})
 
@@ -71,7 +71,7 @@ func main() {
 	)
 	defer amqpx.Close()
 
-	amqpx.Publish("example-exchange", "route.name.v1", amqpx.Publishing{
+	amqpx.Publish("example-exchange", "route.name.v1.event", amqpx.Publishing{
 		ContentType: "application/json",
 		Body:        []byte("my test event"),
 	})
