@@ -63,7 +63,7 @@ func NewConnectionPool(connectUrl string, numConns int, options ...ConnectionPoo
 	return newConnectionPoolFromOption(connectUrl, option)
 }
 
-func newConnectionPoolFromOption(connectUrl string, option connectionPoolOption) (cp *ConnectionPool, err error) {
+func newConnectionPoolFromOption(connectUrl string, option connectionPoolOption) (_ *ConnectionPool, err error) {
 	u, err := url.Parse(connectUrl)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalidConnectURL, err)
@@ -76,7 +76,7 @@ func newConnectionPoolFromOption(connectUrl string, option connectionPoolOption)
 	// decouple from parent context, in case we want to close this context ourselves.
 	ctx, cancel := context.WithCancel(option.Ctx)
 
-	cp = &ConnectionPool{
+	cp := &ConnectionPool{
 		name: option.Name,
 		url:  u.String(),
 
