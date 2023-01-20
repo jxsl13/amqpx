@@ -22,5 +22,5 @@ var (
 	// contains a delivery tag that doe snot match the one we expect.
 	ErrDeliveryTagMismatch = errors.New("delivery tag mismatch")
 
-	ErrDeliveryClosed = errors.New("delivery channel lcosed")
+	ErrDeliveryClosed = errors.New("delivery channel closed")
 )
