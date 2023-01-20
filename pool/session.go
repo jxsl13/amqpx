@@ -35,6 +35,9 @@ type Session struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
+	qosPrefetchCount int
+	qosPrefetchSize  int
+
 	log logging.Logger
 }
 
@@ -82,6 +85,9 @@ func NewSession(conn *Connection, name string, options ...SessionOption) (*Sessi
 		cancel: cancel,
 
 		log: option.Logger,
+
+		qosPrefetchCount: 0,
+		qosPrefetchSize:  0,
 	}
 
 	err := session.Connect()
