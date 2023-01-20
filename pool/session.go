@@ -992,6 +992,42 @@ func (s *Session) ExchangeUnbind(destination string, routingKey string, source s
 	})
 }
 
+/*
+Qos controls how many messages or how many bytes the server will try to keep on
+the network for consumers before receiving delivery acks.  The intent of Qos is
+to make sure the network buffers stay full between the server and client.
+
+With a prefetch count greater than zero, the server will deliver that many
+messages to consumers before acknowledgments are received.  The server ignores
+this option when consumers are started with noAck because no acknowledgments
+are expected or sent.
+
+With a prefetch size greater than zero, the server will try to keep at least
+that many bytes of deliveries flushed to the network before receiving
+acknowledgments from the consumers.  This option is ignored when consumers are
+started with noAck.
+
+To get round-robin behavior between consumers consuming from the same queue on
+different connections, set the prefetch count to 1, and the next available
+message on the server will be delivered to the next available consumer.
+
+If your consumer work time is reasonably consistent and not much greater
+than two times your network round trip time, you will see significant
+throughput improvements starting with a prefetch count of 2 or slightly
+greater as described by benchmarks on RabbitMQ.
+
+http://www.rabbitmq.com/blog/2012/04/25/rabbitmq-performance-measurements-part-2/
+*/
+func (s *Session) Qos(prefetchCount int, prefetchSize int) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.retry(func() error {
+		// session quos should not affect new sessions of the same connection
+		return s.channel.Qos(prefetchCount, prefetchSize, false)
+	})
+}
+
 // Flow allows to enable or disable flow from the message broker
 // Flow pauses the delivery of messages to consumers on this channel.  Channels
 // are opened with flow control active, to open a channel with paused
