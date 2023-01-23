@@ -178,6 +178,7 @@ func (s *Subscriber) RegisterBatchHandlerFunc(queue string, batchSize int, batch
 			ConsumeOptions: option,
 			BatchSize:      batchSize,
 			BatchTimeout:   batchTimeout,
+			HandlerFunc:    hf,
 		},
 	)
 }
@@ -390,14 +391,6 @@ func (s *Subscriber) batchConsume(bh BatchHandler) (err error) {
 		}
 	}()
 
-	prefetchSize := bh.BatchSize - 1
-	if prefetchSize > 0 {
-		err = session.Qos(prefetchSize, 0)
-		if err != nil {
-			return err
-		}
-	}
-
 	// got a working session
 	delivery, err := session.Consume(
 		bh.Queue,
@@ -408,6 +401,7 @@ func (s *Subscriber) batchConsume(bh BatchHandler) (err error) {
 	}
 	s.infoConsumer(bh.ConsumerTag, "started")
 
+	// preallocate memory for batch
 	batch := make([]amqp091.Delivery, 0, bh.BatchSize)
 	defer func() {
 		if len(batch) > 0 && errors.Is(err, ErrClosed) {
@@ -435,8 +429,13 @@ func (s *Subscriber) batchConsume(bh BatchHandler) (err error) {
 	}()
 
 	for {
+		// reset batch slice
+		// reuse memory
+		batch = batch[:0]
+
 	collectBatch:
 		for {
+
 			// reset the timer
 			if !timer.Stop() {
 				select {
@@ -477,22 +476,24 @@ func (s *Subscriber) batchConsume(bh BatchHandler) (err error) {
 		)
 	handle:
 		for {
+			var (
+				batchSize       = len(batch)
+				lastDeliveryTag = batch[len(batch)-1].DeliveryTag
+			)
 
-			lastMessage := batch[len(batch)-1]
-
-			s.infoBatchHandler(bh.ConsumerTag, bh.Queue, bh.BatchSize, "received batch")
+			s.infoBatchHandler(bh.ConsumerTag, bh.Queue, batchSize, "received batch")
 			err = bh.HandlerFunc(batch)
 			if bh.AutoAck {
 				// no acks required
 				if err == nil {
-					s.infoBatchHandler(bh.ConsumerTag, bh.Queue, bh.BatchSize, "processed batch")
+					s.infoBatchHandler(bh.ConsumerTag, bh.Queue, batchSize, "processed batch")
 					break handle
 				} else {
 					// unknown error -> recover & retry
 					poolErr = session.Recover()
 					if poolErr != nil {
 						// only returns an error upon shutdown
-						s.errorBatchHandler(bh.ConsumerTag, bh.Queue, bh.BatchSize, fmt.Errorf("potential batch loss: %w", err))
+						s.errorBatchHandler(bh.ConsumerTag, bh.Queue, batchSize, fmt.Errorf("potential batch loss: %w", err))
 						return poolErr
 					}
 					continue handle
@@ -502,16 +503,16 @@ func (s *Subscriber) batchConsume(bh BatchHandler) (err error) {
 			// processing failed
 			if err != nil {
 				// requeue message if possible & nack all previous messages
-				ackErr = session.Nack(lastMessage.DeliveryTag, true, true)
+				ackErr = session.Nack(lastDeliveryTag, true, true)
 			} else {
 				// ack last and all previous messages
-				ackErr = session.Ack(lastMessage.DeliveryTag, true)
+				ackErr = session.Ack(lastDeliveryTag, true)
 			}
 
 			// if (n)ack fails, we know that the connection died
 			// potentially before processing already.
 			if ackErr != nil {
-				s.warnBatchHandler(bh.ConsumerTag, bh.Queue, bh.BatchSize, ackErr, "batch (n)ack failed")
+				s.warnBatchHandler(bh.ConsumerTag, bh.Queue, batchSize, ackErr, "batch (n)ack failed")
 				poolErr = session.Recover()
 				if poolErr != nil {
 					// only returns an error upon shutdown
@@ -525,9 +526,9 @@ func (s *Subscriber) batchConsume(bh BatchHandler) (err error) {
 
 			// (n)acked successfully
 			if err != nil {
-				s.infoBatchHandler(bh.ConsumerTag, bh.Queue, bh.BatchSize, "nacked batch")
+				s.infoBatchHandler(bh.ConsumerTag, bh.Queue, batchSize, "nacked batch")
 			} else {
-				s.infoBatchHandler(bh.ConsumerTag, bh.Queue, bh.BatchSize, "acked batch")
+				s.infoBatchHandler(bh.ConsumerTag, bh.Queue, batchSize, "acked batch")
 			}
 			// successfully handled message
 			break handle
