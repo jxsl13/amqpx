@@ -94,7 +94,7 @@ func (p *Publisher) publish(exchange string, routingKey string, msg Publishing) 
 
 	s, err := p.pool.GetSession()
 	if err != nil && errors.Is(err, ErrClosed) {
-		return ErrClosed
+		return err
 	}
 	defer func() {
 		// return session
@@ -131,7 +131,7 @@ func (p *Publisher) publish(exchange string, routingKey string, msg Publishing) 
 func (p *Publisher) Get(queue string, autoAck bool) (msg *amqp091.Delivery, ok bool, err error) {
 	s, err := p.pool.GetSession()
 	if err != nil && errors.Is(err, ErrClosed) {
-		return nil, false, ErrClosed
+		return nil, false, err
 	}
 	defer func() {
 		// return session
