@@ -121,10 +121,6 @@ type BatchHandler struct {
 // When the Channel or Connection is closed, all buffered and inflight messages will be dropped.
 // When the consumer identifier tag is cancelled, all inflight messages will be delivered until the returned chan is closed.
 func (s *Subscriber) RegisterHandlerFunc(queue string, hf HandlerFunc, options ...ConsumeOptions) {
-	if hf == nil {
-		panic("HandlerFunc must not be nil")
-	}
-
 	option := ConsumeOptions{
 		ConsumerTag: "",
 		AutoAck:     false,
@@ -137,57 +133,13 @@ func (s *Subscriber) RegisterHandlerFunc(queue string, hf HandlerFunc, options .
 		option = options[0]
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.handlers = append(s.handlers, Handler{
-		Queue:          queue,
-		ConsumeOptions: option,
-
-		HandlerFunc: hf,
-	})
-
-	s.log.WithFields(map[string]any{
-		"subscriber": s.pool.Name(),
-		"consumer":   option.ConsumerTag,
-		"queue":      queue,
-	}).Info("registered handler")
-}
-
-func (s *Subscriber) RegisterBatchHandlerFunc(queue string, batchSize int, hf BatchHandlerFunc, options ...ConsumeOptions) {
-	if hf == nil {
-		panic("BatchHandlerFunc must not be nil")
-	}
-
-	if batchSize <= 0 {
-		batchSize = 50
-	}
-
-	option := ConsumeOptions{
-		ConsumerTag: "",
-		AutoAck:     false,
-		Exclusive:   false,
-		NoLocal:     false,
-		NoWait:      false,
-		Args:        nil,
-	}
-	if len(options) > 0 {
-		option = options[0]
-	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.batchHandlers = append(s.batchHandlers, BatchHandler{
-		Queue:          queue,
-		ConsumeOptions: option,
-		BatchSize:      batchSize,
-	})
-
-	s.log.WithFields(map[string]any{
-		"subscriber": s.pool.Name(),
-		"consumer":   option.ConsumerTag,
-		"queue":      queue,
-		"batchSize":  batchSize,
-	}).Info("registered batch handler")
+	s.RegisterHandler(
+		Handler{
+			Queue:          queue,
+			ConsumeOptions: option,
+			HandlerFunc:    hf,
+		},
+	)
 }
 
 func (s *Subscriber) RegisterHandler(handler Handler) {
@@ -203,7 +155,57 @@ func (s *Subscriber) RegisterHandler(handler Handler) {
 		"subscriber": s.pool.Name(),
 		"consumer":   handler.ConsumerTag,
 		"queue":      handler.Queue,
-	}).Info("registered handler")
+	}).Info("registered message handler")
+}
+
+func (s *Subscriber) RegisterBatchHandlerFunc(queue string, batchSize int, batchTimeout time.Duration, hf BatchHandlerFunc, options ...ConsumeOptions) {
+
+	option := ConsumeOptions{
+		ConsumerTag: "",
+		AutoAck:     false,
+		Exclusive:   false,
+		NoLocal:     false,
+		NoWait:      false,
+		Args:        nil,
+	}
+	if len(options) > 0 {
+		option = options[0]
+	}
+
+	s.RegisterBatchHandler(
+		BatchHandler{
+			Queue:          queue,
+			ConsumeOptions: option,
+			BatchSize:      batchSize,
+			BatchTimeout:   batchTimeout,
+		},
+	)
+}
+
+func (s *Subscriber) RegisterBatchHandler(handler BatchHandler) {
+	if handler.HandlerFunc == nil {
+		panic("handler.HandlerFunc must not be nil")
+	}
+
+	if handler.BatchSize <= 0 {
+		handler.BatchSize = 50
+	}
+
+	if handler.BatchTimeout <= 0 {
+		handler.BatchTimeout = 5 * time.Second
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.batchHandlers = append(s.batchHandlers, handler)
+
+	s.log.WithFields(map[string]any{
+		"subscriber":   s.pool.Name(),
+		"consumer":     handler.ConsumerTag,
+		"queue":        handler.Queue,
+		"batchSize":    handler.BatchSize,
+		"batchTimeout": handler.BatchTimeout,
+	}).Info("registered batch handler")
 }
 
 // Start starts the consumers for all registered handler functions
@@ -224,11 +226,13 @@ func (s *Subscriber) Start() {
 		s.infoSimple("started")
 	}()
 
+	s.debugSimple(fmt.Sprintf("starting %d handler routine(s)", len(s.handlers)))
 	for _, h := range s.handlers {
 		s.wg.Add(1)
 		go s.consumer(h, &s.wg)
 	}
 
+	s.debugSimple(fmt.Sprintf("starting %d batch handler routine(s)", len(s.batchHandlers)))
 	for _, bh := range s.batchHandlers {
 		s.wg.Add(1)
 		go s.batchConsumer(bh, &s.wg)
@@ -406,84 +410,162 @@ func (s *Subscriber) batchConsume(bh BatchHandler) (err error) {
 
 	batch := make([]amqp091.Delivery, 0, bh.BatchSize)
 	defer func() {
-		if err != nil && len(batch) > 0 {
-
+		if len(batch) > 0 && errors.Is(err, ErrClosed) {
+			// requeue all not yet processed messages in batch slice
+			// we can only nack these message sin case the session has not been closed
+			// Its does not make sense to use session.Nack at this point because in case the sessison dies
+			// the delivery tags also die with it.
+			// There is no way to recover form this state in case an error is returned from the Nack call.
+			nackErr := batch[len(batch)-1].Nack(true, true)
+			if nackErr != nil {
+				s.warnBatchHandler(bh.ConsumerTag, bh.Queue, bh.BatchSize, err, "failed to nack and requeue batch upon shutdown")
+			}
 		}
 	}()
-	for {
-		select {
-		case <-s.catchShutdown():
-			return ErrClosed
-		case msg, ok := <-delivery:
-			if !ok {
-				return ErrDeliveryClosed
+
+	timer := time.NewTimer(bh.BatchTimeout)
+	defer func() {
+		// clean shutdown of timer routine
+		if !timer.Stop() {
+			select {
+			case <-timer.C:
+			default:
 			}
+		}
+	}()
 
-			var (
-				err     error
-				ackErr  error
-				poolErr error
-			)
-		handle:
-			for {
-				s.infoHandler(bh.ConsumerTag, msg.Exchange, msg.RoutingKey, bh.Queue, "received message")
-				err = bh.HandlerFunc(msg)
-				if bh.AutoAck {
-					// no acks required
-					if err == nil {
-						s.infoHandler(bh.ConsumerTag, msg.Exchange, msg.RoutingKey, bh.Queue, "processed message")
-						break handle
-					} else {
-						// unknown error -> recover & retry
-						poolErr = session.Recover()
-						if poolErr != nil {
-							// only returns an error upon shutdown
-							s.errorHandler(h.ConsumerTag, msg.Exchange, msg.RoutingKey, h.Queue, fmt.Errorf("potential message loss: %w", err))
-							return poolErr
-						}
-						continue handle
-					}
+	for {
+	collectBatch:
+		for {
+			// reset the timer
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			timer.Reset(bh.BatchTimeout)
+
+			select {
+			case <-s.catchShutdown():
+				return ErrClosed
+			case msg, ok := <-delivery:
+				if !ok {
+					return ErrDeliveryClosed
+				}
+				batch = append(batch, msg)
+				if len(batch) == bh.BatchSize {
+					break collectBatch
 				}
 
-				// processing failed
-				if err != nil {
-					// requeue message if possible
-					ackErr = session.Nack(msg.DeliveryTag, false, true)
+			case <-timer.C:
+				if len(batch) > 0 {
+					// timeout reached, process batch that might not contain
+					// a full batch, yet.
+					break collectBatch
+				}
+
+				// no new messages, continue, reset timer and try again
+			}
+		}
+
+		// at this point we have a batch to work with
+		var (
+			err     error
+			ackErr  error
+			poolErr error
+		)
+	handle:
+		for {
+
+			lastMessage := batch[len(batch)-1]
+
+			s.infoBatchHandler(bh.ConsumerTag, bh.Queue, bh.BatchSize, "received batch")
+			err = bh.HandlerFunc(batch)
+			if bh.AutoAck {
+				// no acks required
+				if err == nil {
+					s.infoBatchHandler(bh.ConsumerTag, bh.Queue, bh.BatchSize, "processed batch")
+					break handle
 				} else {
-					ackErr = session.Ack(msg.DeliveryTag, false)
-				}
-
-				// if (n)ack fails, we know that the connection died
-				// potentially before processing already.
-				if ackErr != nil {
-					s.warnHandler(h.ConsumerTag, msg.Exchange, msg.RoutingKey, h.Queue, ackErr, "(n)ack failed")
+					// unknown error -> recover & retry
 					poolErr = session.Recover()
 					if poolErr != nil {
 						// only returns an error upon shutdown
+						s.errorBatchHandler(bh.ConsumerTag, bh.Queue, bh.BatchSize, fmt.Errorf("potential batch loss: %w", err))
 						return poolErr
 					}
-
-					// do not retry, because the broker will requeue the un(n)acked message
-					// after a timeout of by default 30 minutes.
-					break handle
+					continue handle
 				}
-
-				// (n)acked successfully
-				if err != nil {
-					s.infoHandler(h.ConsumerTag, msg.Exchange, msg.RoutingKey, h.Queue, "nacked message")
-				} else {
-					s.infoHandler(h.ConsumerTag, msg.Exchange, msg.RoutingKey, h.Queue, "acked message")
-				}
-				// successfully handled message
-				break handle
-
 			}
+
+			// processing failed
+			if err != nil {
+				// requeue message if possible & nack all previous messages
+				ackErr = session.Nack(lastMessage.DeliveryTag, true, true)
+			} else {
+				// ack last and all previous messages
+				ackErr = session.Ack(lastMessage.DeliveryTag, true)
+			}
+
+			// if (n)ack fails, we know that the connection died
+			// potentially before processing already.
+			if ackErr != nil {
+				s.warnBatchHandler(bh.ConsumerTag, bh.Queue, bh.BatchSize, ackErr, "batch (n)ack failed")
+				poolErr = session.Recover()
+				if poolErr != nil {
+					// only returns an error upon shutdown
+					return poolErr
+				}
+
+				// do not retry, because the broker will requeue the un(n)acked message
+				// after a timeout of by default 30 minutes.
+				break handle
+			}
+
+			// (n)acked successfully
+			if err != nil {
+				s.infoBatchHandler(bh.ConsumerTag, bh.Queue, bh.BatchSize, "nacked batch")
+			} else {
+				s.infoBatchHandler(bh.ConsumerTag, bh.Queue, bh.BatchSize, "acked batch")
+			}
+			// successfully handled message
+			break handle
 		}
 	}
 }
 
 func (s *Subscriber) catchShutdown() <-chan struct{} {
 	return s.ctx.Done()
+}
+
+func (s *Subscriber) infoBatchHandler(consumer, queue string, batchSize int, a ...any) {
+	s.log.WithFields(map[string]any{
+		"batchSize":  batchSize,
+		"subscriber": s.pool.Name(),
+		"consumer":   consumer,
+		"queue":      queue,
+	}).Info(a...)
+}
+
+func (s *Subscriber) warnBatchHandler(consumer, queue string, batchSize int, err error, a ...any) {
+	s.log.WithFields(map[string]any{
+		"batchSize":  batchSize,
+		"subscriber": s.pool.Name(),
+		"consumer":   consumer,
+		"queue":      queue,
+		"error":      err,
+	}).Warn(a...)
+}
+
+func (s *Subscriber) errorBatchHandler(consumer, queue string, batchSize int, err error, a ...any) {
+	s.log.WithFields(map[string]any{
+		"batchSize":  batchSize,
+		"subscriber": s.pool.Name(),
+		"consumer":   consumer,
+		"queue":      queue,
+		"error":      err,
+	}).Error(a...)
 }
 
 func (s *Subscriber) infoHandler(consumer, exchange, routingKey, queue string, a ...any) {
