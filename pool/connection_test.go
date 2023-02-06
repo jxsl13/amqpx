@@ -9,7 +9,45 @@ import (
 	"github.com/jxsl13/amqpx/logging"
 	"github.com/jxsl13/amqpx/pool"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
+
+func TestNewSingleConnection(t *testing.T) {
+	c, err := pool.NewConnection(
+		"amqp://admin:password@localhost:5672",
+		"TestNewSingleConnection",
+		pool.ConnectionWithLogger(logging.NewTestLogger(t)),
+	)
+
+	if err != nil {
+		require.NoError(t, err)
+		return
+	}
+	defer func() {
+		err := c.Close()
+		require.NoError(t, err)
+	}()
+}
+
+func TestNewSingleConnectionWithDisconnect(t *testing.T) {
+	started, stopped := DisconnectWithStartedStopped(t, 0, 0, 15*time.Second)
+	started()
+	defer stopped()
+	c, err := pool.NewConnection(
+		"amqp://admin:password@localhost:5672",
+		"TestNewSingleConnection",
+		pool.ConnectionWithLogger(logging.NewTestLogger(t)),
+	)
+
+	if err != nil {
+		require.NoError(t, err)
+		return
+	}
+	defer func() {
+		err := c.Close()
+		require.NoError(t, err)
+	}()
+}
 
 func TestNewConnection(t *testing.T) {
 	var wg sync.WaitGroup
@@ -78,5 +116,4 @@ func TestNewConnectionDisconnect(t *testing.T) {
 	}
 
 	wg.Wait()
-
 }
