@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 )
 
 var _ Logger = (*TestLogger)(nil)
@@ -135,7 +136,7 @@ func (l *TestLogger) fieldsMsg(level, msg string) string {
 
 	prefix := ""
 	if level != "" {
-		prefix = fmt.Sprintf("level=%s", strings.ToLower(level))
+		prefix = fmt.Sprintf("time=%v level=%s", time.Now(), strings.ToLower(level))
 	}
 
 	prefix += fmt.Sprintf(", msg=%s", msg)
