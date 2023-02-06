@@ -86,8 +86,8 @@ func TestNewConnectionDisconnect(t *testing.T) {
 	connections := 100 // don't go below 100
 	wg.Add(connections)
 
-	// disconnect in a second for a second
-	wait := DisconnectWithStopped(t, 0, 10*time.Millisecond*time.Duration(connections), 5*time.Second)
+	// disconnect directly for 10 seconds
+	wait := DisconnectWithStopped(t, 0, 0, 10*time.Second)
 	defer wait() // wait for goroutine to properly close & unblock the proxy
 
 	for i := 0; i < connections; i++ {
