@@ -47,16 +47,35 @@ func (p *Proxy) Enable() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	p.lastHttpRequest = time.Now()
-	return p.proxy.Enable()
+	var err error
+	for retries := 0; retries < 100; retries++ {
+		p.lastHttpRequest = time.Now()
+		err = p.proxy.Enable()
+		if err == nil {
+			return nil
+		}
+		if err != nil {
+			time.Sleep(time.Second)
+		}
+	}
+	return err
 }
 
 func (p *Proxy) Disable() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-
-	p.lastHttpRequest = time.Now()
-	return p.proxy.Disable()
+	var err error
+	for retries := 0; retries < 100; retries++ {
+		p.lastHttpRequest = time.Now()
+		err = p.proxy.Disable()
+		if err == nil {
+			return nil
+		}
+		if err != nil {
+			time.Sleep(time.Second)
+		}
+	}
+	return err
 }
 
 func (p *Proxy) Close() error {
@@ -76,6 +95,9 @@ func (p *Proxy) Close() error {
 }
 
 // https://github.com/Shopify/toxiproxy#toxics
+// block current thread
+// timeout: how long the asynchronous goroutine needs to wait until it disables the connection
+// duration: how long the asynchronous goroutine wait suntil it reenables the connection
 func DisconnectWithStopped(t *testing.T, block, timeout, duration time.Duration) (wait func()) {
 	start := time.Now().Add(timeout)
 
@@ -88,14 +110,18 @@ func DisconnectWithStopped(t *testing.T, block, timeout, duration time.Duration)
 		defer wg.Done()
 		log := logging.NewTestLogger(t)
 
-		time.Sleep(time.Until(start))
+		if wait := time.Until(start); wait > 0 {
+			time.Sleep(wait)
+		}
 		log.Debug("disabled rabbitmq connection")
 		err := proxy.Disable()
 		if err != nil {
 			log.Fatal(err)
 		}
 
-		time.Sleep(duration)
+		if duration > 0 {
+			time.Sleep(duration)
+		}
 		log.Debug("enabled rabbitmq connection")
 		err = proxy.Enable()
 		if err != nil {
@@ -113,6 +139,9 @@ func DisconnectWithStopped(t *testing.T, block, timeout, duration time.Duration)
 }
 
 // https://github.com/Shopify/toxiproxy#toxics
+// block current thread
+// timeout: how long the asynchronous goroutine needs to wait until it disables the connection
+// duration: how long the asynchronous goroutine wait suntil it reenables the connection
 func DisconnectWithStartedStopped(t *testing.T, block, timeout, duration time.Duration) (awaitStarted, awaitStopped func()) {
 	start := time.Now().Add(timeout)
 	var (
@@ -127,7 +156,9 @@ func DisconnectWithStartedStopped(t *testing.T, block, timeout, duration time.Du
 		defer wgStop.Done()
 		log := logging.NewTestLogger(t)
 
-		time.Sleep(time.Until(start))
+		if wait := time.Until(start); wait > 0 {
+			time.Sleep(wait)
+		}
 		log.Debug("disabled rabbitmq connection")
 		err := proxy.Disable()
 		if err != nil {
@@ -135,7 +166,9 @@ func DisconnectWithStartedStopped(t *testing.T, block, timeout, duration time.Du
 		}
 		wgStart.Done()
 
-		time.Sleep(duration)
+		if duration > 0 {
+			time.Sleep(duration)
+		}
 		log.Debug("enabled rabbitmq connection")
 		err = proxy.Enable()
 		if err != nil {
@@ -154,6 +187,9 @@ func DisconnectWithStartedStopped(t *testing.T, block, timeout, duration time.Du
 		}
 }
 
+// block current thread
+// timeout: how long the asynchronous goroutine needs to wait until it disables the connection
+// duration: how long the asynchronous goroutine wait suntil it reenables the connection
 func DisconnectWithStartStartedStopped(t *testing.T, duration time.Duration) (disconnect, awaitStarted, awaitStopped func()) {
 	var (
 		wgStart sync.WaitGroup
@@ -174,7 +210,9 @@ func DisconnectWithStartStartedStopped(t *testing.T, duration time.Duration) (di
 			}
 			wgStart.Done()
 
-			time.Sleep(duration)
+			if duration > 0 {
+				time.Sleep(duration)
+			}
 			log.Debug("enabled rabbitmq connection")
 			err = proxy.Enable()
 			if err != nil {
