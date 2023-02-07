@@ -2,7 +2,6 @@ package logging
 
 import (
 	"fmt"
-	"io"
 	"os"
 	"sort"
 	"strings"
@@ -14,7 +13,6 @@ var _ Logger = (*TestLogger)(nil)
 
 func NewTestLogger(t *testing.T) *TestLogger {
 	return &TestLogger{
-		level:  DebugLevel,
 		t:      t,
 		fields: map[string]any{},
 	}
@@ -22,7 +20,6 @@ func NewTestLogger(t *testing.T) *TestLogger {
 
 func newTestLoggerWithFields(l *TestLogger, fields Fields) *TestLogger {
 	n := &TestLogger{
-		level:  l.level,
 		t:      l.t,
 		fields: make(map[string]any, len(fields)+len(l.fields)),
 	}
@@ -39,78 +36,71 @@ func newTestLoggerWithFields(l *TestLogger, fields Fields) *TestLogger {
 
 // TestLogger is supposed to be used in the Go testing framework.
 type TestLogger struct {
-	level  Level
 	t      *testing.T
 	fields map[string]any
 }
 
 func (l *TestLogger) Debugf(format string, args ...any) {
 	l.t.Helper()
-	l.logf(DebugLevel, "DEBUG", format, args...)
+	l.logf("DEBUG", format, args...)
 }
 func (l *TestLogger) Infof(format string, args ...any) {
 	l.t.Helper()
-	l.logf(InfoLevel, "INFO", format, args...)
+	l.logf("INFO", format, args...)
 }
 func (l *TestLogger) Printf(format string, args ...any) {
 	l.t.Helper()
-	l.logf(InfoLevel, "", format, args...)
+	l.logf("", format, args...)
 }
 func (l *TestLogger) Warnf(format string, args ...any) {
 	l.t.Helper()
-	l.logf(WarnLevel, "WARN", format, args...)
+	l.logf("WARN", format, args...)
 }
 func (l *TestLogger) Errorf(format string, args ...any) {
 	l.t.Helper()
-	l.logf(ErrorLevel, "ERROR", format, args...)
+	l.logf("ERROR", format, args...)
 }
 func (l *TestLogger) Fatalf(format string, args ...any) {
 	l.t.Helper()
-	l.logf(FatalLevel, "FATAL", format, args...)
+	l.logf("FATAL", format, args...)
 	os.Exit(1)
 }
 func (l *TestLogger) Panicf(format string, args ...any) {
 	l.t.Helper()
-	l.logf(PanicLevel, "PANIC", format, args...)
+	l.logf("PANIC", format, args...)
 	os.Exit(1)
 }
 
 func (l *TestLogger) Debug(args ...any) {
 	l.t.Helper()
-	l.log(DebugLevel, "DEBUG", args...)
+	l.log("DEBUG", args...)
 }
 func (l *TestLogger) Info(args ...any) {
 	l.t.Helper()
-	l.log(InfoLevel, "INFO", args...)
+	l.log("INFO", args...)
 }
 
 func (l *TestLogger) Print(args ...any) {
 	l.t.Helper()
-	l.log(InfoLevel, "", args...)
+	l.log("", args...)
 }
 func (l *TestLogger) Warn(args ...any) {
 	l.t.Helper()
-	l.log(WarnLevel, "WARN", args...)
+	l.log("WARN", args...)
 }
 func (l *TestLogger) Error(args ...any) {
 	l.t.Helper()
-	l.log(ErrorLevel, "ERROR", args...)
+	l.log("ERROR", args...)
 }
 func (l *TestLogger) Fatal(args ...any) {
 	l.t.Helper()
-	l.log(FatalLevel, "FATAL", args...)
+	l.log("FATAL", args...)
 	os.Exit(1)
 }
 func (l *TestLogger) Panic(args ...any) {
 	l.t.Helper()
-	l.log(PanicLevel, "PANIC", args...)
+	l.log("PANIC", args...)
 }
-
-func (l *TestLogger) Level() Level       { return l.level }
-func (l *TestLogger) SetLevel(lvl Level) { l.level = lvl }
-
-func (l *TestLogger) Output() io.Writer     { return io.Discard }
-func (l *TestLogger) SetOutput(_ io.Writer) {}
 
 func (l *TestLogger) WithError(err error) Logger {
 	l.t.Helper()
@@ -145,32 +135,26 @@ func (l *TestLogger) fieldsMsg(level, msg string) string {
 	return fmt.Sprintf("%s, %s", prefix, strings.Join(kv, ", "))
 }
 
-func (l *TestLogger) logf(reqLevel Level, prefix, format string, args ...any) {
+func (l *TestLogger) logf(prefix, format string, args ...any) {
 	l.t.Helper()
-	if l.level < reqLevel {
-		return
-	}
-
+	lpref := strings.ToLower(prefix)
 	msg := fmt.Sprintf(format, args...)
-	if reqLevel <= FatalLevel {
+	if strings.Contains(lpref, "panic") || strings.Contains(lpref, "fatal") {
 		l.t.Fatal(l.fieldsMsg(prefix, msg))
 	} else {
 		l.t.Log(l.fieldsMsg(prefix, msg))
+
 	}
 
 }
 
-func (l *TestLogger) log(reqLevel Level, prefix string, args ...any) {
+func (l *TestLogger) log(prefix string, args ...any) {
 	l.t.Helper()
-	if l.level < reqLevel {
-		return
-	}
 	msg := fmt.Sprint(args...)
-
-	if reqLevel <= FatalLevel {
+	lpref := strings.ToLower(prefix)
+	if strings.Contains(lpref, "panic") || strings.Contains(lpref, "fatal") {
 		l.t.Fatal(l.fieldsMsg(prefix, msg))
 	} else {
 		l.t.Log(l.fieldsMsg(prefix, msg))
 	}
-
 }

@@ -125,7 +125,12 @@ func (cp *ConnectionPool) initCachedConns() error {
 }
 
 func (cp *ConnectionPool) deriveConnection(id int, cached bool) (*Connection, error) {
-	name := fmt.Sprintf("%s-cached-%d", cp.name, id)
+	var name string
+	if cached {
+		name = fmt.Sprintf("%s-cached-connection-%d", cp.name, id)
+	} else {
+		name = fmt.Sprintf("%s-transient-connection-%d", cp.name, id)
+	}
 	return NewConnection(cp.url, name,
 		ConnectionWithContext(cp.ctx),
 		ConnectionWithTimeout(cp.connTimeout),

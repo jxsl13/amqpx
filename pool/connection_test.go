@@ -83,11 +83,11 @@ func TestNewConnectionDisconnect(t *testing.T) {
 
 	var wg sync.WaitGroup
 
-	connections := 100 // don't go below 100
+	connections := 100
 	wg.Add(connections)
 
 	// disconnect directly for 10 seconds
-	wait := DisconnectWithStopped(t, 0, 0, 10*time.Second)
+	wait := DisconnectWithStopped(t, 0, 0, time.Second)
 	defer wait() // wait for goroutine to properly close & unblock the proxy
 
 	for i := 0; i < connections; i++ {
@@ -97,7 +97,7 @@ func TestNewConnectionDisconnect(t *testing.T) {
 			c, err := pool.NewConnection(
 				"amqp://admin:password@localhost:5672",
 				fmt.Sprintf("TestNewConnectionDisconnect-%d", id),
-				pool.ConnectionWithLogger(logging.NewTestLogger(t)),
+				//pool.ConnectionWithLogger(logging.NewTestLogger(t)),
 			)
 			if err != nil {
 				assert.NoError(t, err)

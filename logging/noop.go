@@ -26,9 +26,6 @@ func (l *NoOpLogger) Error(args ...any) {}
 func (l *NoOpLogger) Fatal(args ...any) {}
 func (l *NoOpLogger) Panic(args ...any) {}
 
-func (l *NoOpLogger) Level() Level       { return PanicLevel }
-func (l *NoOpLogger) SetLevel(lvl Level) {}
-
 func (l *NoOpLogger) Output() io.Writer     { return io.Discard }
 func (l *NoOpLogger) SetOutput(_ io.Writer) {}
 

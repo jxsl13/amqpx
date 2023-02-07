@@ -224,7 +224,13 @@ func (sp *SessionPool) initCachedSession(id int) (*Session, error) {
 }
 
 func (sp *SessionPool) deriveSession(conn *Connection, id int, cached bool) (*Session, error) {
-	return NewSession(conn, fmt.Sprintf("%s-cached-%d", conn.Name(), id),
+	var name string
+	if cached {
+		name = fmt.Sprintf("%s-cached-session-%d", conn.Name(), id)
+	} else {
+		name = fmt.Sprintf("%s-transient-session-%d", conn.Name(), id)
+	}
+	return NewSession(conn, name,
 		SessionWithContext(sp.ctx),
 		SessionWithBufferSize(sp.size),
 		SessionWithCached(cached),
