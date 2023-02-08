@@ -23,7 +23,7 @@ This library is highly inspired by `https://github.com/houseofcat/turbocookedrab
 ## Getting started
 
 ```shell
-go get github.com/jxsl13/amqpx
+go get github.com/jxsl13/amqpx@latest
 ```
 
 ### Example
