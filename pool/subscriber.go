@@ -94,8 +94,17 @@ type Handler struct {
 
 // BatchHandler is a struct that contains all parameter sneeded i order to register a batch handler function.
 type BatchHandler struct {
-	Queue        string
-	BatchSize    int
+	Queue string
+
+	// When <= 0, will be set to 50
+	// Number of messages a batch may contain at most
+	// before processing is triggered
+	BatchSize int
+
+	// BatchTimeout is the duration that is waited for the next message from a queue before
+	// the batch is closed and passed for processing.
+	// This value should be less than 30m (which is the (n)ack timeout of RabbitMQ)
+	// when <= 0, will be set to 5s
 	BatchTimeout time.Duration
 	ConsumeOptions
 	HandlerFunc BatchHandlerFunc
@@ -193,6 +202,11 @@ func (s *Subscriber) RegisterBatchHandler(handler BatchHandler) {
 	if handler.HandlerFunc == nil {
 		panic("handler.HandlerFunc must not be nil")
 	}
+
+	// TODO: do we want to introduce a BatchSizeLimit
+	// which would keep track of accumulated payload memory limits
+	// of all the messages of a batch and process the messages
+	// in case we hit that memory limit within the current batch.
 
 	if handler.BatchSize <= 0 {
 		handler.BatchSize = 50
@@ -342,6 +356,9 @@ func (s *Subscriber) autoAckPostHandle(h Handler, exchange, routingKey string, s
 		s.infoHandler(h.ConsumerTag, exchange, routingKey, h.Queue, "processed message")
 		return true, nil
 	}
+
+	// TODO: do we really want to reconnect or do we want to just log the error?
+	// or do we want to retry with an exponential backoff (same as our recovery backoff)?
 
 	// unknown error -> recover & retry
 	poolErr := session.Recover()
@@ -521,6 +538,8 @@ func (s *Subscriber) autoAckBatchPostHandle(bh BatchHandler, currentBatchSize in
 		return true, nil
 	}
 
+	// TODO: do we really want to reconnect or do we want to just log the error?
+	// or do we want to retry with an exponential backoff (same as our recovery backoff)?
 	// unknown error -> recover & retry
 	poolErr := session.Recover()
 	if poolErr != nil {
