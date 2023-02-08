@@ -63,12 +63,12 @@ func (l *TestLogger) Errorf(format string, args ...any) {
 func (l *TestLogger) Fatalf(format string, args ...any) {
 	l.t.Helper()
 	l.logf("FATAL", format, args...)
-	os.Exit(1)
+	l.t.Fail()
 }
 func (l *TestLogger) Panicf(format string, args ...any) {
 	l.t.Helper()
 	l.logf("PANIC", format, args...)
-	os.Exit(1)
+	l.t.FailNow()
 }
 
 func (l *TestLogger) Debug(args ...any) {
