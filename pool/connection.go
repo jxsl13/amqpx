@@ -91,13 +91,24 @@ func NewConnection(connectUrl, name string, options ...ConnectionOption) (*Conne
 		ctx:    ctx,
 		cancel: cancel,
 
-		log: option.Logger,
+		log:          option.Logger,
+		lastConnLoss: time.Now(),
 	}
 
 	err = conn.Connect()
+	if err == nil {
+		return conn, nil
+	}
+
+	if !recoverable(err) {
+		return nil, err
+	}
+
+	err = conn.Recover()
 	if err != nil {
 		return nil, err
 	}
+
 	return conn, nil
 }
 
@@ -116,20 +127,29 @@ func (ch *Connection) Close() (err error) {
 
 	ch.cancel() // close derived context
 
-	// wait for dangling goroutines to timeout before closing.
-	// upon recovery the standard library still has some goroutines open
-	// that are only closed upon some tcp connection timeout.
-	// Those routinges poll the network.
-	awaitTimeout := time.Until(ch.lastConnLoss.Add(10 * time.Second))
-	if awaitTimeout > 0 {
-		// in long running applications that were able to reestablish their connection
-		// this sleep should not affect their shutdown duration much.
-		// in short runing applications like the tests, shtdown takes longer.
-		time.Sleep(awaitTimeout)
-	}
+	if !ch.isClosed() {
+		// wait for dangling goroutines to timeout before closing.
+		// upon recovery the standard library still has some goroutines open
+		// that are only closed upon some tcp connection timeout.
+		// Those routinges poll the network.
+		awaitTimeout := time.Until(ch.lastConnLoss.Add(ch.conn.Config.Heartbeat))
+		if awaitTimeout > 0 {
+			// in long running applications that were able to reestablish their connection
+			// this sleep should not affect their shutdown duration much.
+			// in short runing applications like the tests, shutdown takes longer, as we
+			// frequently kill the network connection in order to test the reconnects
+			// which requires to wait for the background network connections to timeout
+			// in order to prevent dangling goroutines from being killed.
+			time.Sleep(awaitTimeout)
+		}
 
-	if ch.conn != nil && !ch.conn.IsClosed() {
 		return ch.conn.Close() // close internal channel
+	} else {
+		// same wait as above case
+		awaitTimeout := time.Until(ch.lastConnLoss.Add(ch.heartbeat))
+		if awaitTimeout > 0 {
+			time.Sleep(awaitTimeout)
+		}
 	}
 
 	return nil
@@ -159,7 +179,7 @@ func (ch *Connection) Connect() error {
 func (ch *Connection) connect() error {
 
 	// not closed, close before reconnecting
-	if ch.conn != nil && !ch.conn.IsClosed() {
+	if !ch.isClosed() {
 		// ignore errors
 		_ = ch.conn.Close()
 	}
@@ -175,7 +195,8 @@ func (ch *Connection) connect() error {
 			},
 		})
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrConnectionFailed, err)
+		// wrap the underlying amqp091 error
+		return fmt.Errorf("%v: %w", ErrConnectionFailed, err)
 	}
 
 	ch.info("connected")
@@ -203,15 +224,12 @@ func (ch *Connection) PauseOnFlowControl() {
 
 // not threadsafe
 func (ch *Connection) pauseOnFlowControl() {
-	timer := time.NewTimer(time.Second)
-	defer func() {
-		if !timer.Stop() {
-			select {
-			case <-timer.C:
-			default:
-			}
-		}
-	}()
+	var (
+		duration = time.Second
+		timer    = time.NewTimer(duration)
+		drained  = false
+	)
+	defer closeTimer(timer, &drained)
 
 	for !ch.conn.IsClosed() && !ch.isShutdown() {
 
@@ -225,15 +243,13 @@ func (ch *Connection) pauseOnFlowControl() {
 			}
 
 			ch.info("pausing on flow control")
-			if !timer.Stop() {
-				<-timer.C
-			}
-			timer.Reset(time.Second)
+			resetTimer(timer, duration, &drained)
 
 			select {
 			case <-ch.catchShutdown():
 				return
 			case <-timer.C:
+				drained = true
 				continue
 			}
 
@@ -246,6 +262,14 @@ func (ch *Connection) pauseOnFlowControl() {
 func (ch *Connection) IsClosed() bool {
 	ch.mu.Lock()
 	defer ch.mu.Unlock()
+
+	return ch.isClosed()
+}
+
+// returns true in case the
+// underlying connection is either nil or closed
+// non-locking: should only be used internally
+func (ch *Connection) isClosed() bool {
 
 	// connection closed 							-> cannot access it
 	// connection not closed but shutdown triggered -> is closed
@@ -285,6 +309,7 @@ func (ch *Connection) error() error {
 				continue
 			}
 		default:
+			// return err after flushing errors channel
 			return err
 		}
 	}
@@ -301,46 +326,47 @@ func (ch *Connection) Recover() error {
 func (ch *Connection) recover() error {
 	healthy := ch.error() == nil
 
-	if healthy && !ch.conn.IsClosed() {
+	if healthy && !ch.isClosed() {
 		ch.pauseOnFlowControl()
 		return nil
 	}
 
-	timer := time.NewTimer(0)
-	defer func() {
-		if !timer.Stop() {
-			select {
-			case <-timer.C:
-			default:
-			}
-		}
-	}()
+	var (
+		timer   = time.NewTimer(0)
+		drained = false
+	)
+	defer closeTimer(timer, &drained)
 
 	ch.info("recovering")
 	for retry := 0; ; retry++ {
 		ch.lastConnLoss = time.Now()
 		err := ch.connect()
-		if err != nil {
-
-			// reset to exponential backoff
-			if !timer.Stop() {
-				<-timer.C
-			}
-			timer.Reset(ch.errorBackoff(retry))
-			select {
-			case <-ch.catchShutdown():
-				// catch shutdown signal
-				return fmt.Errorf("connection recovery failed: connection %w", ErrClosed)
-			case <-timer.C:
-				// retry after sleep
-				continue
-			}
+		if err == nil {
+			// connection established successfully
+			break
 		}
 
-		// connection established successfully
-		break
+		if !recoverable(err) {
+			return err
+		}
+
+		// reset to exponential backoff
+		resetTimer(timer, ch.errorBackoff(retry), &drained)
+
+		select {
+		case <-ch.catchShutdown():
+			// catch shutdown signal
+			return fmt.Errorf("connection recovery failed: connection %w", ErrClosed)
+		case <-timer.C:
+			drained = true
+			// retry after sleep
+			continue
+		}
+
 	}
 
+	// flagged connections can only
+	// be unflagged via recovery
 	ch.flagged = false
 
 	ch.info("recovered")

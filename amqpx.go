@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/jxsl13/amqpx/pool"
 	"github.com/rabbitmq/amqp091-go"
@@ -20,8 +21,9 @@ type (
 	Topologer    = pool.Topologer
 	TopologyFunc func(*Topologer) error
 
-	Delivery    = amqp091.Delivery
-	HandlerFunc = func(Delivery) error
+	Delivery         = amqp091.Delivery
+	HandlerFunc      = func(Delivery) error
+	BatchHandlerFunc = func([]Delivery) error
 
 	ConsumeOptions = pool.ConsumeOptions
 	Publishing     = pool.Publishing
@@ -52,8 +54,10 @@ type AMQPX struct {
 	pub     *pool.Publisher
 	sub     *pool.Subscriber
 
-	mu               sync.Mutex
-	handlers         []pool.Handler
+	mu            sync.Mutex
+	handlers      []pool.Handler
+	batchHandlers []pool.BatchHandler
+
 	topologies       []TopologyFunc
 	topologyDeleters []TopologyFunc
 
@@ -68,6 +72,7 @@ func New() *AMQPX {
 		sub:     nil,
 
 		handlers:         make([]pool.Handler, 0),
+		batchHandlers:    make([]pool.BatchHandler, 0),
 		topologies:       make([]TopologyFunc, 0),
 		topologyDeleters: make([]TopologyFunc, 0),
 	}
@@ -135,6 +140,30 @@ func (a *AMQPX) RegisterHandler(queue string, handlerFunc HandlerFunc, option ..
 	})
 }
 
+// RegisterBatchHandler registers a handler function for a specific queue that processes batches.
+// consumer can be set to a unique consumer name (if left empty, a unique name will be generated)
+func (a *AMQPX) RegisterBatchHandler(queue string, batchSize int, batchTimeout time.Duration, handlerFunc BatchHandlerFunc, option ...ConsumeOptions) {
+	if handlerFunc == nil {
+		panic("handlerFunc must not be nil")
+	}
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	o := ConsumeOptions{}
+	if len(option) > 0 {
+		o = option[0]
+	}
+
+	a.batchHandlers = append(a.batchHandlers, pool.BatchHandler{
+		Queue:          queue,
+		BatchSize:      batchSize,
+		BatchTimeout:   batchTimeout,
+		ConsumeOptions: o,
+		HandlerFunc:    handlerFunc,
+	})
+}
+
 // Start starts the subscriber and publisher pools.
 // In case no handlers were registered, no subscriber pool will be started.
 // connectUrl has the form: amqp://username:password@localhost:5672
@@ -195,14 +224,17 @@ func (a *AMQPX) Start(connectUrl string, options ...Option) (err error) {
 		a.pub = pool.NewPublisher(a.pubPool, option.PublisherOptions...)
 
 		// create subscriber pool in case handlers were registered
-		if len(a.handlers) > 0 {
-			sessions := len(a.handlers)
+		requiredHandlers := len(a.handlers) + len(a.batchHandlers)
+		if requiredHandlers > 0 {
+			sessions := requiredHandlers
 			connections := option.SubscriberConnections
 			if connections < 0 || sessions < connections {
 				connections = sessions
 			}
 
 			// subscriber needs as many channels as there are handler functions
+			// because we do not want subscriber connections to interfere
+			// with each other
 			var subPool *pool.Pool
 			subPool, err = pool.New(
 				connectUrl,
@@ -218,6 +250,9 @@ func (a *AMQPX) Start(connectUrl string, options ...Option) (err error) {
 			a.sub = pool.NewSubscriber(subPool, pool.SubscriberWithAutoClosePool(true))
 			for _, h := range a.handlers {
 				a.sub.RegisterHandler(h)
+			}
+			for _, bh := range a.batchHandlers {
+				a.sub.RegisterBatchHandler(bh)
 			}
 			a.sub.Start()
 		}

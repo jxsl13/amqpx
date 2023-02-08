@@ -2,7 +2,6 @@ package pool
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -163,7 +162,7 @@ func (s *Session) connect() (err error) {
 
 	channel, err := s.conn.channel()
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrConnectionFailed, err)
+		return fmt.Errorf("%v: %w", ErrConnectionFailed, err)
 	}
 
 	if s.confirmable {
@@ -505,22 +504,6 @@ func (s *Session) retry(f func() error) error {
 			return err
 		}
 	}
-}
-
-func recoverable(err error) bool {
-
-	if ae, ok := err.(*amqp091.Error); ok {
-		switch ae.Code {
-		case notImplemented:
-			return false
-		default:
-			// not recoverable by changing user input
-			// because of potential connection loss
-			return !ae.Recover
-		}
-	}
-
-	return errors.Is(err, amqp091.ErrClosed)
 }
 
 type ExchangeDeclareOptions struct {

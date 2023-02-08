@@ -41,7 +41,7 @@ func TestNewConnectionPool(t *testing.T) {
 }
 
 func TestNewConnectionPoolDisconnect(t *testing.T) {
-	connections := 100 // do not go below 100
+	connections := 100
 	p, err := pool.NewConnectionPool("amqp://admin:password@localhost:5672", connections,
 		pool.ConnectionPoolWithName("TestNewConnectionPoolDisconnect"),
 		pool.ConnectionPoolWithLogger(logging.NewTestLogger(t)),
@@ -53,7 +53,7 @@ func TestNewConnectionPoolDisconnect(t *testing.T) {
 	defer p.Close()
 	var wg sync.WaitGroup
 
-	awaitStarted, awaitStopped := DisconnectWithStartedStopped(t, 0, time.Duration(connections)*10*time.Millisecond, 2*time.Second)
+	awaitStarted, awaitStopped := DisconnectWithStartedStopped(t, 0, 10*time.Second, 2*time.Second)
 	defer awaitStopped()
 
 	for i := 0; i < connections; i++ {

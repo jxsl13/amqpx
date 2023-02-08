@@ -212,7 +212,7 @@ func (sp *SessionPool) initCachedSession(id int) (*Session, error) {
 			return nil, err
 		}
 
-		session, err := sp.deriveSession(conn, id, true)
+		session, err := sp.deriveCachedSession(conn, id)
 		if err != nil {
 			sp.pool.ReturnConnection(conn, true)
 			continue
@@ -223,11 +223,13 @@ func (sp *SessionPool) initCachedSession(id int) (*Session, error) {
 	}
 }
 
-func (sp *SessionPool) deriveSession(conn *Connection, id int, cached bool) (*Session, error) {
-	return NewSession(conn, fmt.Sprintf("%s-cached-%d", conn.Name(), id),
+func (sp *SessionPool) deriveCachedSession(conn *Connection, id int) (*Session, error) {
+	name := fmt.Sprintf("%s-cached-session-%d", conn.Name(), id)
+
+	return NewSession(conn, name,
 		SessionWithContext(sp.ctx),
 		SessionWithBufferSize(sp.size),
-		SessionWithCached(cached),
+		SessionWithCached(true),
 		SessionWithConfirms(sp.confirmable),
 	)
 }
