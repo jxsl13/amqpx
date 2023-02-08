@@ -417,16 +417,11 @@ func (s *Subscriber) batchConsume(bh BatchHandler) (err error) {
 		}
 	}()
 
-	timer := time.NewTimer(bh.BatchTimeout)
-	defer func() {
-		// clean shutdown of timer routine
-		if !timer.Stop() {
-			select {
-			case <-timer.C:
-			default:
-			}
-		}
-	}()
+	var (
+		timer   = time.NewTimer(bh.BatchTimeout)
+		drained = false
+	)
+	defer closeTimer(timer, &drained)
 
 	for {
 		// reset batch slice
@@ -437,13 +432,7 @@ func (s *Subscriber) batchConsume(bh BatchHandler) (err error) {
 		for {
 
 			// reset the timer
-			if !timer.Stop() {
-				select {
-				case <-timer.C:
-				default:
-				}
-			}
-			timer.Reset(bh.BatchTimeout)
+			resetTimer(timer, bh.BatchTimeout, &drained)
 
 			select {
 			case <-s.catchShutdown():
@@ -458,6 +447,8 @@ func (s *Subscriber) batchConsume(bh BatchHandler) (err error) {
 				}
 
 			case <-timer.C:
+				// at this point we know that the timer channel has been drained
+				drained = true
 				if len(batch) > 0 {
 					// timeout reached, process batch that might not contain
 					// a full batch, yet.

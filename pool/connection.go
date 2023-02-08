@@ -224,8 +224,12 @@ func (ch *Connection) PauseOnFlowControl() {
 
 // not threadsafe
 func (ch *Connection) pauseOnFlowControl() {
-	timer := time.NewTimer(time.Second)
-	defer closeTimer(timer)
+	var (
+		duration = time.Second
+		timer    = time.NewTimer(duration)
+		drained  = false
+	)
+	defer closeTimer(timer, &drained)
 
 	for !ch.conn.IsClosed() && !ch.isShutdown() {
 
@@ -239,12 +243,13 @@ func (ch *Connection) pauseOnFlowControl() {
 			}
 
 			ch.info("pausing on flow control")
-			resetTimer(timer, time.Second)
+			resetTimer(timer, duration, &drained)
 
 			select {
 			case <-ch.catchShutdown():
 				return
 			case <-timer.C:
+				drained = true
 				continue
 			}
 
@@ -318,8 +323,11 @@ func (ch *Connection) recover() error {
 		return nil
 	}
 
-	timer := time.NewTimer(0)
-	defer closeTimer(timer)
+	var (
+		timer   = time.NewTimer(0)
+		drained = false
+	)
+	defer closeTimer(timer, &drained)
 
 	ch.info("recovering")
 	for retry := 0; ; retry++ {
@@ -335,13 +343,14 @@ func (ch *Connection) recover() error {
 		}
 
 		// reset to exponential backoff
-		resetTimer(timer, ch.errorBackoff(retry))
+		resetTimer(timer, ch.errorBackoff(retry), &drained)
 
 		select {
 		case <-ch.catchShutdown():
 			// catch shutdown signal
 			return fmt.Errorf("connection recovery failed: connection %w", ErrClosed)
 		case <-timer.C:
+			drained = true
 			// retry after sleep
 			continue
 		}
