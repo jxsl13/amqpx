@@ -225,14 +225,7 @@ func (ch *Connection) PauseOnFlowControl() {
 // not threadsafe
 func (ch *Connection) pauseOnFlowControl() {
 	timer := time.NewTimer(time.Second)
-	defer func() {
-		if !timer.Stop() {
-			select {
-			case <-timer.C:
-			default:
-			}
-		}
-	}()
+	defer closeTimer(timer)
 
 	for !ch.conn.IsClosed() && !ch.isShutdown() {
 
@@ -246,10 +239,7 @@ func (ch *Connection) pauseOnFlowControl() {
 			}
 
 			ch.info("pausing on flow control")
-			if !timer.Stop() {
-				<-timer.C
-			}
-			timer.Reset(time.Second)
+			resetTimer(timer, time.Second)
 
 			select {
 			case <-ch.catchShutdown():
@@ -329,14 +319,7 @@ func (ch *Connection) recover() error {
 	}
 
 	timer := time.NewTimer(0)
-	defer func() {
-		if !timer.Stop() {
-			select {
-			case <-timer.C:
-			default:
-			}
-		}
-	}()
+	defer closeTimer(timer)
 
 	ch.info("recovering")
 	for retry := 0; ; retry++ {
@@ -352,14 +335,7 @@ func (ch *Connection) recover() error {
 		}
 
 		// reset to exponential backoff
-		if !timer.Stop() {
-			select {
-			case <-timer.C:
-				//
-			default:
-			}
-		}
-		timer.Reset(ch.errorBackoff(retry))
+		resetTimer(timer, ch.errorBackoff(retry))
 
 		select {
 		case <-ch.catchShutdown():
