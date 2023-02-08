@@ -127,7 +127,7 @@ func (ch *Connection) Close() (err error) {
 
 	ch.cancel() // close derived context
 
-	if ch.conn != nil && !ch.conn.IsClosed() {
+	if !ch.isClosed() {
 		// wait for dangling goroutines to timeout before closing.
 		// upon recovery the standard library still has some goroutines open
 		// that are only closed upon some tcp connection timeout.
@@ -179,7 +179,7 @@ func (ch *Connection) Connect() error {
 func (ch *Connection) connect() error {
 
 	// not closed, close before reconnecting
-	if ch.conn != nil && !ch.conn.IsClosed() {
+	if !ch.isClosed() {
 		// ignore errors
 		_ = ch.conn.Close()
 	}
@@ -263,6 +263,14 @@ func (ch *Connection) IsClosed() bool {
 	ch.mu.Lock()
 	defer ch.mu.Unlock()
 
+	return ch.isClosed()
+}
+
+// returns true in case the
+// underlying connection is either nil or closed
+// non-locking: should only be used internally
+func (ch *Connection) isClosed() bool {
+
 	// connection closed 							-> cannot access it
 	// connection not closed but shutdown triggered -> is closed
 	return ch.conn == nil || ch.conn.IsClosed()
@@ -318,7 +326,7 @@ func (ch *Connection) Recover() error {
 func (ch *Connection) recover() error {
 	healthy := ch.error() == nil
 
-	if healthy && ch.conn != nil && !ch.conn.IsClosed() {
+	if healthy && !ch.isClosed() {
 		ch.pauseOnFlowControl()
 		return nil
 	}
