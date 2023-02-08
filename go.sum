@@ -17,6 +17,8 @@ github.com/rabbitmq/amqp091-go v1.6.1 h1:r6HybD9gOdWeUTP9TKIKdcAuFl4Va4p3OmWUUoe
 github.com/rabbitmq/amqp091-go v1.6.1/go.mod h1:wfClAtY0C7bOHxd3GjmF26jEHn+rR/0B3+YV+Vn9/NI=
 github.com/rabbitmq/amqp091-go v1.6.2-0.20230207111221-c503330cfb10 h1:G6kG86rBac7iz9jVUxUEO1bPOhLsU99rXNyGKcauAgc=
 github.com/rabbitmq/amqp091-go v1.6.2-0.20230207111221-c503330cfb10/go.mod h1:wfClAtY0C7bOHxd3GjmF26jEHn+rR/0B3+YV+Vn9/NI=
+github.com/rabbitmq/amqp091-go v1.6.2-0.20230208132010-0ecb414c61ad h1:uvdcz/svKvvjd5ehlhHFz9JY+414+OwxOjkkIg2Labg=
+github.com/rabbitmq/amqp091-go v1.6.2-0.20230208132010-0ecb414c61ad/go.mod h1:wfClAtY0C7bOHxd3GjmF26jEHn+rR/0B3+YV+Vn9/NI=
 github.com/stretchr/objx v0.1.0/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+wExME=
 github.com/stretchr/objx v0.4.0/go.mod h1:YvHI0jy2hoMjB+UWwv71VJQ9isScKT/TqJzVSSt89Yw=
 github.com/stretchr/objx v0.5.0/go.mod h1:Yh+to48EsGEfYuaHDzXPcE3xhTkx73EhmCGUpEOglKo=
