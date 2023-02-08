@@ -158,6 +158,12 @@ func (s *Subscriber) RegisterHandler(handler Handler) {
 	}).Info("registered message handler")
 }
 
+// RegisterBatchHandlerFunc registers a function that is able to process up to `batchSize` messages at the same time.
+// The batchTimeout is the duration to wait before triggering the processing of the messages.
+// In case your batchSize is 50 and there are only 20 messages in a queue which you can fetch
+// and then you'd have to wait indefinitly for those 20 messages to be processed, as it might take a long time for another message to arrive in the queue.
+// This is where your batchTimeout comes into play. In order to wait at most for the period of batchTimeout until a new message arrives
+// before processing the batch in your handler function.
 func (s *Subscriber) RegisterBatchHandlerFunc(queue string, batchSize int, batchTimeout time.Duration, hf BatchHandlerFunc, options ...ConsumeOptions) {
 
 	option := ConsumeOptions{
@@ -305,67 +311,81 @@ func (s *Subscriber) consume(h Handler) (err error) {
 				return ErrDeliveryClosed
 			}
 
-			var (
-				err     error
-				ackErr  error
-				poolErr error
-			)
 		handle:
 			for {
 				s.infoHandler(h.ConsumerTag, msg.Exchange, msg.RoutingKey, h.Queue, "received message")
 				err = h.HandlerFunc(msg)
 				if h.AutoAck {
-					// no acks required
-					if err == nil {
-						s.infoHandler(h.ConsumerTag, msg.Exchange, msg.RoutingKey, h.Queue, "processed message")
-						break handle
-					} else {
-						// unknown error -> recover & retry
-						poolErr = session.Recover()
-						if poolErr != nil {
-							// only returns an error upon shutdown
-							s.errorHandler(h.ConsumerTag, msg.Exchange, msg.RoutingKey, h.Queue, fmt.Errorf("potential message loss: %w", err))
-							return poolErr
-						}
-						continue handle
-					}
-				}
-
-				// processing failed
-				if err != nil {
-					// requeue message if possible
-					ackErr = session.Nack(msg.DeliveryTag, false, true)
-				} else {
-					ackErr = session.Ack(msg.DeliveryTag, false)
-				}
-
-				// if (n)ack fails, we know that the connection died
-				// potentially before processing already.
-				if ackErr != nil {
-					s.warnHandler(h.ConsumerTag, msg.Exchange, msg.RoutingKey, h.Queue, ackErr, "(n)ack failed")
-					poolErr = session.Recover()
+					br, poolErr := s.autoAckPostHandle(h, msg.Exchange, msg.RoutingKey, session, err)
 					if poolErr != nil {
-						// only returns an error upon shutdown
 						return poolErr
 					}
-
-					// do not retry, because the broker will requeue the un(n)acked message
-					// after a timeout of by default 30 minutes.
-					break handle
+					if br {
+						break handle
+					}
+					continue
 				}
 
-				// (n)acked successfully
-				if err != nil {
-					s.infoHandler(h.ConsumerTag, msg.Exchange, msg.RoutingKey, h.Queue, "nacked message")
-				} else {
-					s.infoHandler(h.ConsumerTag, msg.Exchange, msg.RoutingKey, h.Queue, "acked message")
+				poolErr := s.ackPostHandle(h, msg.DeliveryTag, msg.Exchange, msg.RoutingKey, session, err)
+				if poolErr != nil {
+					return poolErr
 				}
-				// successfully handled message
 				break handle
-
 			}
 		}
 	}
+}
+
+// opposite of break is continue, so in case of a false return value we want to continue the loop execution.
+func (s *Subscriber) autoAckPostHandle(h Handler, exchange, routingKey string, session *Session, handlerErr error) (breakHandleLoop bool, err error) {
+	if err == nil {
+		s.infoHandler(h.ConsumerTag, exchange, routingKey, h.Queue, "processed message")
+		return true, nil
+	}
+
+	// unknown error -> recover & retry
+	poolErr := session.Recover()
+	if poolErr != nil {
+		// only returns an error upon shutdown
+		s.errorHandler(h.ConsumerTag, exchange, routingKey, h.Queue, fmt.Errorf("potential message loss: %w", err))
+		return false, poolErr
+	}
+	return false, nil
+}
+
+// (n)ack delivery and signal that message was processed by the service
+func (s *Subscriber) ackPostHandle(h Handler, deliveryTag uint64, exchange, routingKey string, session *Session, handlerErr error) (err error) {
+	var ackErr error
+	if handlerErr != nil {
+		// requeue message if possible
+		ackErr = session.Nack(deliveryTag, false, true)
+	} else {
+		ackErr = session.Ack(deliveryTag, false)
+	}
+
+	// if (n)ack fails, we know that the connection died
+	// potentially before processing already.
+	if ackErr != nil {
+		s.warnHandler(h.ConsumerTag, exchange, routingKey, h.Queue, ackErr, "(n)ack failed")
+		poolErr := session.Recover()
+		if poolErr != nil {
+			// only returns an error upon shutdown
+			return poolErr
+		}
+
+		// do not retry, because the broker will requeue the un(n)acked message
+		// after a timeout of by default 30 minutes.
+		return nil
+	}
+
+	// (n)acked successfully
+	if handlerErr != nil {
+		s.infoHandler(h.ConsumerTag, exchange, routingKey, h.Queue, "nacked message")
+	} else {
+		s.infoHandler(h.ConsumerTag, exchange, routingKey, h.Queue, "acked message")
+	}
+	// successfully handled message
+	return nil
 }
 
 func (s *Subscriber) batchConsume(bh BatchHandler) (err error) {
@@ -460,11 +480,6 @@ func (s *Subscriber) batchConsume(bh BatchHandler) (err error) {
 		}
 
 		// at this point we have a batch to work with
-		var (
-			err     error
-			ackErr  error
-			poolErr error
-		)
 	handle:
 		for {
 			var (
@@ -474,57 +489,82 @@ func (s *Subscriber) batchConsume(bh BatchHandler) (err error) {
 
 			s.infoBatchHandler(bh.ConsumerTag, bh.Queue, batchSize, "received batch")
 			err = bh.HandlerFunc(batch)
+			// no acks required
 			if bh.AutoAck {
-				// no acks required
-				if err == nil {
-					s.infoBatchHandler(bh.ConsumerTag, bh.Queue, batchSize, "processed batch")
-					break handle
-				} else {
-					// unknown error -> recover & retry
-					poolErr = session.Recover()
-					if poolErr != nil {
-						// only returns an error upon shutdown
-						s.errorBatchHandler(bh.ConsumerTag, bh.Queue, batchSize, fmt.Errorf("potential batch loss: %w", err))
-						return poolErr
-					}
-					continue handle
-				}
-			}
-
-			// processing failed
-			if err != nil {
-				// requeue message if possible & nack all previous messages
-				ackErr = session.Nack(lastDeliveryTag, true, true)
-			} else {
-				// ack last and all previous messages
-				ackErr = session.Ack(lastDeliveryTag, true)
-			}
-
-			// if (n)ack fails, we know that the connection died
-			// potentially before processing already.
-			if ackErr != nil {
-				s.warnBatchHandler(bh.ConsumerTag, bh.Queue, batchSize, ackErr, "batch (n)ack failed")
-				poolErr = session.Recover()
+				br, poolErr := s.autoAckBatchPostHandle(bh, batchSize, session, err)
 				if poolErr != nil {
-					// only returns an error upon shutdown
 					return poolErr
 				}
+				if br {
+					break handle
+				}
+				continue handle
+			}
 
-				// do not retry, because the broker will requeue the un(n)acked message
-				// after a timeout of by default 30 minutes.
+			br, poolErr := s.ackBatchPostHandle(bh, lastDeliveryTag, batchSize, session, err)
+			if poolErr != nil {
+				return poolErr
+			}
+
+			if br {
 				break handle
 			}
-
-			// (n)acked successfully
-			if err != nil {
-				s.infoBatchHandler(bh.ConsumerTag, bh.Queue, batchSize, "nacked batch")
-			} else {
-				s.infoBatchHandler(bh.ConsumerTag, bh.Queue, batchSize, "acked batch")
-			}
-			// successfully handled message
-			break handle
+			continue
 		}
 	}
+}
+
+// opposite of break is continue, so in case of a false return value we want to continue the loop execution.
+func (s *Subscriber) autoAckBatchPostHandle(bh BatchHandler, currentBatchSize int, session *Session, handlerErr error) (breakHandleLoop bool, err error) {
+	if handlerErr == nil {
+		s.infoBatchHandler(bh.ConsumerTag, bh.Queue, currentBatchSize, "processed batch")
+		return true, nil
+	}
+
+	// unknown error -> recover & retry
+	poolErr := session.Recover()
+	if poolErr != nil {
+		// only returns an error upon shutdown
+		s.errorBatchHandler(bh.ConsumerTag, bh.Queue, currentBatchSize, fmt.Errorf("potential batch loss: %w", err))
+		return false, poolErr
+	}
+	return false, nil
+}
+
+func (s *Subscriber) ackBatchPostHandle(bh BatchHandler, lastDeliveryTag uint64, currentBatchSize int, session *Session, handlerErr error) (breakHandleLoop bool, er error) {
+	var ackErr error
+	// processing failed
+	if handlerErr != nil {
+		// requeue message if possible & nack all previous messages
+		ackErr = session.Nack(lastDeliveryTag, true, true)
+	} else {
+		// ack last and all previous messages
+		ackErr = session.Ack(lastDeliveryTag, true)
+	}
+
+	// if (n)ack fails, we know that the connection died
+	// potentially before processing already.
+	if ackErr != nil {
+		s.warnBatchHandler(bh.ConsumerTag, bh.Queue, currentBatchSize, ackErr, "batch (n)ack failed")
+		poolErr := session.Recover()
+		if poolErr != nil {
+			// only returns an error upon shutdown
+			return false, poolErr
+		}
+
+		// do not retry, because the broker will requeue the un(n)acked message
+		// after a timeout of by default 30 minutes.
+		return true, nil
+	}
+
+	// (n)acked successfully
+	if handlerErr != nil {
+		s.infoBatchHandler(bh.ConsumerTag, bh.Queue, currentBatchSize, "nacked batch")
+	} else {
+		s.infoBatchHandler(bh.ConsumerTag, bh.Queue, currentBatchSize, "acked batch")
+	}
+	// successfully handled message
+	return true, nil
 }
 
 func (s *Subscriber) catchShutdown() <-chan struct{} {
