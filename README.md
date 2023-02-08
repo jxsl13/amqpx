@@ -12,6 +12,7 @@
 **Core features**
 - connection & session (channel) pooling
 - reconnect handling
+- batch processing
 - clean shutdown handling
 - sane defaults
 - resilience & robustness over performance by default (publisher & subscriber acks)
