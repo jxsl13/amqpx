@@ -325,49 +325,23 @@ func (s *Subscriber) consume(h Handler) (err error) {
 				return ErrDeliveryClosed
 			}
 
-		handle:
-			for {
-				s.infoHandler(h.ConsumerTag, msg.Exchange, msg.RoutingKey, h.Queue, "received message")
-				err = h.HandlerFunc(msg)
-				if h.AutoAck {
-					br, poolErr := s.autoAckPostHandle(h, msg.Exchange, msg.RoutingKey, session, err)
-					if poolErr != nil {
-						return poolErr
-					}
-					if br {
-						break handle
-					}
-					continue
+			s.infoHandler(h.ConsumerTag, msg.Exchange, msg.RoutingKey, h.Queue, "received message")
+			err = h.HandlerFunc(msg)
+			if h.AutoAck {
+				if err != nil {
+					// we cannot really do anything to recover from a processing error in this case
+					s.errorHandler(h.ConsumerTag, msg.Exchange, msg.RoutingKey, h.Queue, fmt.Errorf("processing failed: dropping message: %w", err))
+				} else {
+					s.infoHandler(h.ConsumerTag, msg.Exchange, msg.RoutingKey, h.Queue, "processed message")
 				}
-
+			} else {
 				poolErr := s.ackPostHandle(h, msg.DeliveryTag, msg.Exchange, msg.RoutingKey, session, err)
 				if poolErr != nil {
 					return poolErr
 				}
-				break handle
 			}
 		}
 	}
-}
-
-// opposite of break is continue, so in case of a false return value we want to continue the loop execution.
-func (s *Subscriber) autoAckPostHandle(h Handler, exchange, routingKey string, session *Session, handlerErr error) (breakHandleLoop bool, err error) {
-	if err == nil {
-		s.infoHandler(h.ConsumerTag, exchange, routingKey, h.Queue, "processed message")
-		return true, nil
-	}
-
-	// TODO: do we really want to reconnect or do we want to just log the error?
-	// or do we want to retry with an exponential backoff (same as our recovery backoff)?
-
-	// unknown error -> recover & retry
-	poolErr := session.Recover()
-	if poolErr != nil {
-		// only returns an error upon shutdown
-		s.errorHandler(h.ConsumerTag, exchange, routingKey, h.Queue, fmt.Errorf("potential message loss: %w", err))
-		return false, poolErr
-	}
-	return false, nil
 }
 
 // (n)ack delivery and signal that message was processed by the service
@@ -391,7 +365,7 @@ func (s *Subscriber) ackPostHandle(h Handler, deliveryTag uint64, exchange, rout
 		}
 
 		// do not retry, because the broker will requeue the un(n)acked message
-		// after a timeout of by default 30 minutes.
+		// after a timeout of (by default) 30 minutes.
 		return nil
 	}
 
@@ -497,60 +471,31 @@ func (s *Subscriber) batchConsume(bh BatchHandler) (err error) {
 		}
 
 		// at this point we have a batch to work with
-	handle:
-		for {
-			var (
-				maxBatchSize    = len(batch)
-				lastDeliveryTag = batch[len(batch)-1].DeliveryTag
-			)
+		var (
+			batchSize       = len(batch)
+			lastDeliveryTag = batch[len(batch)-1].DeliveryTag
+		)
 
-			s.infoBatchHandler(bh.ConsumerTag, bh.Queue, maxBatchSize, "received batch")
-			err = bh.HandlerFunc(batch)
-			// no acks required
-			if bh.AutoAck {
-				br, poolErr := s.autoAckBatchPostHandle(bh, maxBatchSize, session, err)
-				if poolErr != nil {
-					return poolErr
-				}
-				if br {
-					break handle
-				}
-				continue handle
+		s.infoBatchHandler(bh.ConsumerTag, bh.Queue, batchSize, "received batch")
+		err = bh.HandlerFunc(batch)
+		// no acks required
+		if bh.AutoAck {
+			if err != nil {
+				// we cannot really do anything to recover from a processing error in this case
+				s.errorBatchHandler(bh.ConsumerTag, bh.Queue, batchSize, fmt.Errorf("processing failed: dropping batch: %w", err))
+			} else {
+				s.infoBatchHandler(bh.ConsumerTag, bh.Queue, batchSize, "processed batch")
 			}
-
-			br, poolErr := s.ackBatchPostHandle(bh, lastDeliveryTag, maxBatchSize, session, err)
+		} else {
+			poolErr := s.ackBatchPostHandle(bh, lastDeliveryTag, batchSize, session, err)
 			if poolErr != nil {
 				return poolErr
 			}
-
-			if br {
-				break handle
-			}
-			continue
 		}
 	}
 }
 
-// opposite of break is continue, so in case of a false return value we want to continue the loop execution.
-func (s *Subscriber) autoAckBatchPostHandle(bh BatchHandler, currentBatchSize int, session *Session, handlerErr error) (breakHandleLoop bool, err error) {
-	if handlerErr == nil {
-		s.infoBatchHandler(bh.ConsumerTag, bh.Queue, currentBatchSize, "processed batch")
-		return true, nil
-	}
-
-	// TODO: do we really want to reconnect or do we want to just log the error?
-	// or do we want to retry with an exponential backoff (same as our recovery backoff)?
-	// unknown error -> recover & retry
-	poolErr := session.Recover()
-	if poolErr != nil {
-		// only returns an error upon shutdown
-		s.errorBatchHandler(bh.ConsumerTag, bh.Queue, currentBatchSize, fmt.Errorf("potential batch loss: %w", err))
-		return false, poolErr
-	}
-	return false, nil
-}
-
-func (s *Subscriber) ackBatchPostHandle(bh BatchHandler, lastDeliveryTag uint64, currentBatchSize int, session *Session, handlerErr error) (breakHandleLoop bool, er error) {
+func (s *Subscriber) ackBatchPostHandle(bh BatchHandler, lastDeliveryTag uint64, currentBatchSize int, session *Session, handlerErr error) (err error) {
 	var ackErr error
 	// processing failed
 	if handlerErr != nil {
@@ -568,12 +513,12 @@ func (s *Subscriber) ackBatchPostHandle(bh BatchHandler, lastDeliveryTag uint64,
 		poolErr := session.Recover()
 		if poolErr != nil {
 			// only returns an error upon shutdown
-			return false, poolErr
+			return poolErr
 		}
 
 		// do not retry, because the broker will requeue the un(n)acked message
 		// after a timeout of by default 30 minutes.
-		return true, nil
+		return nil
 	}
 
 	// (n)acked successfully
@@ -583,39 +528,39 @@ func (s *Subscriber) ackBatchPostHandle(bh BatchHandler, lastDeliveryTag uint64,
 		s.infoBatchHandler(bh.ConsumerTag, bh.Queue, currentBatchSize, "acked batch")
 	}
 	// successfully handled message
-	return true, nil
+	return nil
 }
 
 func (s *Subscriber) catchShutdown() <-chan struct{} {
 	return s.ctx.Done()
 }
 
-func (s *Subscriber) infoBatchHandler(consumer, queue string, maxBatchSize int, a ...any) {
+func (s *Subscriber) infoBatchHandler(consumer, queue string, batchSize int, a ...any) {
 	s.log.WithFields(map[string]any{
-		"maxBatchSize": maxBatchSize,
-		"subscriber":   s.pool.Name(),
-		"consumer":     consumer,
-		"queue":        queue,
+		"batchSize":  batchSize,
+		"subscriber": s.pool.Name(),
+		"consumer":   consumer,
+		"queue":      queue,
 	}).Info(a...)
 }
 
-func (s *Subscriber) warnBatchHandler(consumer, queue string, maxBatchSize int, err error, a ...any) {
+func (s *Subscriber) warnBatchHandler(consumer, queue string, batchSize int, err error, a ...any) {
 	s.log.WithFields(map[string]any{
-		"maxBatchSize": maxBatchSize,
-		"subscriber":   s.pool.Name(),
-		"consumer":     consumer,
-		"queue":        queue,
-		"error":        err,
+		"batchSize":  batchSize,
+		"subscriber": s.pool.Name(),
+		"consumer":   consumer,
+		"queue":      queue,
+		"error":      err,
 	}).Warn(a...)
 }
 
-func (s *Subscriber) errorBatchHandler(consumer, queue string, maxBatchSize int, err error, a ...any) {
+func (s *Subscriber) errorBatchHandler(consumer, queue string, batchSize int, err error, a ...any) {
 	s.log.WithFields(map[string]any{
-		"maxBatchSize": maxBatchSize,
-		"subscriber":   s.pool.Name(),
-		"consumer":     consumer,
-		"queue":        queue,
-		"error":        err,
+		"batchSize":  batchSize,
+		"subscriber": s.pool.Name(),
+		"consumer":   consumer,
+		"queue":      queue,
+		"error":      err,
 	}).Error(a...)
 }
 
