@@ -45,6 +45,17 @@ func (t *Topologer) getSession() (*Session, error) {
 // verifies that it is of the provided type, durability and auto-delete flags.
 //
 // Errors returned from this method will close the session.
+// Exchange names starting with "amq." are reserved for pre-declared and
+// standardized exchanges. The client MAY declare an exchange starting with
+// "amq." if the passive option is set, or the exchange already exists.  Names can
+// consist of a non-empty sequence of letters, digits, hyphen, underscore,
+// period, or colon.
+//
+// Each exchange belongs to one of a set of exchange kinds/types implemented by
+// the server. The exchange types define the functionality of the exchange - i.e.
+// how messages are routed through it. Once an exchange is declared, its type
+// cannot be changed.  The common types are "direct", "fanout", "topic" and
+// "headers".
 func (t *Topologer) ExchangeDeclare(name string, kind string, option ...ExchangeDeclareOptions) (err error) {
 	s, err := t.getSession()
 	if err != nil {
