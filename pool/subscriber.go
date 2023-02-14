@@ -99,13 +99,13 @@ type BatchHandler struct {
 	// When <= 0, will be set to 50
 	// Number of messages a batch may contain at most
 	// before processing is triggered
-	BatchSize int
+	MaxBatchSize int
 
-	// BatchTimeout is the duration that is waited for the next message from a queue before
+	// FlushTimeout is the duration that is waited for the next message from a queue before
 	// the batch is closed and passed for processing.
 	// This value should be less than 30m (which is the (n)ack timeout of RabbitMQ)
 	// when <= 0, will be set to 5s
-	BatchTimeout time.Duration
+	FlushTimeout time.Duration
 	ConsumeOptions
 	HandlerFunc BatchHandlerFunc
 }
@@ -167,13 +167,13 @@ func (s *Subscriber) RegisterHandler(handler Handler) {
 	}).Info("registered message handler")
 }
 
-// RegisterBatchHandlerFunc registers a function that is able to process up to `batchSize` messages at the same time.
-// The batchTimeout is the duration to wait before triggering the processing of the messages.
-// In case your batchSize is 50 and there are only 20 messages in a queue which you can fetch
+// RegisterBatchHandlerFunc registers a function that is able to process up to `maxBatchSize` messages at the same time.
+// The flushTimeout is the duration to wait before triggering the processing of the messages.
+// In case your maxBatchSize is 50 and there are only 20 messages in a queue which you can fetch
 // and then you'd have to wait indefinitly for those 20 messages to be processed, as it might take a long time for another message to arrive in the queue.
-// This is where your batchTimeout comes into play. In order to wait at most for the period of batchTimeout until a new message arrives
+// This is where your flushTimeout comes into play. In order to wait at most for the period of flushTimeout until a new message arrives
 // before processing the batch in your handler function.
-func (s *Subscriber) RegisterBatchHandlerFunc(queue string, batchSize int, batchTimeout time.Duration, hf BatchHandlerFunc, options ...ConsumeOptions) {
+func (s *Subscriber) RegisterBatchHandlerFunc(queue string, maxBatchSize int, flushTimeout time.Duration, hf BatchHandlerFunc, options ...ConsumeOptions) {
 
 	option := ConsumeOptions{
 		ConsumerTag: "",
@@ -191,8 +191,8 @@ func (s *Subscriber) RegisterBatchHandlerFunc(queue string, batchSize int, batch
 		BatchHandler{
 			Queue:          queue,
 			ConsumeOptions: option,
-			BatchSize:      batchSize,
-			BatchTimeout:   batchTimeout,
+			MaxBatchSize:   maxBatchSize,
+			FlushTimeout:   flushTimeout,
 			HandlerFunc:    hf,
 		},
 	)
@@ -208,12 +208,12 @@ func (s *Subscriber) RegisterBatchHandler(handler BatchHandler) {
 	// of all the messages of a batch and process the messages
 	// in case we hit that memory limit within the current batch.
 
-	if handler.BatchSize <= 0 {
-		handler.BatchSize = 50
+	if handler.MaxBatchSize <= 0 {
+		handler.MaxBatchSize = 50
 	}
 
-	if handler.BatchTimeout <= 0 {
-		handler.BatchTimeout = 5 * time.Second
+	if handler.FlushTimeout <= 0 {
+		handler.FlushTimeout = 5 * time.Second
 	}
 
 	s.mu.Lock()
@@ -224,8 +224,8 @@ func (s *Subscriber) RegisterBatchHandler(handler BatchHandler) {
 		"subscriber":   s.pool.Name(),
 		"consumer":     handler.ConsumerTag,
 		"queue":        handler.Queue,
-		"batchSize":    handler.BatchSize,
-		"batchTimeout": handler.BatchTimeout,
+		"maxBatchSize": handler.MaxBatchSize,
+		"flushTimeout": handler.FlushTimeout,
 	}).Info("registered batch handler")
 }
 
@@ -439,7 +439,7 @@ func (s *Subscriber) batchConsume(bh BatchHandler) (err error) {
 	s.infoConsumer(bh.ConsumerTag, "started")
 
 	// preallocate memory for batch
-	batch := make([]amqp091.Delivery, 0, bh.BatchSize)
+	batch := make([]amqp091.Delivery, 0, bh.MaxBatchSize)
 	defer func() {
 		if len(batch) > 0 && errors.Is(err, ErrClosed) {
 			// requeue all not yet processed messages in batch slice
@@ -449,13 +449,13 @@ func (s *Subscriber) batchConsume(bh BatchHandler) (err error) {
 			// There is no way to recover form this state in case an error is returned from the Nack call.
 			nackErr := batch[len(batch)-1].Nack(true, true)
 			if nackErr != nil {
-				s.warnBatchHandler(bh.ConsumerTag, bh.Queue, bh.BatchSize, err, "failed to nack and requeue batch upon shutdown")
+				s.warnBatchHandler(bh.ConsumerTag, bh.Queue, bh.MaxBatchSize, err, "failed to nack and requeue batch upon shutdown")
 			}
 		}
 	}()
 
 	var (
-		timer   = time.NewTimer(bh.BatchTimeout)
+		timer   = time.NewTimer(bh.FlushTimeout)
 		drained = false
 	)
 	defer closeTimer(timer, &drained)
@@ -469,7 +469,7 @@ func (s *Subscriber) batchConsume(bh BatchHandler) (err error) {
 		for {
 
 			// reset the timer
-			resetTimer(timer, bh.BatchTimeout, &drained)
+			resetTimer(timer, bh.FlushTimeout, &drained)
 
 			select {
 			case <-s.catchShutdown():
@@ -479,7 +479,7 @@ func (s *Subscriber) batchConsume(bh BatchHandler) (err error) {
 					return ErrDeliveryClosed
 				}
 				batch = append(batch, msg)
-				if len(batch) == bh.BatchSize {
+				if len(batch) == bh.MaxBatchSize {
 					break collectBatch
 				}
 
@@ -500,15 +500,15 @@ func (s *Subscriber) batchConsume(bh BatchHandler) (err error) {
 	handle:
 		for {
 			var (
-				batchSize       = len(batch)
+				maxBatchSize    = len(batch)
 				lastDeliveryTag = batch[len(batch)-1].DeliveryTag
 			)
 
-			s.infoBatchHandler(bh.ConsumerTag, bh.Queue, batchSize, "received batch")
+			s.infoBatchHandler(bh.ConsumerTag, bh.Queue, maxBatchSize, "received batch")
 			err = bh.HandlerFunc(batch)
 			// no acks required
 			if bh.AutoAck {
-				br, poolErr := s.autoAckBatchPostHandle(bh, batchSize, session, err)
+				br, poolErr := s.autoAckBatchPostHandle(bh, maxBatchSize, session, err)
 				if poolErr != nil {
 					return poolErr
 				}
@@ -518,7 +518,7 @@ func (s *Subscriber) batchConsume(bh BatchHandler) (err error) {
 				continue handle
 			}
 
-			br, poolErr := s.ackBatchPostHandle(bh, lastDeliveryTag, batchSize, session, err)
+			br, poolErr := s.ackBatchPostHandle(bh, lastDeliveryTag, maxBatchSize, session, err)
 			if poolErr != nil {
 				return poolErr
 			}
@@ -590,32 +590,32 @@ func (s *Subscriber) catchShutdown() <-chan struct{} {
 	return s.ctx.Done()
 }
 
-func (s *Subscriber) infoBatchHandler(consumer, queue string, batchSize int, a ...any) {
+func (s *Subscriber) infoBatchHandler(consumer, queue string, maxBatchSize int, a ...any) {
 	s.log.WithFields(map[string]any{
-		"batchSize":  batchSize,
-		"subscriber": s.pool.Name(),
-		"consumer":   consumer,
-		"queue":      queue,
+		"maxBatchSize": maxBatchSize,
+		"subscriber":   s.pool.Name(),
+		"consumer":     consumer,
+		"queue":        queue,
 	}).Info(a...)
 }
 
-func (s *Subscriber) warnBatchHandler(consumer, queue string, batchSize int, err error, a ...any) {
+func (s *Subscriber) warnBatchHandler(consumer, queue string, maxBatchSize int, err error, a ...any) {
 	s.log.WithFields(map[string]any{
-		"batchSize":  batchSize,
-		"subscriber": s.pool.Name(),
-		"consumer":   consumer,
-		"queue":      queue,
-		"error":      err,
+		"maxBatchSize": maxBatchSize,
+		"subscriber":   s.pool.Name(),
+		"consumer":     consumer,
+		"queue":        queue,
+		"error":        err,
 	}).Warn(a...)
 }
 
-func (s *Subscriber) errorBatchHandler(consumer, queue string, batchSize int, err error, a ...any) {
+func (s *Subscriber) errorBatchHandler(consumer, queue string, maxBatchSize int, err error, a ...any) {
 	s.log.WithFields(map[string]any{
-		"batchSize":  batchSize,
-		"subscriber": s.pool.Name(),
-		"consumer":   consumer,
-		"queue":      queue,
-		"error":      err,
+		"maxBatchSize": maxBatchSize,
+		"subscriber":   s.pool.Name(),
+		"consumer":     consumer,
+		"queue":        queue,
+		"error":        err,
 	}).Error(a...)
 }
 
