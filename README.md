@@ -172,7 +172,7 @@ The `AMQPX` struct consists at least one connection pool, a `Publisher`, a `Subs
 Upon `Start(..)` and upon `Close()` a `Topologer` is created which creates the topology or destroys a topology based on one or *multiple* functions that were registered via `RegisterTopologyCreator` or `RegisterTopologyDeleter`.
 After the topology has been created, a `Publisher` is instantiated from a publisher connection and session `Pool`.
 The `Publisher` can be used to publish messages to specific *exchanges* with a given *routing key*.
-In case you register an event handler function via `RegisterHandler`, then another connection and session `Pool` is created which is then used to instantiate a `Subscriber`. The `Subscriber` communicates via one or multiple separate TCP connections in order to prevent interference between the `Publisher` and `Subscriber`.
+In case you register an event handler function via `RegisterHandler` or `RegisterBatchHandler`, then another connection and session `Pool` is created which is then used to instantiate a `Subscriber`. The `Subscriber` communicates via one or multiple separate TCP connections in order to prevent interference between the `Publisher` and `Subscriber` (tcp pushback).
 
 The `amqpx` package defines a global variable that allows the package `amqpx` to be used like the `AMQPX` object.
 
