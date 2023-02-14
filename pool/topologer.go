@@ -161,7 +161,6 @@ func (t *Topologer) QueueDelete(name string, option ...QueueDeleteOptions) (purg
 //	key: info ---> amq.topic ----> # ------> emails
 //	                         \---> info ---/
 //	key: debug --> amq.topic ----> # ------> emails
-//
 func (t *Topologer) QueueBind(name string, routingKey string, exchange string, option ...QueueBindOptions) (err error) {
 	s, err := t.getSession()
 	if err != nil {
@@ -220,7 +219,6 @@ func (t *Topologer) QueueUnbind(name string, routingKey string, exchange string,
 //	-----------------------------------------------
 //	key: AAPL  --> trade ----> MSFT     sell
 //	                     \---> AAPL --> buy
-//
 func (t *Topologer) ExchangeBind(destination string, routingKey string, source string, option ...ExchangeBindOptions) (err error) {
 	s, err := t.getSession()
 	if err != nil {

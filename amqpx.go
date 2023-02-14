@@ -142,7 +142,7 @@ func (a *AMQPX) RegisterHandler(queue string, handlerFunc HandlerFunc, option ..
 
 // RegisterBatchHandler registers a handler function for a specific queue that processes batches.
 // consumer can be set to a unique consumer name (if left empty, a unique name will be generated)
-func (a *AMQPX) RegisterBatchHandler(queue string, batchSize int, batchTimeout time.Duration, handlerFunc BatchHandlerFunc, option ...ConsumeOptions) {
+func (a *AMQPX) RegisterBatchHandler(queue string, maxBatchSize int, flushTimeout time.Duration, handlerFunc BatchHandlerFunc, option ...ConsumeOptions) {
 	if handlerFunc == nil {
 		panic("handlerFunc must not be nil")
 	}
@@ -157,8 +157,8 @@ func (a *AMQPX) RegisterBatchHandler(queue string, batchSize int, batchTimeout t
 
 	a.batchHandlers = append(a.batchHandlers, pool.BatchHandler{
 		Queue:          queue,
-		BatchSize:      batchSize,
-		BatchTimeout:   batchTimeout,
+		MaxBatchSize:   maxBatchSize,
+		FlushTimeout:   flushTimeout,
 		ConsumeOptions: o,
 		HandlerFunc:    handlerFunc,
 	})
