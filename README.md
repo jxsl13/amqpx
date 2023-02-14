@@ -68,7 +68,7 @@ func main() {
 
 	amqpx.Start(
 		amqpx.NewURL("localhost", 5672, "admin", "password"), // or amqp://username@password:localhost:5672
-		amqpx.WithLogger(logging.NewNoOpLogger()),            // provide a logger that implements the logging.Logger interface (logrus adapter is provided)
+		amqpx.WithLogger(logging.NewNoOpLogger()),            // provide a logger that implements the logging.Logger interface
 	)
 	defer amqpx.Close()
 
