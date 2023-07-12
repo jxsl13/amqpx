@@ -5,7 +5,7 @@ go 1.18
 require (
 	github.com/Workiva/go-datastructures v1.0.53
 	github.com/rabbitmq/amqp091-go v1.7.0
-	github.com/stretchr/testify v1.8.1
+	github.com/stretchr/testify v1.8.4
 )
 
 require (
