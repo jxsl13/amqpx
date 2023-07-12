@@ -1,9 +1,24 @@
 on:
   push:
     branches: [ "main" ]
+    paths:
+      - '**.go'
+      - '**.yaml'
+      - '**.yml'
+      - '**.json'
+      - 'go.mod'
+      - 'go.sum'
   pull_request:
     # The branches below must be a subset of the branches above
     branches: [ "main" ]
+    paths:
+      - '**.go'
+      - '**.yaml'
+      - '**.yml'
+      - '**.json'
+      - 'go.mod'
+      - 'go.sum'
+
 name: rabbitmq & toxiproxy integration tests
 jobs:
   test:
