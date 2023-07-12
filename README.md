@@ -3,6 +3,7 @@
 [![GitHub license](https://badgen.net/github/license/jxsl13/amqpx)](https://pkg.go.dev/github.com/jxsl13/amqpx/blob/master/LICENSE)
 [![Go Reference](https://pkg.go.dev/badge/github.com/jxsl13/amqpx.svg)](https://pkg.go.dev/github.com/jxsl13/amqpx)
 [![Go Report Card](https://goreportcard.com/badge/github.com/jxsl13/amqpx)](https://goreportcard.com/report/github.com/jxsl13/amqpx)
+[![codecov](https://codecov.io/github/jxsl13/amqpx/branch/main/graph/badge.svg?token=bQuDbBFzMm)](https://codecov.io/github/jxsl13/amqpx)
 [![GitHub go.mod Go version of a Go module](https://img.shields.io/github/go-mod/go-version/jxsl13/amqpx.svg)](https://github.com/jxsl13/amqpx)
 [![GitHub latest release](https://badgen.net/github/tag/jxsl13/amqpx)](https://github.com/jxsl13/amqpx/tags)
 
