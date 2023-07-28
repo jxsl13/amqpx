@@ -160,11 +160,11 @@ func (s *Subscriber) RegisterHandler(handler Handler) {
 	defer s.mu.Unlock()
 	s.handlers = append(s.handlers, handler)
 
-	s.log.WithFields(map[string]any{
-		"subscriber": s.pool.Name(),
-		"consumer":   handler.ConsumerTag,
-		"queue":      handler.Queue,
-	}).Info("registered message handler")
+	s.log.WithFields(withConsumerIfSet(handler.ConsumerTag,
+		map[string]any{
+			"subscriber": s.pool.Name(),
+			"queue":      handler.Queue,
+		})).Info("registered message handler")
 }
 
 // RegisterBatchHandlerFunc registers a function that is able to process up to `maxBatchSize` messages at the same time.
@@ -220,13 +220,13 @@ func (s *Subscriber) RegisterBatchHandler(handler BatchHandler) {
 	defer s.mu.Unlock()
 	s.batchHandlers = append(s.batchHandlers, handler)
 
-	s.log.WithFields(map[string]any{
-		"subscriber":   s.pool.Name(),
-		"consumer":     handler.ConsumerTag,
-		"queue":        handler.Queue,
-		"maxBatchSize": handler.MaxBatchSize,
-		"flushTimeout": handler.FlushTimeout,
-	}).Info("registered batch handler")
+	s.log.WithFields(withConsumerIfSet(handler.ConsumerTag,
+		map[string]any{
+			"subscriber":   s.pool.Name(),
+			"queue":        handler.Queue,
+			"maxBatchSize": handler.MaxBatchSize,
+			"flushTimeout": handler.FlushTimeout.String(),
+		})).Info("registered batch handler")
 }
 
 // Start starts the consumers for all registered handler functions
@@ -536,64 +536,60 @@ func (s *Subscriber) catchShutdown() <-chan struct{} {
 }
 
 func (s *Subscriber) infoBatchHandler(consumer, queue string, batchSize int, a ...any) {
-	s.log.WithFields(map[string]any{
-		"batchSize":  batchSize,
-		"subscriber": s.pool.Name(),
-		"consumer":   consumer,
-		"queue":      queue,
-	}).Info(a...)
+	s.log.WithFields(withConsumerIfSet(consumer,
+		map[string]any{
+			"batchSize":  batchSize,
+			"subscriber": s.pool.Name(),
+			"queue":      queue,
+		})).Info(a...)
 }
 
 func (s *Subscriber) warnBatchHandler(consumer, queue string, batchSize int, err error, a ...any) {
-	s.log.WithFields(map[string]any{
+	s.log.WithFields(withConsumerIfSet(consumer, map[string]any{
 		"batchSize":  batchSize,
 		"subscriber": s.pool.Name(),
-		"consumer":   consumer,
 		"queue":      queue,
 		"error":      err,
-	}).Warn(a...)
+	})).Warn(a...)
 }
 
 func (s *Subscriber) errorBatchHandler(consumer, queue string, batchSize int, err error, a ...any) {
-	s.log.WithFields(map[string]any{
-		"batchSize":  batchSize,
-		"subscriber": s.pool.Name(),
-		"consumer":   consumer,
-		"queue":      queue,
-		"error":      err,
-	}).Error(a...)
+	s.log.WithFields(withConsumerIfSet(consumer,
+		map[string]any{
+			"batchSize":  batchSize,
+			"subscriber": s.pool.Name(),
+			"queue":      queue,
+			"error":      err,
+		})).Error(a...)
 }
 
 func (s *Subscriber) infoHandler(consumer, exchange, routingKey, queue string, a ...any) {
-	s.log.WithFields(map[string]any{
+	s.log.WithFields(withConsumerIfSet(consumer, map[string]any{
 		"subscriber": s.pool.Name(),
-		"consumer":   consumer,
 		"exchange":   exchange,
 		"routingKey": routingKey,
 		"queue":      queue,
-	}).Info(a...)
+	})).Info(a...)
 }
 
 func (s *Subscriber) warnHandler(consumer, exchange, routingKey, queue string, err error, a ...any) {
-	s.log.WithFields(map[string]any{
+	s.log.WithFields(withConsumerIfSet(consumer, map[string]any{
 		"subscriber": s.pool.Name(),
-		"consumer":   consumer,
 		"exchange":   exchange,
 		"routingKey": routingKey,
 		"queue":      queue,
 		"error":      err,
-	}).Warn(a...)
+	})).Warn(a...)
 }
 
 func (s *Subscriber) errorHandler(consumer, exchange, routingKey, queue string, err error, a ...any) {
-	s.log.WithFields(map[string]any{
+	s.log.WithFields(withConsumerIfSet(consumer, map[string]any{
 		"subscriber": s.pool.Name(),
-		"consumer":   consumer,
 		"exchange":   exchange,
 		"routingKey": routingKey,
 		"queue":      queue,
 		"error":      err,
-	}).Error(a...)
+	})).Error(a...)
 }
 
 func (s *Subscriber) infoSimple(a ...any) {
@@ -609,23 +605,27 @@ func (s *Subscriber) debugSimple(a ...any) {
 }
 
 func (s *Subscriber) debugConsumer(consumer string, a ...any) {
-	s.log.WithFields(map[string]any{
+	s.log.WithFields(withConsumerIfSet(consumer, map[string]any{
 		"subscriber": s.pool.Name(),
-		"consumer":   consumer,
-	}).Debug(a...)
+	})).Debug(a...)
 }
 
 func (s *Subscriber) warnConsumer(consumer string, err error, a ...any) {
-	s.log.WithFields(map[string]any{
+	s.log.WithFields(withConsumerIfSet(consumer, map[string]any{
 		"subscriber": s.pool.Name(),
-		"consumer":   consumer,
 		"error":      err,
-	}).Warn(a...)
+	})).Warn(a...)
 }
 
 func (s *Subscriber) infoConsumer(consumer string, a ...any) {
-	s.log.WithFields(map[string]any{
+	s.log.WithFields(withConsumerIfSet(consumer, map[string]any{
 		"subscriber": s.pool.Name(),
-		"consumer":   consumer,
-	}).Info(a...)
+	})).Info(a...)
+}
+
+func withConsumerIfSet(consumer string, m map[string]any) map[string]any {
+	if consumer != "" {
+		m["consumer"] = consumer
+	}
+	return m
 }
