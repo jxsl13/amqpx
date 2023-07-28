@@ -9,6 +9,7 @@ import (
 
 	"github.com/jxsl13/amqpx"
 	"github.com/jxsl13/amqpx/logging"
+	"github.com/jxsl13/amqpx/pool"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/goleak"
 )
@@ -112,6 +113,7 @@ func TestAMQPXPub(t *testing.T) {
 		amqpx.WithLogger(log),
 		amqpx.WithPublisherConnections(1),
 		amqpx.WithPublisherSessions(2),
+		amqpx.WithPoolOption(pool.WithSlowClose(true)), // needed for goroutine leak tests
 	)
 	if err != nil {
 		assert.NoError(t, err)
@@ -184,6 +186,7 @@ func TestAMQPXSubAndPub(t *testing.T) {
 		amqpx.WithLogger(log),
 		amqpx.WithPublisherConnections(1),
 		amqpx.WithPublisherSessions(5),
+		amqpx.WithPoolOption(pool.WithSlowClose(true)), // needed for goroutine leaks tests
 	)
 	if err != nil {
 		assert.NoError(t, err)
@@ -264,6 +267,7 @@ func TestAMQPXSubAndPubMulti(t *testing.T) {
 		amqpx.WithLogger(log),
 		amqpx.WithPublisherConnections(1),
 		amqpx.WithPublisherSessions(5),
+		amqpx.WithPoolOption(pool.WithSlowClose(true)), // needed for goroutine leak tests
 	)
 	if err != nil {
 		assert.NoError(t, err)

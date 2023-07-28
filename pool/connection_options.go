@@ -16,6 +16,8 @@ type connectionOption struct {
 	BackoffPolicy     BackoffFunc
 	Ctx               context.Context
 	TLSConfig         *tls.Config
+
+	SlowClose bool // set to true for goleak tests
 }
 
 type ConnectionOption func(*connectionOption)
@@ -77,5 +79,15 @@ func ConnectionWithContext(ctx context.Context) ConnectionOption {
 func ConnectionWithTLS(config *tls.Config) ConnectionOption {
 	return func(co *connectionOption) {
 		co.TLSConfig = config
+	}
+}
+
+// ConnectionWithSlowClose is only needed for integration tests.
+// It waits for standard library tcp connection goroutines to properly timeout.
+// So that we don't get false positives in our leak tests.
+// Set to true in order to wait for dangling goroutines to timeout before closing the connection.
+func ConnectionWithSlowClose(slowClose bool) ConnectionOption {
+	return func(co *connectionOption) {
+		co.SlowClose = slowClose
 	}
 }

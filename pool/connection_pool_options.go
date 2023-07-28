@@ -22,6 +22,8 @@ type connectionPoolOption struct {
 	TLSConfig             *tls.Config
 
 	Logger logging.Logger
+
+	SlowClose bool // for leak tests
 }
 
 type ConnectionPoolOption func(*connectionPoolOption)
@@ -130,4 +132,13 @@ func maxi(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// ConnectionPoolWithSlowCLose is onl yinteresting for integration tests of this library.
+// We want to wait for dangling tcp standard library goroutines to timeout before we signal that
+// the connection pool is closed. This option affects every connection in the connection pool.
+func ConnectionPoolWithSlowClose(slowClose bool) ConnectionPoolOption {
+	return func(po *connectionPoolOption) {
+		po.SlowClose = slowClose
+	}
 }
