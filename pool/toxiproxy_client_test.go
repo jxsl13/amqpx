@@ -54,9 +54,7 @@ func (p *Proxy) Enable() error {
 		if err == nil {
 			return nil
 		}
-		if err != nil {
-			time.Sleep(time.Second)
-		}
+		time.Sleep(time.Second)
 	}
 	return err
 }
@@ -71,9 +69,7 @@ func (p *Proxy) Disable() error {
 		if err == nil {
 			return nil
 		}
-		if err != nil {
-			time.Sleep(time.Second)
-		}
+		time.Sleep(time.Second)
 	}
 	return err
 }
