@@ -18,6 +18,7 @@ func TestNewSession(t *testing.T) {
 		"amqp://admin:password@localhost:5672",
 		"TestNewSession",
 		pool.ConnectionWithLogger(logging.NewTestLogger(t)),
+		pool.ConnectionWithSlowClose(true),
 	)
 	if err != nil {
 		assert.NoError(t, err)
@@ -137,6 +138,7 @@ func TestNewSessionDisconnect(t *testing.T) {
 		"amqp://admin:password@localhost:5672",
 		"TestNewSessionDisconnect",
 		pool.ConnectionWithLogger(logging.NewTestLogger(t)),
+		pool.ConnectionWithSlowClose(true),
 	)
 	if err != nil {
 		assert.NoError(t, err)

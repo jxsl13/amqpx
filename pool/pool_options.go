@@ -75,6 +75,14 @@ func WithTLS(config *tls.Config) Option {
 	}
 }
 
+// WithSlowClose is only needed for connection pool and for integration tests.
+// This option enables the waiting for goroutine timeouts for every connection it handles.
+func WithSlowClose(slowClose bool) Option {
+	return func(po *poolOption) {
+		ConnectionPoolWithSlowClose(slowClose)(&po.cpo)
+	}
+}
+
 // WithBufferSize allows to configurethe size of
 // the confirmation, error & blocker buffers of all sessions
 func WithBufferSize(size int) Option {
