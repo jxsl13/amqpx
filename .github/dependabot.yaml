@@ -1,15 +1,22 @@
 version: 2
 updates:
-- package-ecosystem: gomod
-  directory: /
-  schedule:
-    interval: daily
-  reviewers:
-    - "jxsl13"
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: daily
+    reviewers:
+      - "jxsl13"
 
-- package-ecosystem: github-actions
-  directory: /
-  schedule:
-    interval: daily
-  reviewers:
-    - "jxsl13"
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    reviewers:
+      - "jxsl13"
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    reviewers:
+      - "jxsl13"
