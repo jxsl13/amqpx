@@ -2,7 +2,6 @@ package pool
 
 import (
 	"errors"
-	"net"
 
 	"github.com/rabbitmq/amqp091-go"
 )
@@ -38,14 +37,10 @@ func recoverable(err error) bool {
 		panic("checking nil error for recoverability")
 	}
 
-	oe := &net.OpError{}
-	if errors.As(err, &oe) {
-		return true
-	}
-
+	// invalid usage of the amqp protocol is not recoverable
 	ae := &amqp091.Error{}
 	switch {
-	case errors.As(err, &ae), errors.As(err, ae):
+	case errors.As(err, &ae):
 		switch ae.Code {
 		case notImplemented:
 			return false
@@ -62,5 +57,6 @@ func recoverable(err error) bool {
 		}
 	}
 
-	return errors.Is(err, amqp091.ErrClosed)
+	// every other unknown error is recoverable
+	return true
 }
