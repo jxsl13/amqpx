@@ -55,8 +55,8 @@ type AMQPX struct {
 	sub     *pool.Subscriber
 
 	mu            sync.Mutex
-	handlers      []pool.Handler
-	batchHandlers []pool.BatchHandler
+	handlers      []*pool.Handler
+	batchHandlers []*pool.BatchHandler
 
 	topologies       []TopologyFunc
 	topologyDeleters []TopologyFunc
@@ -71,8 +71,8 @@ func New() *AMQPX {
 		pub:     nil,
 		sub:     nil,
 
-		handlers:         make([]pool.Handler, 0),
-		batchHandlers:    make([]pool.BatchHandler, 0),
+		handlers:         make([]*pool.Handler, 0),
+		batchHandlers:    make([]*pool.BatchHandler, 0),
 		topologies:       make([]TopologyFunc, 0),
 		topologyDeleters: make([]TopologyFunc, 0),
 	}
@@ -133,7 +133,7 @@ func (a *AMQPX) RegisterHandler(queue string, handlerFunc HandlerFunc, option ..
 		o = option[0]
 	}
 
-	a.handlers = append(a.handlers, pool.Handler{
+	a.handlers = append(a.handlers, &pool.Handler{
 		Queue:          queue,
 		ConsumeOptions: o,
 		HandlerFunc:    handlerFunc,
@@ -155,7 +155,7 @@ func (a *AMQPX) RegisterBatchHandler(queue string, maxBatchSize int, flushTimeou
 		o = option[0]
 	}
 
-	a.batchHandlers = append(a.batchHandlers, pool.BatchHandler{
+	a.batchHandlers = append(a.batchHandlers, &pool.BatchHandler{
 		Queue:          queue,
 		MaxBatchSize:   maxBatchSize,
 		FlushTimeout:   flushTimeout,
@@ -328,7 +328,7 @@ func (a *AMQPX) Reset() {
 	a.pub = nil
 	a.sub = nil
 
-	a.handlers = make([]pool.Handler, 0)
+	a.handlers = make([]*pool.Handler, 0)
 	a.topologies = make([]TopologyFunc, 0)
 	a.topologyDeleters = make([]TopologyFunc, 0)
 

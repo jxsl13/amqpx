@@ -17,8 +17,8 @@ type Subscriber struct {
 
 	mu            sync.Mutex
 	started       bool
-	handlers      []Handler
-	batchHandlers []BatchHandler
+	handlers      []*Handler
+	batchHandlers []*BatchHandler
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -90,6 +90,9 @@ type Handler struct {
 	Queue string
 	ConsumeOptions
 	HandlerFunc HandlerFunc
+
+	session *Session
+	running bool
 }
 
 // BatchHandler is a struct that contains all parameter sneeded i order to register a batch handler function.
@@ -143,7 +146,7 @@ func (s *Subscriber) RegisterHandlerFunc(queue string, hf HandlerFunc, options .
 	}
 
 	s.RegisterHandler(
-		Handler{
+		&Handler{
 			Queue:          queue,
 			ConsumeOptions: option,
 			HandlerFunc:    hf,
@@ -151,7 +154,7 @@ func (s *Subscriber) RegisterHandlerFunc(queue string, hf HandlerFunc, options .
 	)
 }
 
-func (s *Subscriber) RegisterHandler(handler Handler) {
+func (s *Subscriber) RegisterHandler(handler *Handler) {
 	if handler.HandlerFunc == nil {
 		panic("handler.HandlerFunc must not be nil")
 	}
@@ -188,7 +191,7 @@ func (s *Subscriber) RegisterBatchHandlerFunc(queue string, maxBatchSize int, fl
 	}
 
 	s.RegisterBatchHandler(
-		BatchHandler{
+		&BatchHandler{
 			Queue:          queue,
 			ConsumeOptions: option,
 			MaxBatchSize:   maxBatchSize,
@@ -198,7 +201,7 @@ func (s *Subscriber) RegisterBatchHandlerFunc(queue string, maxBatchSize int, fl
 	)
 }
 
-func (s *Subscriber) RegisterBatchHandler(handler BatchHandler) {
+func (s *Subscriber) RegisterBatchHandler(handler *BatchHandler) {
 	if handler.HandlerFunc == nil {
 		panic("handler.HandlerFunc must not be nil")
 	}
@@ -260,7 +263,7 @@ func (s *Subscriber) Start() {
 	}
 }
 
-func (s *Subscriber) consumer(h Handler, wg *sync.WaitGroup) {
+func (s *Subscriber) consumer(h *Handler, wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	var err error
@@ -272,7 +275,7 @@ func (s *Subscriber) consumer(h Handler, wg *sync.WaitGroup) {
 	}
 }
 
-func (s *Subscriber) batchConsumer(bh BatchHandler, wg *sync.WaitGroup) {
+func (s *Subscriber) batchConsumer(bh *BatchHandler, wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	var err error
@@ -284,7 +287,7 @@ func (s *Subscriber) batchConsumer(bh BatchHandler, wg *sync.WaitGroup) {
 	}
 }
 
-func (s *Subscriber) consume(h Handler) (err error) {
+func (s *Subscriber) consume(h *Handler) (err error) {
 	s.debugConsumer(h.ConsumerTag, "starting consumer...")
 
 	session, err := s.pool.GetSession()
@@ -345,7 +348,7 @@ func (s *Subscriber) consume(h Handler) (err error) {
 }
 
 // (n)ack delivery and signal that message was processed by the service
-func (s *Subscriber) ackPostHandle(h Handler, deliveryTag uint64, exchange, routingKey string, session *Session, handlerErr error) (err error) {
+func (s *Subscriber) ackPostHandle(h *Handler, deliveryTag uint64, exchange, routingKey string, session *Session, handlerErr error) (err error) {
 	var ackErr error
 	if handlerErr != nil {
 		// requeue message if possible
@@ -379,7 +382,7 @@ func (s *Subscriber) ackPostHandle(h Handler, deliveryTag uint64, exchange, rout
 	return nil
 }
 
-func (s *Subscriber) batchConsume(bh BatchHandler) (err error) {
+func (s *Subscriber) batchConsume(bh *BatchHandler) (err error) {
 	s.debugConsumer(bh.ConsumerTag, "starting batch consumer...")
 
 	session, err := s.pool.GetSession()
@@ -495,7 +498,7 @@ func (s *Subscriber) batchConsume(bh BatchHandler) (err error) {
 	}
 }
 
-func (s *Subscriber) ackBatchPostHandle(bh BatchHandler, lastDeliveryTag uint64, currentBatchSize int, session *Session, handlerErr error) (err error) {
+func (s *Subscriber) ackBatchPostHandle(bh *BatchHandler, lastDeliveryTag uint64, currentBatchSize int, session *Session, handlerErr error) (err error) {
 	var ackErr error
 	// processing failed
 	if handlerErr != nil {
