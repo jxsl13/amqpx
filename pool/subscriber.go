@@ -86,16 +86,86 @@ type HandlerFunc func(amqp091.Delivery) error
 type BatchHandlerFunc func([]amqp091.Delivery) error
 
 // Handler is a struct that contains all parameters needed in order to register a handler function.
+// TODO: make these fields private and provide a constructor for this object
 type Handler struct {
 	Queue string
 	ConsumeOptions
 	HandlerFunc HandlerFunc
 
+	mu      sync.Mutex
 	session *Session
 	running bool
+	c       chan struct{}
+}
+
+func (h *Handler) started(session *Session) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	if h.running {
+		panic("started an already running batch handler")
+	}
+
+	h.session = session
+	h.c = make(chan struct{})
+	close(h.c)
+	h.running = true
+}
+
+func (h *Handler) Pause() error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	defer func() {
+		h.running = false
+		h.session = nil
+		h.c = make(chan struct{})
+	}()
+
+	if !h.running {
+		// TODO: create custom global error var
+		return errors.New("paused an already paused batch handler")
+	}
+
+	if h.session == nil {
+		panic("handler session is nil")
+	}
+
+	err := h.session.Close()
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (h *Handler) Resume() error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	if h.running {
+		// TODO: define a custom error for this
+		return errors.New("resuming an already running handler")
+	}
+
+	close(h.c)
+	h.running = true
+	return nil
+}
+
+func (h *Handler) isRunning() <-chan struct{} {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.c
+}
+
+func (h *Handler) IsRunning() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.running
 }
 
 // BatchHandler is a struct that contains all parameter sneeded i order to register a batch handler function.
+// TODO: make these fields private and provide a constructor for this object
 type BatchHandler struct {
 	Queue string
 
@@ -111,6 +181,73 @@ type BatchHandler struct {
 	FlushTimeout time.Duration
 	ConsumeOptions
 	HandlerFunc BatchHandlerFunc
+
+	mu      sync.Mutex
+	session *Session
+	running bool
+	c       chan struct{}
+}
+
+func (h *BatchHandler) started(session *Session) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	if h.running {
+		panic("started an already running batch handler")
+	}
+
+	h.session = session
+	h.c = make(chan struct{})
+	close(h.c)
+	h.running = true
+}
+
+func (h *BatchHandler) Pause() error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	defer func() {
+		h.running = false
+		h.session = nil
+		h.c = make(chan struct{})
+	}()
+
+	if !h.running {
+		// TODO: create custom global error var
+		return errors.New("paused an already paused batch handler")
+	}
+
+	err := h.session.Close()
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (h *BatchHandler) Resume() error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	if h.running {
+		// TODO: define a custom error for this
+		return errors.New("resuming an already running handler")
+	}
+
+	close(h.c)
+	h.running = true
+	return nil
+}
+
+func (h *BatchHandler) isRunning() <-chan struct{} {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.c
+}
+
+func (h *BatchHandler) IsRunning() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.running
 }
 
 // RegisterHandlerFunc registers a consumer function that starts a consumer upon subscriber startup.
@@ -272,6 +409,13 @@ func (s *Subscriber) consumer(h *Handler, wg *sync.WaitGroup) {
 		if errors.Is(err, ErrClosed) {
 			return
 		}
+		select {
+		case <-s.catchShutdown():
+			return
+		case <-h.isRunning():
+			// pause logic
+			continue
+		}
 	}
 }
 
@@ -283,6 +427,13 @@ func (s *Subscriber) batchConsumer(bh *BatchHandler, wg *sync.WaitGroup) {
 		err = s.batchConsume(bh)
 		if errors.Is(err, ErrClosed) {
 			return
+		}
+		select {
+		case <-s.catchShutdown():
+			return
+		case <-bh.isRunning():
+			// pause logic
+			continue
 		}
 	}
 }
@@ -318,6 +469,8 @@ func (s *Subscriber) consume(h *Handler) (err error) {
 	if err != nil {
 		return err
 	}
+
+	h.started(session)
 	s.infoConsumer(h.ConsumerTag, "started")
 	for {
 		select {
@@ -413,6 +566,8 @@ func (s *Subscriber) batchConsume(bh *BatchHandler) (err error) {
 	if err != nil {
 		return err
 	}
+
+	bh.started(session)
 	s.infoConsumer(bh.ConsumerTag, "started")
 
 	// preallocate memory for batch
