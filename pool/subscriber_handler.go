@@ -47,11 +47,12 @@ func NewHandler(queue string, hf HandlerFunc, option ...ConsumeOptions) *Handler
 
 // Handler is a struct that contains all parameters needed in order to register a handler function.
 type Handler struct {
+	mu sync.Mutex
+
 	queue       string
 	handlerFunc HandlerFunc
 	consumeOpts ConsumeOptions
 
-	mu      sync.Mutex
 	session *Session
 	running bool
 	c       chan struct{}
@@ -60,6 +61,7 @@ type Handler struct {
 type HandlerView struct {
 	Queue       string
 	HandlerFunc HandlerFunc
+	IsRunning   bool
 	ConsumeOptions
 }
 
@@ -143,8 +145,9 @@ func (h *Handler) View() HandlerView {
 
 	return HandlerView{
 		Queue:          h.queue,
-		ConsumeOptions: h.consumeOpts,
 		HandlerFunc:    h.handlerFunc,
+		IsRunning:      h.running,
+		ConsumeOptions: h.consumeOpts,
 	}
 }
 
@@ -205,6 +208,8 @@ func NewBatchHandler(queue string, hf BatchHandlerFunc, options ...BatchHandlerO
 
 // BatchHandler is a struct that contains all parameter sneeded i order to register a batch handler function.
 type BatchHandler struct {
+	mu sync.Mutex
+
 	queue       string
 	handlerFunc BatchHandlerFunc
 
@@ -220,7 +225,6 @@ type BatchHandler struct {
 	flushTimeout time.Duration
 	consumeOpts  ConsumeOptions
 
-	mu      sync.Mutex
 	session *Session
 	running bool
 	c       chan struct{}
@@ -231,6 +235,7 @@ type BatchHandlerView struct {
 	HandlerFunc  BatchHandlerFunc
 	MaxBatchSize int
 	FlushTimeout time.Duration
+	IsRunning    bool
 	ConsumeOptions
 }
 
@@ -244,6 +249,7 @@ func (h *BatchHandler) View() BatchHandlerView {
 		MaxBatchSize:   h.maxBatchSize,
 		FlushTimeout:   h.flushTimeout,
 		ConsumeOptions: h.consumeOpts,
+		IsRunning:      h.running,
 	}
 }
 
