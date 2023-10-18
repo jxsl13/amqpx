@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/jxsl13/amqpx/pool"
 	"github.com/rabbitmq/amqp091-go"
@@ -36,6 +35,9 @@ type (
 	QueueDeclareOptions = pool.QueueDeclareOptions
 	QueueDeleteOptions  = pool.QueueDeleteOptions
 	QueueBindOptions    = pool.QueueBindOptions
+
+	// Function pointer alias
+	BatchHandlerOption = pool.BatchHandlerOption
 )
 
 var (
@@ -120,11 +122,7 @@ func (a *AMQPX) RegisterTopologyDeleter(finalizer TopologyFunc) {
 
 // RegisterHandler registers a handler function for a specific queue.
 // consumer can be set to a unique consumer name (if left empty, a unique name will be generated)
-func (a *AMQPX) RegisterHandler(queue string, handlerFunc HandlerFunc, option ...ConsumeOptions) {
-	if handlerFunc == nil {
-		panic("handlerFunc must not be nil")
-	}
-
+func (a *AMQPX) RegisterHandler(queue string, handlerFunc HandlerFunc, option ...ConsumeOptions) *pool.Handler {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -133,16 +131,16 @@ func (a *AMQPX) RegisterHandler(queue string, handlerFunc HandlerFunc, option ..
 		o = option[0]
 	}
 
-	a.handlers = append(a.handlers, &pool.Handler{
-		Queue:          queue,
-		ConsumeOptions: o,
-		HandlerFunc:    handlerFunc,
-	})
+	handler := pool.NewHandler(queue, handlerFunc, o)
+
+	a.handlers = append(a.handlers, handler)
+	return handler
 }
 
 // RegisterBatchHandler registers a handler function for a specific queue that processes batches.
 // consumer can be set to a unique consumer name (if left empty, a unique name will be generated)
-func (a *AMQPX) RegisterBatchHandler(queue string, maxBatchSize int, flushTimeout time.Duration, handlerFunc BatchHandlerFunc, option ...ConsumeOptions) {
+func (a *AMQPX) RegisterBatchHandler(queue string, handlerFunc BatchHandlerFunc, option ...BatchHandlerOption) *pool.BatchHandler {
+	//  maxBatchSize int, flushTimeout time.Duration,
 	if handlerFunc == nil {
 		panic("handlerFunc must not be nil")
 	}
@@ -150,18 +148,10 @@ func (a *AMQPX) RegisterBatchHandler(queue string, maxBatchSize int, flushTimeou
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	o := ConsumeOptions{}
-	if len(option) > 0 {
-		o = option[0]
-	}
+	handler := pool.NewBatchHandler(queue, handlerFunc, option...)
 
-	a.batchHandlers = append(a.batchHandlers, &pool.BatchHandler{
-		Queue:          queue,
-		MaxBatchSize:   maxBatchSize,
-		FlushTimeout:   flushTimeout,
-		ConsumeOptions: o,
-		HandlerFunc:    handlerFunc,
-	})
+	a.batchHandlers = append(a.batchHandlers, handler)
+	return handler
 }
 
 // Start starts the subscriber and publisher pools.

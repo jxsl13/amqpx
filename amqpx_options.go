@@ -142,3 +142,15 @@ func WithPoolOption(po pool.Option) Option {
 		o.PoolOptions = append(o.PoolOptions, po)
 	}
 }
+
+func WithMaxBatchSize(size int) BatchHandlerOption {
+	return pool.WithMaxBatchSize(size)
+}
+
+func WithBatchFlushTimeout(d time.Duration) BatchHandlerOption {
+	return pool.WithBatchFlushTimeout(d)
+}
+
+func WithBatchConsumeOptions(opts ConsumeOptions) BatchHandlerOption {
+	return pool.WithBatchConsumeOptions(opts)
+}

@@ -85,171 +85,6 @@ type HandlerFunc func(amqp091.Delivery) error
 // BatchHandlerFunc is a handler for incoming batches of messages/events
 type BatchHandlerFunc func([]amqp091.Delivery) error
 
-// Handler is a struct that contains all parameters needed in order to register a handler function.
-// TODO: make these fields private and provide a constructor for this object
-type Handler struct {
-	Queue string
-	ConsumeOptions
-	HandlerFunc HandlerFunc
-
-	mu      sync.Mutex
-	session *Session
-	running bool
-	c       chan struct{}
-}
-
-func (h *Handler) started(session *Session) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-
-	if h.running {
-		panic("started an already running batch handler")
-	}
-
-	h.session = session
-	h.c = make(chan struct{})
-	close(h.c)
-	h.running = true
-}
-
-func (h *Handler) Pause() error {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-
-	defer func() {
-		h.running = false
-		h.session = nil
-		h.c = make(chan struct{})
-	}()
-
-	if !h.running {
-		// TODO: create custom global error var
-		return errors.New("paused an already paused batch handler")
-	}
-
-	if h.session == nil {
-		panic("handler session is nil")
-	}
-
-	err := h.session.Close()
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-func (h *Handler) Resume() error {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-
-	if h.running {
-		// TODO: define a custom error for this
-		return errors.New("resuming an already running handler")
-	}
-
-	close(h.c)
-	h.running = true
-	return nil
-}
-
-func (h *Handler) isRunning() <-chan struct{} {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return h.c
-}
-
-func (h *Handler) IsRunning() bool {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return h.running
-}
-
-// BatchHandler is a struct that contains all parameter sneeded i order to register a batch handler function.
-// TODO: make these fields private and provide a constructor for this object
-type BatchHandler struct {
-	Queue string
-
-	// When <= 0, will be set to 50
-	// Number of messages a batch may contain at most
-	// before processing is triggered
-	MaxBatchSize int
-
-	// FlushTimeout is the duration that is waited for the next message from a queue before
-	// the batch is closed and passed for processing.
-	// This value should be less than 30m (which is the (n)ack timeout of RabbitMQ)
-	// when <= 0, will be set to 5s
-	FlushTimeout time.Duration
-	ConsumeOptions
-	HandlerFunc BatchHandlerFunc
-
-	mu      sync.Mutex
-	session *Session
-	running bool
-	c       chan struct{}
-}
-
-func (h *BatchHandler) started(session *Session) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-
-	if h.running {
-		panic("started an already running batch handler")
-	}
-
-	h.session = session
-	h.c = make(chan struct{})
-	close(h.c)
-	h.running = true
-}
-
-func (h *BatchHandler) Pause() error {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-
-	defer func() {
-		h.running = false
-		h.session = nil
-		h.c = make(chan struct{})
-	}()
-
-	if !h.running {
-		// TODO: create custom global error var
-		return errors.New("paused an already paused batch handler")
-	}
-
-	err := h.session.Close()
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-func (h *BatchHandler) Resume() error {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-
-	if h.running {
-		// TODO: define a custom error for this
-		return errors.New("resuming an already running handler")
-	}
-
-	close(h.c)
-	h.running = true
-	return nil
-}
-
-func (h *BatchHandler) isRunning() <-chan struct{} {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return h.c
-}
-
-func (h *BatchHandler) IsRunning() bool {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return h.running
-}
-
 // RegisterHandlerFunc registers a consumer function that starts a consumer upon subscriber startup.
 // The consumer is identified by a string that is unique and scoped for all consumers on this channel.
 // An empty string will cause the library to generate a unique identity.
@@ -282,25 +117,16 @@ func (s *Subscriber) RegisterHandlerFunc(queue string, hf HandlerFunc, options .
 		option = options[0]
 	}
 
-	s.RegisterHandler(
-		&Handler{
-			Queue:          queue,
-			ConsumeOptions: option,
-			HandlerFunc:    hf,
-		},
-	)
+	s.RegisterHandler(NewHandler(queue, hf, option))
 }
 
 func (s *Subscriber) RegisterHandler(handler *Handler) {
-	if handler.HandlerFunc == nil {
-		panic("handler.HandlerFunc must not be nil")
-	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.handlers = append(s.handlers, handler)
 
-	s.log.WithFields(withConsumerIfSet(handler.ConsumerTag,
+	s.log.WithFields(withConsumerIfSet(handler.ConsumeOptions().ConsumerTag,
 		map[string]any{
 			"subscriber": s.pool.Name(),
 			"queue":      handler.Queue,
@@ -313,59 +139,27 @@ func (s *Subscriber) RegisterHandler(handler *Handler) {
 // and then you'd have to wait indefinitly for those 20 messages to be processed, as it might take a long time for another message to arrive in the queue.
 // This is where your flushTimeout comes into play. In order to wait at most for the period of flushTimeout until a new message arrives
 // before processing the batch in your handler function.
-func (s *Subscriber) RegisterBatchHandlerFunc(queue string, maxBatchSize int, flushTimeout time.Duration, hf BatchHandlerFunc, options ...ConsumeOptions) {
-
-	option := ConsumeOptions{
-		ConsumerTag: "",
-		AutoAck:     false,
-		Exclusive:   false,
-		NoLocal:     false,
-		NoWait:      false,
-		Args:        nil,
-	}
-	if len(options) > 0 {
-		option = options[0]
-	}
-
-	s.RegisterBatchHandler(
-		&BatchHandler{
-			Queue:          queue,
-			ConsumeOptions: option,
-			MaxBatchSize:   maxBatchSize,
-			FlushTimeout:   flushTimeout,
-			HandlerFunc:    hf,
-		},
-	)
+func (s *Subscriber) RegisterBatchHandlerFunc(queue string, hf BatchHandlerFunc, options ...BatchHandlerOption) {
+	s.RegisterBatchHandler(NewBatchHandler(queue, hf, options...))
 }
 
 func (s *Subscriber) RegisterBatchHandler(handler *BatchHandler) {
-	if handler.HandlerFunc == nil {
-		panic("handler.HandlerFunc must not be nil")
-	}
 
 	// TODO: do we want to introduce a BatchSizeLimit
 	// which would keep track of accumulated payload memory limits
 	// of all the messages of a batch and process the messages
 	// in case we hit that memory limit within the current batch.
 
-	if handler.MaxBatchSize <= 0 {
-		handler.MaxBatchSize = 50
-	}
-
-	if handler.FlushTimeout <= 0 {
-		handler.FlushTimeout = 5 * time.Second
-	}
-
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.batchHandlers = append(s.batchHandlers, handler)
 
-	s.log.WithFields(withConsumerIfSet(handler.ConsumerTag,
+	s.log.WithFields(withConsumerIfSet(handler.ConsumeOptions().ConsumerTag,
 		map[string]any{
 			"subscriber":   s.pool.Name(),
-			"queue":        handler.Queue,
-			"maxBatchSize": handler.MaxBatchSize,
-			"flushTimeout": handler.FlushTimeout.String(),
+			"queue":        handler.Queue(),
+			"maxBatchSize": handler.MaxBatchSize(), // TODO: optimize so that we don't call getters multiple times (mutex contention)
+			"flushTimeout": handler.FlushTimeout(),
 		})).Info("registered batch handler")
 }
 
@@ -439,7 +233,9 @@ func (s *Subscriber) batchConsumer(bh *BatchHandler, wg *sync.WaitGroup) {
 }
 
 func (s *Subscriber) consume(h *Handler) (err error) {
-	s.debugConsumer(h.ConsumerTag, "starting consumer...")
+	view := h.View()
+
+	s.debugConsumer(view.ConsumerTag, "starting consumer...")
 
 	session, err := s.pool.GetSession()
 	if err != nil {
@@ -449,29 +245,29 @@ func (s *Subscriber) consume(h *Handler) (err error) {
 		if err == nil {
 			// no error
 			s.pool.ReturnSession(session, false)
-			s.infoConsumer(h.ConsumerTag, "closed")
+			s.infoConsumer(view.ConsumerTag, "closed")
 		} else if errors.Is(err, ErrClosed) {
 			// graceful shutdown
 			s.pool.ReturnSession(session, false)
-			s.infoConsumer(h.ConsumerTag, "closed")
+			s.infoConsumer(view.ConsumerTag, "closed")
 		} else {
 			// actual error
 			s.pool.ReturnSession(session, true)
-			s.warnConsumer(h.ConsumerTag, err, "closed unexpectedly")
+			s.warnConsumer(view.ConsumerTag, err, "closed unexpectedly")
 		}
 	}()
 
 	// got a working session
 	delivery, err := session.Consume(
-		h.Queue,
-		h.ConsumeOptions,
+		view.Queue,
+		view.ConsumeOptions,
 	)
 	if err != nil {
 		return err
 	}
 
 	h.started(session)
-	s.infoConsumer(h.ConsumerTag, "started")
+	s.infoConsumer(view.ConsumerTag, "started")
 	for {
 		select {
 		case <-s.catchShutdown():
@@ -481,17 +277,17 @@ func (s *Subscriber) consume(h *Handler) (err error) {
 				return ErrDeliveryClosed
 			}
 
-			s.infoHandler(h.ConsumerTag, msg.Exchange, msg.RoutingKey, h.Queue, "received message")
-			err = h.HandlerFunc(msg)
-			if h.AutoAck {
+			s.infoHandler(view.ConsumerTag, msg.Exchange, msg.RoutingKey, view.Queue, "received message")
+			err = view.HandlerFunc(msg)
+			if view.AutoAck {
 				if err != nil {
 					// we cannot really do anything to recover from a processing error in this case
-					s.errorHandler(h.ConsumerTag, msg.Exchange, msg.RoutingKey, h.Queue, fmt.Errorf("processing failed: dropping message: %w", err))
+					s.errorHandler(view.ConsumerTag, msg.Exchange, msg.RoutingKey, view.Queue, fmt.Errorf("processing failed: dropping message: %w", err))
 				} else {
-					s.infoHandler(h.ConsumerTag, msg.Exchange, msg.RoutingKey, h.Queue, "processed message")
+					s.infoHandler(view.ConsumerTag, msg.Exchange, msg.RoutingKey, view.Queue, "processed message")
 				}
 			} else {
-				poolErr := s.ackPostHandle(h, msg.DeliveryTag, msg.Exchange, msg.RoutingKey, session, err)
+				poolErr := s.ackPostHandle(&view, msg.DeliveryTag, msg.Exchange, msg.RoutingKey, session, err)
 				if poolErr != nil {
 					return poolErr
 				}
@@ -501,7 +297,7 @@ func (s *Subscriber) consume(h *Handler) (err error) {
 }
 
 // (n)ack delivery and signal that message was processed by the service
-func (s *Subscriber) ackPostHandle(h *Handler, deliveryTag uint64, exchange, routingKey string, session *Session, handlerErr error) (err error) {
+func (s *Subscriber) ackPostHandle(view *HandlerView, deliveryTag uint64, exchange, routingKey string, session *Session, handlerErr error) (err error) {
 	var ackErr error
 	if handlerErr != nil {
 		// requeue message if possible
@@ -513,7 +309,7 @@ func (s *Subscriber) ackPostHandle(h *Handler, deliveryTag uint64, exchange, rou
 	// if (n)ack fails, we know that the connection died
 	// potentially before processing already.
 	if ackErr != nil {
-		s.warnHandler(h.ConsumerTag, exchange, routingKey, h.Queue, ackErr, "(n)ack failed")
+		s.warnHandler(view.ConsumerTag, exchange, routingKey, view.Queue, ackErr, "(n)ack failed")
 		poolErr := session.Recover()
 		if poolErr != nil {
 			// only returns an error upon shutdown
@@ -527,16 +323,17 @@ func (s *Subscriber) ackPostHandle(h *Handler, deliveryTag uint64, exchange, rou
 
 	// (n)acked successfully
 	if handlerErr != nil {
-		s.infoHandler(h.ConsumerTag, exchange, routingKey, h.Queue, "nacked message")
+		s.infoHandler(view.ConsumerTag, exchange, routingKey, view.Queue, "nacked message")
 	} else {
-		s.infoHandler(h.ConsumerTag, exchange, routingKey, h.Queue, "acked message")
+		s.infoHandler(view.ConsumerTag, exchange, routingKey, view.Queue, "acked message")
 	}
 	// successfully handled message
 	return nil
 }
 
 func (s *Subscriber) batchConsume(bh *BatchHandler) (err error) {
-	s.debugConsumer(bh.ConsumerTag, "starting batch consumer...")
+	view := bh.View()
+	s.debugConsumer(view.ConsumerTag, "starting batch consumer...")
 
 	session, err := s.pool.GetSession()
 	if err != nil {
@@ -546,32 +343,32 @@ func (s *Subscriber) batchConsume(bh *BatchHandler) (err error) {
 		if err == nil {
 			// no error
 			s.pool.ReturnSession(session, false)
-			s.infoConsumer(bh.ConsumerTag, "closed")
+			s.infoConsumer(view.ConsumerTag, "closed")
 		} else if errors.Is(err, ErrClosed) {
 			// graceful shutdown
 			s.pool.ReturnSession(session, false)
-			s.infoConsumer(bh.ConsumerTag, "closed")
+			s.infoConsumer(view.ConsumerTag, "closed")
 		} else {
 			// actual error
 			s.pool.ReturnSession(session, true)
-			s.warnConsumer(bh.ConsumerTag, err, "closed unexpectedly")
+			s.warnConsumer(view.ConsumerTag, err, "closed unexpectedly")
 		}
 	}()
 
 	// got a working session
 	delivery, err := session.Consume(
-		bh.Queue,
-		bh.ConsumeOptions,
+		view.Queue,
+		view.ConsumeOptions,
 	)
 	if err != nil {
 		return err
 	}
 
 	bh.started(session)
-	s.infoConsumer(bh.ConsumerTag, "started")
+	s.infoConsumer(view.ConsumerTag, "started")
 
 	// preallocate memory for batch
-	batch := make([]amqp091.Delivery, 0, bh.MaxBatchSize)
+	batch := make([]amqp091.Delivery, 0, view.MaxBatchSize)
 	defer func() {
 		if len(batch) > 0 && errors.Is(err, ErrClosed) {
 			// requeue all not yet processed messages in batch slice
@@ -581,13 +378,13 @@ func (s *Subscriber) batchConsume(bh *BatchHandler) (err error) {
 			// There is no way to recover form this state in case an error is returned from the Nack call.
 			nackErr := batch[len(batch)-1].Nack(true, true)
 			if nackErr != nil {
-				s.warnBatchHandler(bh.ConsumerTag, bh.Queue, bh.MaxBatchSize, err, "failed to nack and requeue batch upon shutdown")
+				s.warnBatchHandler(view.ConsumerTag, view.Queue, view.MaxBatchSize, err, "failed to nack and requeue batch upon shutdown")
 			}
 		}
 	}()
 
 	var (
-		timer   = time.NewTimer(bh.FlushTimeout)
+		timer   = time.NewTimer(view.FlushTimeout)
 		drained = false
 	)
 	defer closeTimer(timer, &drained)
@@ -601,7 +398,7 @@ func (s *Subscriber) batchConsume(bh *BatchHandler) (err error) {
 		for {
 
 			// reset the timer
-			resetTimer(timer, bh.FlushTimeout, &drained)
+			resetTimer(timer, view.FlushTimeout, &drained)
 
 			select {
 			case <-s.catchShutdown():
@@ -611,7 +408,7 @@ func (s *Subscriber) batchConsume(bh *BatchHandler) (err error) {
 					return ErrDeliveryClosed
 				}
 				batch = append(batch, msg)
-				if len(batch) == bh.MaxBatchSize {
+				if len(batch) == view.MaxBatchSize {
 					break collectBatch
 				}
 
@@ -634,18 +431,18 @@ func (s *Subscriber) batchConsume(bh *BatchHandler) (err error) {
 			lastDeliveryTag = batch[len(batch)-1].DeliveryTag
 		)
 
-		s.infoBatchHandler(bh.ConsumerTag, bh.Queue, batchSize, "received batch")
-		err = bh.HandlerFunc(batch)
+		s.infoBatchHandler(view.ConsumerTag, view.Queue, batchSize, "received batch")
+		err = view.HandlerFunc(batch)
 		// no acks required
-		if bh.AutoAck {
+		if view.AutoAck {
 			if err != nil {
 				// we cannot really do anything to recover from a processing error in this case
-				s.errorBatchHandler(bh.ConsumerTag, bh.Queue, batchSize, fmt.Errorf("processing failed: dropping batch: %w", err))
+				s.errorBatchHandler(view.ConsumerTag, view.Queue, batchSize, fmt.Errorf("processing failed: dropping batch: %w", err))
 			} else {
-				s.infoBatchHandler(bh.ConsumerTag, bh.Queue, batchSize, "processed batch")
+				s.infoBatchHandler(view.ConsumerTag, view.Queue, batchSize, "processed batch")
 			}
 		} else {
-			poolErr := s.ackBatchPostHandle(bh, lastDeliveryTag, batchSize, session, err)
+			poolErr := s.ackBatchPostHandle(&view, lastDeliveryTag, batchSize, session, err)
 			if poolErr != nil {
 				return poolErr
 			}
@@ -653,7 +450,7 @@ func (s *Subscriber) batchConsume(bh *BatchHandler) (err error) {
 	}
 }
 
-func (s *Subscriber) ackBatchPostHandle(bh *BatchHandler, lastDeliveryTag uint64, currentBatchSize int, session *Session, handlerErr error) (err error) {
+func (s *Subscriber) ackBatchPostHandle(view *BatchHandlerView, lastDeliveryTag uint64, currentBatchSize int, session *Session, handlerErr error) (err error) {
 	var ackErr error
 	// processing failed
 	if handlerErr != nil {
@@ -667,7 +464,7 @@ func (s *Subscriber) ackBatchPostHandle(bh *BatchHandler, lastDeliveryTag uint64
 	// if (n)ack fails, we know that the connection died
 	// potentially before processing already.
 	if ackErr != nil {
-		s.warnBatchHandler(bh.ConsumerTag, bh.Queue, currentBatchSize, ackErr, "batch (n)ack failed")
+		s.warnBatchHandler(view.ConsumerTag, view.Queue, currentBatchSize, ackErr, "batch (n)ack failed")
 		poolErr := session.Recover()
 		if poolErr != nil {
 			// only returns an error upon shutdown
@@ -681,9 +478,9 @@ func (s *Subscriber) ackBatchPostHandle(bh *BatchHandler, lastDeliveryTag uint64
 
 	// (n)acked successfully
 	if handlerErr != nil {
-		s.infoBatchHandler(bh.ConsumerTag, bh.Queue, currentBatchSize, "nacked batch")
+		s.infoBatchHandler(view.ConsumerTag, view.Queue, currentBatchSize, "nacked batch")
 	} else {
-		s.infoBatchHandler(bh.ConsumerTag, bh.Queue, currentBatchSize, "acked batch")
+		s.infoBatchHandler(view.ConsumerTag, view.Queue, currentBatchSize, "acked batch")
 	}
 	// successfully handled message
 	return nil

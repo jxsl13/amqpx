@@ -202,7 +202,7 @@ func TestBatchSubscriber(t *testing.T) {
 
 			batchCount := 0
 			messageCount := 0
-			sub.RegisterBatchHandlerFunc(queueName, batchSize, batchTimeout,
+			sub.RegisterBatchHandlerFunc(queueName,
 				func(msgs []amqp091.Delivery) error {
 					log := logging.NewTestLogger(t)
 					assert.Equal(t, batchSize, len(msgs))
@@ -221,10 +221,12 @@ func TestBatchSubscriber(t *testing.T) {
 					}
 					return nil
 				},
-				pool.ConsumeOptions{
+				pool.WithMaxBatchSize(batchSize),
+				pool.WithBatchFlushTimeout(batchTimeout),
+				pool.WithBatchConsumeOptions(pool.ConsumeOptions{
 					ConsumerTag: fmt.Sprintf("Consumer-%s", queueName),
 					Exclusive:   true,
-				},
+				}),
 			)
 			sub.Start()
 

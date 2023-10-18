@@ -5,7 +5,9 @@ import (
 )
 
 type topologerOption struct {
-	Logger logging.Logger
+	// TransientOnly makes the topologer only use transient sessions for performing topology actions
+	TransientOnly bool
+	Logger        logging.Logger
 }
 
 type TopologerOption func(*topologerOption)
