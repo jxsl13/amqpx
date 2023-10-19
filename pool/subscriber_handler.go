@@ -3,22 +3,25 @@ package pool
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
-	"time"
-)
-
-const (
-	defaultMaxBatchSize = 50
-	defaultFlushTimeout = 5 * time.Second
 )
 
 var (
-	// ErrAlreadyPaused is returned when the user tries to pause an already paused handler.
-	ErrAlreadyPaused = errors.New("trying to pause an already paused handler")
+	// ErrNotStopped is returned by (Batch)Handler.Resume
+	ErrNotStopped = errors.New("cannot resume a not stopped handler")
 
-	// ErrAlreadyRunning is returned when the user tries to resume an already running handler.
-	ErrAlreadyRunning = errors.New("trying to resume an already running handler")
+	// ErrNotRunning is returned by (Batch)Handler.Pause
+	ErrNotRunning = errors.New("cannot pause a not running handler")
 )
+
+const (
+	Stopped  HandlerState = 0
+	Starting HandlerState = 1
+	Running  HandlerState = 2
+)
+
+type HandlerState int
 
 func NewHandler(queue string, hf HandlerFunc, option ...ConsumeOptions) *Handler {
 	if hf == nil {
@@ -40,7 +43,7 @@ func NewHandler(queue string, hf HandlerFunc, option ...ConsumeOptions) *Handler
 		queue:       queue,
 		handlerFunc: hf,
 		consumeOpts: copt,
-		running:     false,
+		state:       Stopped,
 	}
 	return h
 }
@@ -54,14 +57,14 @@ type Handler struct {
 	consumeOpts ConsumeOptions
 
 	session *Session
-	running bool
+	state   HandlerState
 	c       chan struct{}
 }
 
 type HandlerView struct {
 	Queue       string
 	HandlerFunc HandlerFunc
-	IsRunning   bool
+	State       HandlerState
 	ConsumeOptions
 }
 
@@ -69,14 +72,15 @@ func (h *Handler) started(session *Session) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	if h.running {
-		panic("started an already running batch handler")
+	if h.state != Starting {
+		// invalid states: stopped & running
+		panic(fmt.Sprintf("invalid handler state for Handler.started (%v)", h.state))
 	}
 
 	h.session = session
 	h.c = make(chan struct{})
 	close(h.c)
-	h.running = true
+	h.state = Running
 }
 
 // Pause allows to halt the processing of a queue after the processing has been started by the subscriber.
@@ -85,16 +89,16 @@ func (h *Handler) Pause() error {
 	defer h.mu.Unlock()
 
 	defer func() {
-		h.running = false
+		h.state = Stopped
 		h.session = nil
 		h.c = make(chan struct{})
 	}()
 
-	if !h.running {
+	if h.state != Running {
 		if h.consumeOpts.ConsumerTag != "" {
-			return fmt.Errorf("%w: consumer: %s queue: %s", ErrAlreadyPaused, h.consumeOpts.ConsumerTag, h.queue)
+			return fmt.Errorf("%w: consumer: %s queue: %s", ErrNotRunning, h.consumeOpts.ConsumerTag, h.queue)
 		} else {
-			return fmt.Errorf("%w: queue: %s", ErrAlreadyPaused, h.queue)
+			return fmt.Errorf("%w: queue: %s", ErrNotRunning, h.queue)
 		}
 	}
 
@@ -114,11 +118,11 @@ func (h *Handler) Resume() error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	if h.running {
+	if h.state != Stopped {
 		if h.consumeOpts.ConsumerTag != "" {
-			return fmt.Errorf("%w: consumer: %s queue: %s", ErrAlreadyRunning, h.consumeOpts.ConsumerTag, h.queue)
+			return fmt.Errorf("%w: consumer: %s queue: %s", ErrNotStopped, h.consumeOpts.ConsumerTag, h.queue)
 		} else {
-			return fmt.Errorf("%w: queue: %s", ErrAlreadyRunning, h.queue)
+			return fmt.Errorf("%w: queue: %s", ErrNotStopped, h.queue)
 		}
 	}
 
@@ -132,10 +136,10 @@ func (h *Handler) isRunning() <-chan struct{} {
 	return h.c
 }
 
-func (h *Handler) IsRunning() bool {
+func (h *Handler) State() HandlerState {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return h.running
+	return h.state
 }
 
 func (h *Handler) View() HandlerView {
@@ -145,7 +149,7 @@ func (h *Handler) View() HandlerView {
 	return HandlerView{
 		Queue:          h.queue,
 		HandlerFunc:    h.handlerFunc,
-		IsRunning:      h.running,
+		State:          h.state,
 		ConsumeOptions: h.consumeOpts,
 	}
 }
@@ -180,202 +184,31 @@ func (h *Handler) SetConsumeOptions(consumeOpts ConsumeOptions) {
 	h.consumeOpts = consumeOpts
 }
 
-func NewBatchHandler(queue string, hf BatchHandlerFunc, options ...BatchHandlerOption) *BatchHandler {
-	// sane defaults
-	h := &BatchHandler{
-		maxBatchSize: defaultMaxBatchSize,
-		flushTimeout: defaultFlushTimeout,
-		queue:        queue,
-		handlerFunc:  hf,
-		consumeOpts: ConsumeOptions{
-			ConsumerTag: "",
-			AutoAck:     false,
-			Exclusive:   false,
-			NoLocal:     false,
-			NoWait:      false,
-			Args:        nil,
-		},
-		running: false,
+func (s HandlerState) MarshalText() (text []byte, err error) {
+	var result string
+	switch s {
+	case Starting:
+		result = "starting"
+	case Running:
+		result = "running"
+	case Stopped:
+		result = "stopped"
+	default:
+		return nil, fmt.Errorf("invalid state: %d", int(s))
 	}
-
-	for _, opt := range options {
-		opt(h)
-	}
-
-	return h
+	return []byte(result), nil
 }
 
-// BatchHandler is a struct that contains all parameter sneeded i order to register a batch handler function.
-type BatchHandler struct {
-	mu sync.Mutex
-
-	queue       string
-	handlerFunc BatchHandlerFunc
-
-	// When <= 0, will be set to 50
-	// Number of messages a batch may contain at most
-	// before processing is triggered
-	maxBatchSize int
-
-	// FlushTimeout is the duration that is waited for the next message from a queue before
-	// the batch is closed and passed for processing.
-	// This value should be less than 30m (which is the (n)ack timeout of RabbitMQ)
-	// when <= 0, will be set to 5s
-	flushTimeout time.Duration
-	consumeOpts  ConsumeOptions
-
-	session *Session
-	running bool
-	c       chan struct{}
-}
-
-type BatchHandlerView struct {
-	Queue        string
-	HandlerFunc  BatchHandlerFunc
-	MaxBatchSize int
-	FlushTimeout time.Duration
-	IsRunning    bool
-	ConsumeOptions
-}
-
-func (h *BatchHandler) View() BatchHandlerView {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-
-	return BatchHandlerView{
-		Queue:          h.queue,
-		HandlerFunc:    h.handlerFunc,
-		MaxBatchSize:   h.maxBatchSize,
-		FlushTimeout:   h.flushTimeout,
-		ConsumeOptions: h.consumeOpts,
-		IsRunning:      h.running,
-	}
-}
-
-func (h *BatchHandler) Queue() string {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return h.queue
-}
-
-func (h *BatchHandler) SetQueue(queue string) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	h.queue = queue
-}
-
-func (h *BatchHandler) MaxBatchSize() int {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return h.maxBatchSize
-}
-
-func (h *BatchHandler) SetMaxBatchSize(maxBatchSize int) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if maxBatchSize <= 0 {
-		maxBatchSize = defaultMaxBatchSize
-	}
-	h.maxBatchSize = maxBatchSize
-}
-
-func (h *BatchHandler) FlushTimeout() time.Duration {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return h.flushTimeout
-}
-
-func (h *BatchHandler) SetFlushTimeout(flushTimeout time.Duration) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if flushTimeout <= 0 {
-		flushTimeout = defaultFlushTimeout
-	}
-	h.flushTimeout = flushTimeout
-}
-
-func (h *BatchHandler) ConsumeOptions() ConsumeOptions {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return h.consumeOpts
-}
-
-func (h *BatchHandler) SetConsumeOptions(consumeOpts ConsumeOptions) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	h.consumeOpts = consumeOpts
-}
-
-func (h *BatchHandler) SetHandlerFunc(hf BatchHandlerFunc) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	h.handlerFunc = hf
-}
-
-func (h *BatchHandler) started(session *Session) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-
-	if h.running {
-		panic("started an already running batch handler")
-	}
-
-	h.session = session
-	h.c = make(chan struct{})
-	close(h.c)
-	h.running = true
-}
-
-func (h *BatchHandler) Pause() error {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-
-	defer func() {
-		h.running = false
-		h.session = nil
-		h.c = make(chan struct{})
-	}()
-
-	if !h.running {
-		if h.consumeOpts.ConsumerTag != "" {
-			return fmt.Errorf("%w: consumer: %s queue: %s", ErrAlreadyPaused, h.consumeOpts.ConsumerTag, h.queue)
-		} else {
-			return fmt.Errorf("%w: queue: %s", ErrAlreadyPaused, h.queue)
-		}
-	}
-
-	err := h.session.Close()
-	if err != nil {
-		return err
+func (s *HandlerState) UnmarshalText(text []byte) error {
+	switch strings.ToLower(string(text)) {
+	case "stopped":
+		*s = Stopped
+	case "running":
+		*s = Running
+	case "starting":
+		*s = Starting
+	default:
+		return fmt.Errorf("invalid handler state: %s", string(text))
 	}
 	return nil
-}
-
-func (h *BatchHandler) Resume() error {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-
-	if h.running {
-		if h.consumeOpts.ConsumerTag != "" {
-			return fmt.Errorf("%w: consumer: %s queue: %s", ErrAlreadyRunning, h.consumeOpts.ConsumerTag, h.queue)
-		} else {
-			return fmt.Errorf("%w: queue: %s", ErrAlreadyRunning, h.queue)
-		}
-	}
-
-	close(h.c)
-	h.running = true
-	return nil
-}
-
-func (h *BatchHandler) isRunning() <-chan struct{} {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return h.c
-}
-
-func (h *BatchHandler) IsRunning() bool {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return h.running
 }
