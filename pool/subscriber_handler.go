@@ -123,7 +123,6 @@ func (h *Handler) Resume() error {
 	}
 
 	close(h.c)
-	h.running = true
 	return nil
 }
 
