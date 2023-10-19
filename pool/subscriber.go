@@ -104,7 +104,7 @@ type BatchHandlerFunc func([]amqp091.Delivery) error
 // Inflight messages, limited by Channel.Qos will be buffered until received from the returned chan.
 // When the Channel or Connection is closed, all buffered and inflight messages will be dropped.
 // When the consumer identifier tag is cancelled, all inflight messages will be delivered until the returned chan is closed.
-func (s *Subscriber) RegisterHandlerFunc(queue string, hf HandlerFunc, options ...ConsumeOptions) {
+func (s *Subscriber) RegisterHandlerFunc(queue string, hf HandlerFunc, options ...ConsumeOptions) *Handler {
 	option := ConsumeOptions{
 		ConsumerTag: "",
 		AutoAck:     false,
@@ -117,7 +117,9 @@ func (s *Subscriber) RegisterHandlerFunc(queue string, hf HandlerFunc, options .
 		option = options[0]
 	}
 
-	s.RegisterHandler(NewHandler(queue, hf, option))
+	handler := NewHandler(queue, hf, option)
+	s.RegisterHandler(handler)
+	return handler
 }
 
 func (s *Subscriber) RegisterHandler(handler *Handler) {
@@ -139,8 +141,10 @@ func (s *Subscriber) RegisterHandler(handler *Handler) {
 // and then you'd have to wait indefinitly for those 20 messages to be processed, as it might take a long time for another message to arrive in the queue.
 // This is where your flushTimeout comes into play. In order to wait at most for the period of flushTimeout until a new message arrives
 // before processing the batch in your handler function.
-func (s *Subscriber) RegisterBatchHandlerFunc(queue string, hf BatchHandlerFunc, options ...BatchHandlerOption) {
-	s.RegisterBatchHandler(NewBatchHandler(queue, hf, options...))
+func (s *Subscriber) RegisterBatchHandlerFunc(queue string, hf BatchHandlerFunc, options ...BatchHandlerOption) *BatchHandler {
+	handler := NewBatchHandler(queue, hf, options...)
+	s.RegisterBatchHandler(handler)
+	return handler
 }
 
 func (s *Subscriber) RegisterBatchHandler(handler *BatchHandler) {
@@ -182,14 +186,16 @@ func (s *Subscriber) Start() {
 	}()
 
 	s.debugSimple(fmt.Sprintf("starting %d handler routine(s)", len(s.handlers)))
+	s.wg.Add(len(s.handlers))
 	for _, h := range s.handlers {
-		s.wg.Add(1)
+		h.starting()
 		go s.consumer(h, &s.wg)
 	}
 
 	s.debugSimple(fmt.Sprintf("starting %d batch handler routine(s)", len(s.batchHandlers)))
+	s.wg.Add(len(s.batchHandlers))
 	for _, bh := range s.batchHandlers {
-		s.wg.Add(1)
+		bh.starting()
 		go s.batchConsumer(bh, &s.wg)
 	}
 }

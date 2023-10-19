@@ -83,6 +83,15 @@ func (h *BatchHandler) View() BatchHandlerView {
 	}
 }
 
+func (h *BatchHandler) starting() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.state != Stopped {
+		panic(fmt.Sprintf("invalid state transition from %v to starting in BatchHandler.starting", h.state))
+	}
+	h.state = Starting
+}
+
 func (h *BatchHandler) started(session *Session) {
 	h.mu.Lock()
 	defer h.mu.Unlock()

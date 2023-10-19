@@ -68,6 +68,15 @@ type HandlerView struct {
 	ConsumeOptions
 }
 
+func (h *Handler) starting() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.state != Stopped {
+		panic(fmt.Sprintf("invalid state transition from %v to starting in Handler.starting", h.state))
+	}
+	h.state = Starting
+}
+
 func (h *Handler) started(session *Session) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
