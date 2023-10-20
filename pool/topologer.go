@@ -4,7 +4,6 @@ import (
 	"context"
 
 	"github.com/jxsl13/amqpx/logging"
-	"github.com/rabbitmq/amqp091-go"
 )
 
 type Topologer struct {
@@ -56,7 +55,7 @@ func (t *Topologer) getSession() (*Session, error) {
 // how messages are routed through it. Once an exchange is declared, its type
 // cannot be changed.  The common types are "direct", "fanout", "topic" and
 // "headers".
-func (t *Topologer) ExchangeDeclare(name string, kind string, option ...ExchangeDeclareOptions) (err error) {
+func (t *Topologer) ExchangeDeclare(name string, kind ExchangeKind, option ...ExchangeDeclareOptions) (err error) {
 	s, err := t.getSession()
 	if err != nil {
 		return err
@@ -69,6 +68,26 @@ func (t *Topologer) ExchangeDeclare(name string, kind string, option ...Exchange
 		}
 	}()
 	return s.ExchangeDeclare(name, kind, option...)
+}
+
+// ExchangeDeclarePassive is functionally and parametrically equivalent to
+// ExchangeDeclare, except that it sets the "passive" attribute to true. A passive
+// exchange is assumed by RabbitMQ to already exist, and attempting to connect to a
+// non-existent exchange will cause RabbitMQ to throw an exception. This function
+// can be used to detect the existence of an exchange.
+func (t *Topologer) ExchangeDeclarePassive(name string, kind ExchangeKind, option ...ExchangeDeclareOptions) (err error) {
+	s, err := t.getSession()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			t.pool.ReturnSession(s, true)
+		} else {
+			t.pool.ReturnSession(s, false)
+		}
+	}()
+	return s.ExchangeDeclarePassive(name, kind, option...)
 }
 
 // ExchangeDelete removes the named exchange from the server. When an exchange is
@@ -108,10 +127,10 @@ func (t *Topologer) ExchangeDelete(name string, option ...ExchangeDeleteOptions)
 //
 // The queue name may be empty, in which case the server will generate a unique name
 // which will be returned in the Name field of Queue struct.
-func (t *Topologer) QueueDeclare(name string, option ...QueueDeclareOptions) (err error) {
+func (t *Topologer) QueueDeclare(name string, option ...QueueDeclareOptions) (queue Queue, err error) {
 	s, err := t.getSession()
 	if err != nil {
-		return err
+		return Queue{}, err
 	}
 	defer func() {
 		if err != nil {
@@ -121,6 +140,42 @@ func (t *Topologer) QueueDeclare(name string, option ...QueueDeclareOptions) (er
 		}
 	}()
 	return s.QueueDeclare(name, option...)
+}
+
+// QueueDeclarePassive is functionally and parametrically equivalent to QueueDeclare, except that it sets the "passive" attribute to true.
+// A passive queue is assumed by RabbitMQ to already exist, and attempting to connect to a non-existent queue will cause RabbitMQ to throw an exception.
+// This function can be used to test for the existence of a queue.
+func (t *Topologer) QueueDeclarePassive(name string, option ...QueueDeclareOptions) (queue Queue, err error) {
+	s, err := t.getSession()
+	if err != nil {
+		return Queue{}, err
+	}
+	defer func() {
+		if err != nil {
+			t.pool.ReturnSession(s, true)
+		} else {
+			t.pool.ReturnSession(s, false)
+		}
+	}()
+	return s.QueueDeclarePassive(name, option...)
+}
+
+// QueuePurge removes all messages from the named queue which are not waiting to be acknowledged.
+// Messages that have been delivered but have not yet been acknowledged will not be removed.
+// When successful, returns the number of messages purged.
+func (t *Topologer) QueuePurge(name string, options ...QueuePurgeOptions) (int, error) {
+	s, err := t.getSession()
+	if err != nil {
+		return 0, err
+	}
+	defer func() {
+		if err != nil {
+			t.pool.ReturnSession(s, true)
+		} else {
+			t.pool.ReturnSession(s, false)
+		}
+	}()
+	return s.QueuePurge(name, options...)
 }
 
 // QueueDelete removes the queue from the server including all bindings then
@@ -192,7 +247,7 @@ func (t *Topologer) QueueBind(name string, routingKey string, exchange string, o
 
 // It is possible to send and empty string for the exchange name which means to
 // unbind the queue from the default exchange.
-func (t *Topologer) QueueUnbind(name string, routingKey string, exchange string, args ...amqp091.Table) (err error) {
+func (t *Topologer) QueueUnbind(name string, routingKey string, exchange string, args ...Table) (err error) {
 	s, err := t.getSession()
 	if err != nil {
 		return err

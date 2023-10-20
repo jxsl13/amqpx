@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/jxsl13/amqpx/logging"
-	"github.com/rabbitmq/amqp091-go"
 )
 
 type Subscriber struct {
@@ -80,10 +79,10 @@ func NewSubscriber(p *Pool, options ...SubscriberOption) *Subscriber {
 }
 
 // HandlerFunc is basically a handler for incoming messages/events.
-type HandlerFunc func(amqp091.Delivery) error
+type HandlerFunc func(Delivery) error
 
 // BatchHandlerFunc is a handler for incoming batches of messages/events
-type BatchHandlerFunc func([]amqp091.Delivery) error
+type BatchHandlerFunc func([]Delivery) error
 
 // RegisterHandlerFunc registers a consumer function that starts a consumer upon subscriber startup.
 // The consumer is identified by a string that is unique and scoped for all consumers on this channel.
@@ -104,7 +103,7 @@ type BatchHandlerFunc func([]amqp091.Delivery) error
 // Inflight messages, limited by Channel.Qos will be buffered until received from the returned chan.
 // When the Channel or Connection is closed, all buffered and inflight messages will be dropped.
 // When the consumer identifier tag is cancelled, all inflight messages will be delivered until the returned chan is closed.
-func (s *Subscriber) RegisterHandlerFunc(queue string, hf HandlerFunc, options ...ConsumeOptions) *Handler {
+func (s *Subscriber) RegisterHandlerFunc(ctx context.Context, queue string, hf HandlerFunc, options ...ConsumeOptions) *Handler {
 	option := ConsumeOptions{
 		ConsumerTag: "",
 		AutoAck:     false,
@@ -117,7 +116,7 @@ func (s *Subscriber) RegisterHandlerFunc(queue string, hf HandlerFunc, options .
 		option = options[0]
 	}
 
-	handler := NewHandler(queue, hf, option)
+	handler := NewHandler(ctx, queue, hf, option)
 	s.RegisterHandler(handler)
 	return handler
 }
@@ -141,8 +140,8 @@ func (s *Subscriber) RegisterHandler(handler *Handler) {
 // and then you'd have to wait indefinitly for those 20 messages to be processed, as it might take a long time for another message to arrive in the queue.
 // This is where your flushTimeout comes into play. In order to wait at most for the period of flushTimeout until a new message arrives
 // before processing the batch in your handler function.
-func (s *Subscriber) RegisterBatchHandlerFunc(queue string, hf BatchHandlerFunc, options ...BatchHandlerOption) *BatchHandler {
-	handler := NewBatchHandler(queue, hf, options...)
+func (s *Subscriber) RegisterBatchHandlerFunc(ctx context.Context, queue string, hf BatchHandlerFunc, options ...BatchHandlerOption) *BatchHandler {
+	handler := NewBatchHandler(ctx, queue, hf, options...)
 	s.RegisterBatchHandler(handler)
 	return handler
 }
@@ -188,14 +187,12 @@ func (s *Subscriber) Start() {
 	s.debugSimple(fmt.Sprintf("starting %d handler routine(s)", len(s.handlers)))
 	s.wg.Add(len(s.handlers))
 	for _, h := range s.handlers {
-		h.starting()
 		go s.consumer(h, &s.wg)
 	}
 
 	s.debugSimple(fmt.Sprintf("starting %d batch handler routine(s)", len(s.batchHandlers)))
 	s.wg.Add(len(s.batchHandlers))
 	for _, bh := range s.batchHandlers {
-		bh.starting()
 		go s.batchConsumer(bh, &s.wg)
 	}
 }
@@ -205,41 +202,40 @@ func (s *Subscriber) consumer(h *Handler, wg *sync.WaitGroup) {
 
 	var err error
 	for {
-		err = s.consume(h)
-		if errors.Is(err, ErrClosed) {
-			return
-		}
+		// immutable view for every new loop iteration
+		hv := h.view()
 		select {
 		case <-s.catchShutdown():
 			return
-		case <-h.isRunning():
-			// pause logic
-			continue
+		case <-hv.resumingCtx.Done():
+			err = s.consume(hv)
+			if errors.Is(err, ErrClosed) {
+				return
+			}
 		}
 	}
 }
 
-func (s *Subscriber) batchConsumer(bh *BatchHandler, wg *sync.WaitGroup) {
+func (s *Subscriber) batchConsumer(h *BatchHandler, wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	var err error
 	for {
-		err = s.batchConsume(bh)
-		if errors.Is(err, ErrClosed) {
-			return
-		}
+		// immutable view for every new loop iteration
+		hv := h.view()
 		select {
 		case <-s.catchShutdown():
 			return
-		case <-bh.isRunning():
-			// pause logic
-			continue
+		case <-hv.resumingCtx.Done():
+			err = s.batchConsume(hv)
+			if errors.Is(err, ErrClosed) {
+				return
+			}
 		}
 	}
 }
 
-func (s *Subscriber) consume(h *Handler) (err error) {
-	view := h.View()
+func (s *Subscriber) consume(view handlerView) (err error) {
 
 	s.debugConsumer(view.ConsumerTag, "starting consumer...")
 
@@ -257,14 +253,22 @@ func (s *Subscriber) consume(h *Handler) (err error) {
 			s.pool.ReturnSession(session, false)
 			s.infoConsumer(view.ConsumerTag, "closed")
 		} else {
-			// actual error
-			s.pool.ReturnSession(session, true)
-			s.warnConsumer(view.ConsumerTag, err, "closed unexpectedly")
+			select {
+			case <-view.pausingCtx.Done():
+				// expected closing due to context cancelation
+				s.pool.ReturnSession(session, true)
+				s.infoConsumer(view.ConsumerTag, "paused")
+			default:
+				// actual error
+				s.pool.ReturnSession(session, true)
+				s.warnConsumer(view.ConsumerTag, err, "closed unexpectedly")
+			}
 		}
 	}()
 
 	// got a working session
-	delivery, err := session.Consume(
+	delivery, err := session.ConsumeWithContext(
+		view.pausingCtx,
 		view.Queue,
 		view.ConsumeOptions,
 	)
@@ -272,7 +276,7 @@ func (s *Subscriber) consume(h *Handler) (err error) {
 		return err
 	}
 
-	h.started(session)
+	view.resumed()
 	s.infoConsumer(view.ConsumerTag, "started")
 	for {
 		select {
@@ -293,7 +297,7 @@ func (s *Subscriber) consume(h *Handler) (err error) {
 					s.infoHandler(view.ConsumerTag, msg.Exchange, msg.RoutingKey, view.Queue, "processed message")
 				}
 			} else {
-				poolErr := s.ackPostHandle(&view, msg.DeliveryTag, msg.Exchange, msg.RoutingKey, session, err)
+				poolErr := s.ackPostHandle(view, msg.DeliveryTag, msg.Exchange, msg.RoutingKey, session, err)
 				if poolErr != nil {
 					return poolErr
 				}
@@ -303,7 +307,7 @@ func (s *Subscriber) consume(h *Handler) (err error) {
 }
 
 // (n)ack delivery and signal that message was processed by the service
-func (s *Subscriber) ackPostHandle(view *HandlerView, deliveryTag uint64, exchange, routingKey string, session *Session, handlerErr error) (err error) {
+func (s *Subscriber) ackPostHandle(view handlerView, deliveryTag uint64, exchange, routingKey string, session *Session, handlerErr error) (err error) {
 	var ackErr error
 	if handlerErr != nil {
 		// requeue message if possible
@@ -337,8 +341,7 @@ func (s *Subscriber) ackPostHandle(view *HandlerView, deliveryTag uint64, exchan
 	return nil
 }
 
-func (s *Subscriber) batchConsume(bh *BatchHandler) (err error) {
-	view := bh.View()
+func (s *Subscriber) batchConsume(view batchHandlerView) (err error) {
 	s.debugConsumer(view.ConsumerTag, "starting batch consumer...")
 
 	session, err := s.pool.GetSession()
@@ -355,14 +358,22 @@ func (s *Subscriber) batchConsume(bh *BatchHandler) (err error) {
 			s.pool.ReturnSession(session, false)
 			s.infoConsumer(view.ConsumerTag, "closed")
 		} else {
-			// actual error
-			s.pool.ReturnSession(session, true)
-			s.warnConsumer(view.ConsumerTag, err, "closed unexpectedly")
+			select {
+			case <-view.pausingCtx.Done():
+				// expected closing due to context cancelation
+				s.pool.ReturnSession(session, true)
+				s.infoConsumer(view.ConsumerTag, "paused")
+			default:
+				// actual error
+				s.pool.ReturnSession(session, true)
+				s.warnConsumer(view.ConsumerTag, err, "closed unexpectedly")
+			}
 		}
 	}()
 
 	// got a working session
-	delivery, err := session.Consume(
+	delivery, err := session.ConsumeWithContext(
+		view.pausingCtx,
 		view.Queue,
 		view.ConsumeOptions,
 	)
@@ -370,11 +381,11 @@ func (s *Subscriber) batchConsume(bh *BatchHandler) (err error) {
 		return err
 	}
 
-	bh.started(session)
+	view.resumed()
 	s.infoConsumer(view.ConsumerTag, "started")
 
 	// preallocate memory for batch
-	batch := make([]amqp091.Delivery, 0, view.MaxBatchSize)
+	batch := make([]Delivery, 0, maxi(1, view.MaxBatchSize))
 	defer func() {
 		if len(batch) > 0 && errors.Is(err, ErrClosed) {
 			// requeue all not yet processed messages in batch slice
@@ -448,7 +459,7 @@ func (s *Subscriber) batchConsume(bh *BatchHandler) (err error) {
 				s.infoBatchHandler(view.ConsumerTag, view.Queue, batchSize, "processed batch")
 			}
 		} else {
-			poolErr := s.ackBatchPostHandle(&view, lastDeliveryTag, batchSize, session, err)
+			poolErr := s.ackBatchPostHandle(view, lastDeliveryTag, batchSize, session, err)
 			if poolErr != nil {
 				return poolErr
 			}
@@ -456,7 +467,7 @@ func (s *Subscriber) batchConsume(bh *BatchHandler) (err error) {
 	}
 }
 
-func (s *Subscriber) ackBatchPostHandle(view *BatchHandlerView, lastDeliveryTag uint64, currentBatchSize int, session *Session, handlerErr error) (err error) {
+func (s *Subscriber) ackBatchPostHandle(view batchHandlerView, lastDeliveryTag uint64, currentBatchSize int, session *Session, handlerErr error) (err error) {
 	var ackErr error
 	// processing failed
 	if handlerErr != nil {

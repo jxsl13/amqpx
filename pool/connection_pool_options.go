@@ -106,12 +106,21 @@ func ConnectionPoolWithTLS(config *tls.Config) ConnectionPoolOption {
 type BackoffFunc func(retry int) (sleep time.Duration)
 
 func newDefaultBackoffPolicy(min, max time.Duration) BackoffFunc {
+	r := rand.New(rand.NewSource(time.Now().Unix()))
+
+	factor := time.Second
+	for _, scale := range []time.Duration{time.Hour, time.Minute, time.Second, time.Millisecond, time.Microsecond, time.Nanosecond} {
+		d := min.Truncate(scale)
+		if d > 0 {
+			factor = scale
+			break
+		}
+	}
 
 	return func(retry int) (sleep time.Duration) {
-		r := rand.New(rand.NewSource(time.Now().Unix()))
 
-		wait := 2 << maxi(0, mini(32, retry)) * time.Second
-		jitter := time.Duration(r.Int63n(int64(wait) / 5)) // max 20% jitter
+		wait := 2 << maxi(0, mini(32, retry)) * factor
+		jitter := time.Duration(r.Int63n(int64(maxi(1, int(wait)/5)))) // max 20% jitter
 		wait = min + wait + jitter
 		if wait > max {
 			wait = max

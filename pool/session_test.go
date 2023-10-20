@@ -43,7 +43,7 @@ func TestNewSession(t *testing.T) {
 			}()
 
 			queueName := fmt.Sprintf("TestNewSession-Queue-%d", id)
-			err = s.QueueDeclare(queueName)
+			_, err = s.QueueDeclare(queueName)
 			if err != nil {
 				assert.NoError(t, err)
 				return
@@ -208,7 +208,7 @@ func TestNewSessionDisconnect(t *testing.T) {
 			started2()
 
 			queueName := fmt.Sprintf("TestNewSession-Queue-%d", id)
-			err = s.QueueDeclare(queueName)
+			_, err = s.QueueDeclare(queueName)
 			if err != nil {
 				assert.NoError(t, err)
 				return

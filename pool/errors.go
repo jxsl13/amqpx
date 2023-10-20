@@ -1,6 +1,7 @@
 package pool
 
 import (
+	"context"
 	"errors"
 
 	"github.com/rabbitmq/amqp091-go"
@@ -16,6 +17,10 @@ var (
 	errInvalidPoolSize          = errors.New("invalid pool size")
 	ErrPoolInitializationFailed = errors.New("pool initialization failed")
 	ErrClosed                   = errors.New("closed")
+
+	// ErrNotFound is returned by ExchangeDeclarePassive or QueueDeclarePassive in the case that
+	// the queue was not found.
+	ErrNotFound = errors.New("not found")
 )
 
 var (
@@ -39,8 +44,7 @@ func recoverable(err error) bool {
 
 	// invalid usage of the amqp protocol is not recoverable
 	ae := &amqp091.Error{}
-	switch {
-	case errors.As(err, &ae):
+	if errors.As(err, &ae) {
 		switch ae.Code {
 		case notImplemented:
 			return false
@@ -56,6 +60,12 @@ func recoverable(err error) bool {
 			return !ae.Recover
 		}
 	}
+
+	if errors.Is(err, context.Canceled) {
+		return false
+	}
+
+	// TODO: errors.Is(err, context.DeadlineExceeded) also needed?
 
 	// every other unknown error is recoverable
 	return true

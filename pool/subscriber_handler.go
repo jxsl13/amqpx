@@ -1,29 +1,24 @@
 package pool
 
 import (
+	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"sync"
 )
 
 var (
-	// ErrNotStopped is returned by (Batch)Handler.Resume
-	ErrNotStopped = errors.New("cannot resume a not stopped handler")
+	// ErrPauseFailed is returned by (Batch)Handler.Pause in case that the passed context is canceled
+	ErrPauseFailed = errors.New("failed to pause handler")
 
-	// ErrNotRunning is returned by (Batch)Handler.Pause
-	ErrNotRunning = errors.New("cannot pause a not running handler")
+	// ErrResumeFailed is returned by (Batch)Handler.Resume in case that the passed context is canceled
+	ErrResumeFailed = errors.New("failed to resume handler")
 )
 
-const (
-	Stopped  HandlerState = 0
-	Starting HandlerState = 1
-	Running  HandlerState = 2
-)
-
-type HandlerState int
-
-func NewHandler(queue string, hf HandlerFunc, option ...ConsumeOptions) *Handler {
+// NewHandler creates a new handler which is primarily a combination of your passed
+// handler function and the queue name from which the handler fetches messages and processes those.
+// Additionally, the handler allows you to pause and resume processing from the provided queue.
+func NewHandler(ctx context.Context, queue string, hf HandlerFunc, option ...ConsumeOptions) *Handler {
 	if hf == nil {
 		panic("handlerFunc must not be nil")
 	}
@@ -40,15 +35,18 @@ func NewHandler(queue string, hf HandlerFunc, option ...ConsumeOptions) *Handler
 	}
 
 	h := &Handler{
+		parentCtx:   ctx,
 		queue:       queue,
 		handlerFunc: hf,
 		consumeOpts: copt,
-		state:       Stopped,
 	}
+	// initialize ctx & cancel
+	h.reset()
 	return h
 }
 
-// Handler is a struct that contains all parameters needed in order to register a handler function.
+// Handler is a struct that contains all parameters needed in order to register a handler function
+// to the provided queue. Additionally, the handler allows you to pause and resume processing or messages.
 type Handler struct {
 	mu sync.Mutex
 
@@ -56,99 +54,94 @@ type Handler struct {
 	handlerFunc HandlerFunc
 	consumeOpts ConsumeOptions
 
-	session *Session
-	state   HandlerState
-	c       chan struct{}
+	// untouched throughout the object's lifetime
+	parentCtx context.Context
+
+	// canceled upon pausing
+	pausingCtx context.Context
+	pause      context.CancelFunc
+
+	// canceled upon resuming
+	resumingCtx context.Context
+	resume      context.CancelFunc
+
+	// back channel to handler
+	pausedCtx context.Context
+	// called from consumer
+	pausedCancel context.CancelFunc
+
+	// back channel to handler
+	resumedCtx context.Context
+	// called from consumer
+	resumedCancel context.CancelFunc
 }
 
-type HandlerView struct {
-	Queue       string
-	HandlerFunc HandlerFunc
-	State       HandlerState
-	ConsumeOptions
-}
-
-func (h *Handler) starting() {
+// reset creates the initial state of the object
+func (h *Handler) reset() {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if h.state != Stopped {
-		panic(fmt.Sprintf("invalid state transition from %v to starting in Handler.starting", h.state))
+	h.pausingCtx, h.pause = context.WithCancel(h.parentCtx)
+	h.pausedCtx, h.pausedCancel = context.WithCancel(h.parentCtx)
+
+	h.resumedCtx, h.resumedCancel = context.WithCancel(h.parentCtx)
+
+	h.resumingCtx, h.resume = context.WithCancel(h.parentCtx)
+	h.resume() // only the resume channel should be closed initially
+
+	select {
+	case <-h.parentCtx.Done():
+		return
+	case <-h.resumingCtx.Done():
+		break
 	}
-	h.state = Starting
-}
-
-func (h *Handler) started(session *Session) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-
-	if h.state != Starting {
-		// invalid states: stopped & running
-		panic(fmt.Sprintf("invalid handler state for Handler.started (%v)", h.state))
-	}
-
-	h.session = session
-	h.c = make(chan struct{})
-	close(h.c)
-	h.state = Running
 }
 
 // Pause allows to halt the processing of a queue after the processing has been started by the subscriber.
-func (h *Handler) Pause() error {
+func (h *Handler) Pause(ctx context.Context) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	h.resumingCtx, h.resume = context.WithCancel(h.parentCtx)
+	h.resumedCtx, h.resumedCancel = context.WithCancel(h.parentCtx)
+	h.pause() // must be called last
 
-	defer func() {
-		h.state = Stopped
-		h.session = nil
-		h.c = make(chan struct{})
-	}()
-
-	if h.state != Running {
-		if h.consumeOpts.ConsumerTag != "" {
-			return fmt.Errorf("%w: consumer: %s queue: %s", ErrNotRunning, h.consumeOpts.ConsumerTag, h.queue)
-		} else {
-			return fmt.Errorf("%w: queue: %s", ErrNotRunning, h.queue)
-		}
+	select {
+	case <-ctx.Done():
+		return fmt.Errorf("%w: queue: %s: %v", ErrPauseFailed, h.queue, ctx.Err())
+	case <-h.pausedCtx.Done():
+		return nil
 	}
-
-	if h.session == nil {
-		panic("handler session is nil")
-	}
-
-	err := h.session.Close()
-	if err != nil {
-		return err
-	}
-	return nil
 }
 
 // Resume allows to continue the processing of a queue after it has been paused using Pause
-func (h *Handler) Resume() error {
+func (h *Handler) Resume(ctx context.Context) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	h.pausingCtx, h.pause = context.WithCancel(h.parentCtx)
+	h.pausedCtx, h.pausedCancel = context.WithCancel(h.parentCtx)
 
-	if h.state != Stopped {
-		if h.consumeOpts.ConsumerTag != "" {
-			return fmt.Errorf("%w: consumer: %s queue: %s", ErrNotStopped, h.consumeOpts.ConsumerTag, h.queue)
-		} else {
-			return fmt.Errorf("%w: queue: %s", ErrNotStopped, h.queue)
-		}
+	h.resume() // must be calle dlast
+
+	select {
+	case <-ctx.Done():
+		return fmt.Errorf("%w: queue: %s: %v", ErrResumeFailed, h.queue, ctx.Err())
+	case <-h.resumedCtx.Done():
+		return nil
 	}
-
-	close(h.c)
-	return nil
 }
 
-func (h *Handler) isRunning() <-chan struct{} {
+func (h *Handler) view() handlerView {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return h.c
-}
 
-func (h *Handler) State() HandlerState {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return h.state
+	return handlerView{
+		pausingCtx:     h.pausingCtx,    // front channel handler -> consumer
+		paused:         h.pausedCancel,  // back channel consumer -> handler
+		resumingCtx:    h.resumedCtx,    // front channel handler -> consumer
+		resumed:        h.resumedCancel, // back channel consumer-> handler
+		Queue:          h.queue,
+		HandlerFunc:    h.handlerFunc,
+		ConsumeOptions: h.consumeOpts,
+	}
 }
 
 func (h *Handler) View() HandlerView {
@@ -158,7 +151,6 @@ func (h *Handler) View() HandlerView {
 	return HandlerView{
 		Queue:          h.queue,
 		HandlerFunc:    h.handlerFunc,
-		State:          h.state,
 		ConsumeOptions: h.consumeOpts,
 	}
 }
@@ -193,31 +185,24 @@ func (h *Handler) SetConsumeOptions(consumeOpts ConsumeOptions) {
 	h.consumeOpts = consumeOpts
 }
 
-func (s HandlerState) MarshalText() (text []byte, err error) {
-	var result string
-	switch s {
-	case Starting:
-		result = "starting"
-	case Running:
-		result = "running"
-	case Stopped:
-		result = "stopped"
-	default:
-		return nil, fmt.Errorf("invalid state: %d", int(s))
-	}
-	return []byte(result), nil
+// TODO: clean close
+func (h *Handler) close() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	closeCtx(h.pausingCtx, h.pause)
+	closeCtx(h.pausedCtx, h.pausedCancel)
+
+	closeCtx(h.resumingCtx, h.resume)
+	closeCtx(h.resumedCtx, h.resumedCancel)
 }
 
-func (s *HandlerState) UnmarshalText(text []byte) error {
-	switch strings.ToLower(string(text)) {
-	case "stopped":
-		*s = Stopped
-	case "running":
-		*s = Running
-	case "starting":
-		*s = Starting
+func closeCtx(ctx context.Context, cancel context.CancelFunc) {
+	select {
+	case <-ctx.Done():
+		// already canceled
+		return
 	default:
-		return fmt.Errorf("invalid handler state: %s", string(text))
+		cancel()
 	}
-	return nil
 }

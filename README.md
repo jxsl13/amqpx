@@ -37,6 +37,7 @@ import (
 	"os/signal"
 
 	"github.com/jxsl13/amqpx"
+	"github.com/jxsl13/amqpx/pool"
 	"github.com/jxsl13/amqpx/logging"
 )
 
@@ -44,21 +45,21 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background())
 	defer cancel()
 
-	amqpx.RegisterTopologyCreator(func(t *amqpx.Topologer) error {
+	amqpx.RegisterTopologyCreator(func(t *pool.Topologer) error {
 		// error handling omitted for brevity
 		t.ExchangeDeclare("example-exchange", "topic") // durable exchange by default
 		t.QueueDeclare("example-queue")                // durable quorum queue by default
 		t.QueueBind("example-queue", "route.name.v1.event", "example-exchange")
 		return nil
 	})
-	amqpx.RegisterTopologyDeleter(func(t *amqpx.Topologer) error {
+	amqpx.RegisterTopologyDeleter(func(t *pool.Topologer) error {
 		// error handling omitted for brevity
 		t.QueueDelete("example-queue")
 		t.ExchangeDelete("example-exchange")
 		return nil
 	})
 
-	amqpx.RegisterHandler("example-queue", func(msg amqpx.Delivery) error {
+	amqpx.RegisterHandler("example-queue", func(msg pool.Delivery) error {
 		fmt.Println("received message:", string(msg.Body))
 		fmt.Println("canceling context")
 		cancel()
@@ -73,7 +74,7 @@ func main() {
 	)
 	defer amqpx.Close()
 
-	amqpx.Publish("example-exchange", "route.name.v1.event", amqpx.Publishing{
+	amqpx.Publish("example-exchange", "route.name.v1.event", pool.Publishing{
 		ContentType: "application/json",
 		Body:        []byte("my test event"),
 	})
@@ -95,6 +96,7 @@ import (
 	"os/signal"
 
 	"github.com/jxsl13/amqpx"
+	"github.com/jxsl13/amqpx/pool"
 	"github.com/jxsl13/amqpx/logging"
 )
 
@@ -113,18 +115,18 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background())
 	defer cancel()
 
-	amqpx.RegisterTopologyCreator(func(t *amqpx.Topologer) error {
+	amqpx.RegisterTopologyCreator(func(t *pool.Topologer) error {
 		// error handling omitted for brevity
 
 		t.ExchangeDeclare("example-exchange", "topic",
-			amqpx.ExchangeDeclareOptions{
+			pool.ExchangeDeclareOptions{
 				Durable: true,
 			},
 		)
 		t.QueueDeclare("example-queue",
-			amqpx.QueueDeclareOptions{
+			pool.QueueDeclareOptions{
 				Durable: true,
-				Args:    amqpx.QuorumQueue,
+				Args:    pool.QuorumQueue,
 			},
 		)
 		t.QueueBind("example-queue", "route.name.v1.event", "example-exchange")
@@ -139,7 +141,7 @@ func main() {
 
 	amqpx.RegisterHandler("example-queue",
 		ExampleConsumer(cancel),
-		amqpx.ConsumeOptions{
+		pool.ConsumeOptions{
 			ConsumerTag: "example-queue-cunsumer",
 			Exclusive:   true,
 		},

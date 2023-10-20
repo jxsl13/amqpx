@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/jxsl13/amqpx/logging"
-	"github.com/rabbitmq/amqp091-go"
 )
 
 type Publisher struct {
@@ -68,6 +67,8 @@ func NewPublisher(p *Pool, options ...PublisherOption) *Publisher {
 	return pub
 }
 
+// Publish a message to a specific exchange with a given routingKey.
+// You may set exchange to "" and routingKey to your queue name in order to publish directly to a queue.
 func (p *Publisher) Publish(exchange string, routingKey string, msg Publishing) error {
 
 	for {
@@ -128,10 +129,10 @@ func (p *Publisher) publish(exchange string, routingKey string, msg Publishing) 
 }
 
 // Get is only supposed to be used for testing, do not use get for polling any broker queues.
-func (p *Publisher) Get(queue string, autoAck bool) (msg *amqp091.Delivery, ok bool, err error) {
+func (p *Publisher) Get(queue string, autoAck bool) (msg Delivery, ok bool, err error) {
 	s, err := p.pool.GetSession()
 	if err != nil && errors.Is(err, ErrClosed) {
-		return nil, false, err
+		return Delivery{}, false, err
 	}
 	defer func() {
 		// return session

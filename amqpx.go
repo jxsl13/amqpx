@@ -1,12 +1,12 @@
 package amqpx
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"sync"
 
 	"github.com/jxsl13/amqpx/pool"
-	"github.com/rabbitmq/amqp091-go"
 )
 
 var (
@@ -15,40 +15,7 @@ var (
 )
 
 type (
-	Table = amqp091.Table
-
-	Topologer    = pool.Topologer
-	TopologyFunc func(*Topologer) error
-
-	Delivery         = amqp091.Delivery
-	HandlerFunc      = func(Delivery) error
-	BatchHandlerFunc = func([]Delivery) error
-
-	ConsumeOptions = pool.ConsumeOptions
-	Publishing     = pool.Publishing
-
-	ExchangeDeclareOptions = pool.ExchangeDeclareOptions
-	ExchangeDeleteOptions  = pool.ExchangeDeleteOptions
-	ExchangeBindOptions    = pool.ExchangeBindOptions
-	ExchangeUnbindOptions  = pool.ExchangeUnbindOptions
-
-	QueueDeclareOptions = pool.QueueDeclareOptions
-	QueueDeleteOptions  = pool.QueueDeleteOptions
-	QueueBindOptions    = pool.QueueBindOptions
-
-	// Function pointer alias
-	BatchHandlerOption = pool.BatchHandlerOption
-)
-
-var (
-	// QuorumQueue is the argument you need to pass in order to create a quorum queue.
-	QuorumQueue = pool.QuorumQueue
-)
-
-const (
-	// DeadLetterExchangeKey can be used in order to create a dead letter exchange
-	// https://www.rabbitmq.com/dlx.html
-	DeadLetterExchangeKey = "x-dead-letter-exchange"
+	TopologyFunc func(*pool.Topologer) error
 )
 
 type AMQPX struct {
@@ -122,16 +89,16 @@ func (a *AMQPX) RegisterTopologyDeleter(finalizer TopologyFunc) {
 
 // RegisterHandler registers a handler function for a specific queue.
 // consumer can be set to a unique consumer name (if left empty, a unique name will be generated)
-func (a *AMQPX) RegisterHandler(queue string, handlerFunc HandlerFunc, option ...ConsumeOptions) *pool.Handler {
+func (a *AMQPX) RegisterHandler(ctx context.Context, queue string, handlerFunc pool.HandlerFunc, option ...pool.ConsumeOptions) *pool.Handler {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	o := ConsumeOptions{}
+	o := pool.ConsumeOptions{}
 	if len(option) > 0 {
 		o = option[0]
 	}
 
-	handler := pool.NewHandler(queue, handlerFunc, o)
+	handler := pool.NewHandler(ctx, queue, handlerFunc, o)
 
 	a.handlers = append(a.handlers, handler)
 	return handler
@@ -139,7 +106,7 @@ func (a *AMQPX) RegisterHandler(queue string, handlerFunc HandlerFunc, option ..
 
 // RegisterBatchHandler registers a handler function for a specific queue that processes batches.
 // consumer can be set to a unique consumer name (if left empty, a unique name will be generated)
-func (a *AMQPX) RegisterBatchHandler(queue string, handlerFunc BatchHandlerFunc, option ...BatchHandlerOption) *pool.BatchHandler {
+func (a *AMQPX) RegisterBatchHandler(ctx context.Context, queue string, handlerFunc pool.BatchHandlerFunc, option ...pool.BatchHandlerOption) *pool.BatchHandler {
 	//  maxBatchSize int, flushTimeout time.Duration,
 	if handlerFunc == nil {
 		panic("handlerFunc must not be nil")
@@ -148,7 +115,7 @@ func (a *AMQPX) RegisterBatchHandler(queue string, handlerFunc BatchHandlerFunc,
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	handler := pool.NewBatchHandler(queue, handlerFunc, option...)
+	handler := pool.NewBatchHandler(ctx, queue, handlerFunc, option...)
 
 	a.batchHandlers = append(a.batchHandlers, handler)
 	return handler
@@ -286,7 +253,8 @@ func (a *AMQPX) close() (err error) {
 }
 
 // Publish a message to a specific exchange with a given routingKey.
-func (a *AMQPX) Publish(exchange string, routingKey string, msg Publishing) error {
+// You may set exchange to "" and routingKey to your queue name in order to publish directly to a queue.
+func (a *AMQPX) Publish(exchange string, routingKey string, msg pool.Publishing) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.pub == nil {
@@ -297,7 +265,7 @@ func (a *AMQPX) Publish(exchange string, routingKey string, msg Publishing) erro
 }
 
 // Get is only supposed to be used for testing, do not use get for polling any broker queues.
-func (a *AMQPX) Get(queue string, autoAck bool) (msg *Delivery, ok bool, err error) {
+func (a *AMQPX) Get(queue string, autoAck bool) (msg pool.Delivery, ok bool, err error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.pub == nil {
@@ -309,10 +277,10 @@ func (a *AMQPX) Get(queue string, autoAck bool) (msg *Delivery, ok bool, err err
 }
 
 // Reset closes the current package and resets its state before it was initialized and started.
-func (a *AMQPX) Reset() {
+func (a *AMQPX) Reset() error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	a.close()
+	err := a.close()
 
 	a.pubPool = nil
 	a.pub = nil
@@ -324,6 +292,7 @@ func (a *AMQPX) Reset() {
 
 	a.startOnce = sync.Once{}
 	a.closeOnce = sync.Once{}
+	return err
 }
 
 // RegisterTopology registers a topology creating function that is called upon
@@ -340,8 +309,10 @@ func RegisterTopologyDeleter(finalizer TopologyFunc) {
 
 // RegisterHandler registers a handler function for a specific queue.
 // consumer can be set to a unique consumer name (if left empty, a unique name will be generated)
-func RegisterHandler(queue string, handlerFunc HandlerFunc, option ...ConsumeOptions) {
-	amqpx.RegisterHandler(queue, handlerFunc, option...)
+// The returned handler can be used to pause message processing and resume paused processing.
+// The processing must have been started with Start before it can be paused or resumed.
+func RegisterHandler(ctx context.Context, queue string, handlerFunc pool.HandlerFunc, option ...pool.ConsumeOptions) *pool.Handler {
+	return amqpx.RegisterHandler(ctx, queue, handlerFunc, option...)
 }
 
 // Start starts the subscriber and publisher pools.
@@ -361,12 +332,13 @@ func Close() error {
 }
 
 // Publish a message to a specific exchange with a given routingKey.
-func Publish(exchange string, routingKey string, msg Publishing) error {
+// You may set exchange to "" and routingKey to your queue name in order to publish directly to a queue.
+func Publish(exchange string, routingKey string, msg pool.Publishing) error {
 	return amqpx.Publish(exchange, routingKey, msg)
 }
 
 // Get is only supposed to be used for testing, do not use get for polling any broker queues.
-func Get(queue string, autoAck bool) (msg *Delivery, ok bool, err error) {
+func Get(queue string, autoAck bool) (msg pool.Delivery, ok bool, err error) {
 	return amqpx.Get(queue, autoAck)
 }
 
