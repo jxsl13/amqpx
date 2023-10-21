@@ -31,6 +31,16 @@ func (s *Subscriber) Close() {
 	s.debugSimple("closing subscriber...")
 	defer s.infoSimple("closed")
 
+	for _, h := range s.handlers {
+		h.close()
+	}
+
+	/*
+		for _, h := range s.batchHandlers {
+			// TODO: close
+		}
+	*/
+
 	s.cancel()
 	s.wg.Wait()
 
@@ -256,7 +266,9 @@ func (s *Subscriber) consume(view handlerView) (err error) {
 			select {
 			case <-view.pausingCtx.Done():
 				// expected closing due to context cancelation
+				// cancel errors the underlying channel
 				s.pool.ReturnSession(session, true)
+				view.paused()
 				s.infoConsumer(view.ConsumerTag, "paused")
 			default:
 				// actual error
