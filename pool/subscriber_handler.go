@@ -86,14 +86,7 @@ func (h *Handler) reset() {
 	h.resumedCtx, h.resumedCancel = context.WithCancel(h.parentCtx)
 
 	h.resumingCtx, h.resume = context.WithCancel(h.parentCtx)
-	h.resume() // only the resume channel should be closed initially
-
-	select {
-	case <-h.parentCtx.Done():
-		return
-	case <-h.resumingCtx.Done():
-		break
-	}
+	closeContextWithContext(h.parentCtx, h.resumingCtx, h.resume) // called last
 }
 
 // Pause allows to halt the processing of a queue after the processing has been started by the subscriber.
@@ -102,13 +95,18 @@ func (h *Handler) Pause(ctx context.Context) error {
 	defer h.mu.Unlock()
 	h.resumingCtx, h.resume = context.WithCancel(h.parentCtx)
 	h.resumedCtx, h.resumedCancel = context.WithCancel(h.parentCtx)
-	h.pause() // must be called last
+
+	err := closeContextWithContext(ctx, h.pausingCtx, h.pause) // must be called last
+	if err != nil {
+		return fmt.Errorf("%w: queue: %s: %v", ErrPauseFailed, h.queue, err)
+	}
 
 	select {
+	case <-h.pausedCtx.Done():
+		// waid until paused
+		return nil
 	case <-ctx.Done():
 		return fmt.Errorf("%w: queue: %s: %v", ErrPauseFailed, h.queue, ctx.Err())
-	case <-h.pausedCtx.Done():
-		return nil
 	}
 }
 
@@ -119,13 +117,17 @@ func (h *Handler) Resume(ctx context.Context) error {
 	h.pausingCtx, h.pause = context.WithCancel(h.parentCtx)
 	h.pausedCtx, h.pausedCancel = context.WithCancel(h.parentCtx)
 
-	h.resume() // must be calle dlast
+	err := closeContextWithContext(ctx, h.resumingCtx, h.resume) // must be called last
+	if err != nil {
+		return fmt.Errorf("%w: queue: %s: %v", ErrResumeFailed, h.queue, err)
+	}
 
 	select {
+	case <-h.resumedCtx.Done():
+		// waid until resumed
+		return nil
 	case <-ctx.Done():
 		return fmt.Errorf("%w: queue: %s: %v", ErrResumeFailed, h.queue, ctx.Err())
-	case <-h.resumedCtx.Done():
-		return nil
 	}
 }
 
@@ -136,7 +138,7 @@ func (h *Handler) view() handlerView {
 	return handlerView{
 		pausingCtx:     h.pausingCtx,    // front channel handler -> consumer
 		paused:         h.pausedCancel,  // back channel consumer -> handler
-		resumingCtx:    h.resumedCtx,    // front channel handler -> consumer
+		resumingCtx:    h.resumingCtx,   // front channel handler -> consumer
 		resumed:        h.resumedCancel, // back channel consumer-> handler
 		Queue:          h.queue,
 		HandlerFunc:    h.handlerFunc,
@@ -190,19 +192,44 @@ func (h *Handler) close() {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	closeCtx(h.pausingCtx, h.pause)
-	closeCtx(h.pausedCtx, h.pausedCancel)
+	closeContext(h.pausingCtx, h.pause)
+	closeContext(h.pausedCtx, h.pausedCancel)
 
-	closeCtx(h.resumingCtx, h.resume)
-	closeCtx(h.resumedCtx, h.resumedCancel)
+	closeContext(h.resumingCtx, h.resume)
+	closeContext(h.resumedCtx, h.resumedCancel)
 }
 
-func closeCtx(ctx context.Context, cancel context.CancelFunc) {
+func closeContext(ctx context.Context, cancel context.CancelFunc) {
 	select {
 	case <-ctx.Done():
 		// already canceled
 		return
 	default:
 		cancel()
+		<-ctx.Done()
+	}
+}
+
+func closeContextWithContext(ctx, canceledContext context.Context, cancel context.CancelFunc) error {
+	select {
+	case <-ctx.Done():
+		// unexpectedly aborted cancelation
+		return ctx.Err()
+	case <-canceledContext.Done():
+		// already canceled
+		return nil
+	default:
+		// cancel context
+		cancel()
+
+		// wait for the channel to be closed
+		select {
+		case <-ctx.Done():
+			// unexpectedly aborted cancelation
+			return ctx.Err()
+		case <-canceledContext.Done():
+			// already canceled
+			return nil
+		}
 	}
 }

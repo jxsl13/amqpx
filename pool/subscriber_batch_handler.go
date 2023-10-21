@@ -120,7 +120,7 @@ func (h *BatchHandler) view() batchHandlerView {
 	return batchHandlerView{
 		pausingCtx:  h.pausingCtx,    // front channel handler -> consumer
 		paused:      h.pausedCancel,  // back channel consumer -> handler
-		resumingCtx: h.resumedCtx,    // front channel handler -> consumer
+		resumingCtx: h.resumingCtx,   // front channel handler -> consumer
 		resumed:     h.resumedCancel, // back channel consumer-> handler
 
 		Queue:          h.queue,
