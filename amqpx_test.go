@@ -438,8 +438,6 @@ func TestHandlerPauseAndResume(t *testing.T) {
 			}
 			assert.Equal(t, 0, r1.Consumers, "should have no consumers at r1 before resuming")
 
-			ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
-			defer cancel()
 			err = processingHandler.Resume(ctx)
 			require.NoError(t, err)
 			log.Infof("resumed processing of %s", processingHandler.Queue())

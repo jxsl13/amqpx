@@ -41,6 +41,7 @@ func NewHandler(ctx context.Context, queue string, hf HandlerFunc, option ...Con
 		consumeOpts: copt,
 	}
 	// initialize ctx & cancel
+	// TODO: do we want to call this here or do we want to call this in the Subscriber.consumer loop before calling handler.view()?
 	h.reset()
 	return h
 }
@@ -80,12 +81,23 @@ type Handler struct {
 func (h *Handler) reset() {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+
+	// close old contexts
+	closeContext(h.pausingCtx, h.pause)
+	closeContext(h.pausedCtx, h.pausedCancel)
+
+	closeContext(h.resumingCtx, h.resume)
+	closeContext(h.resumedCtx, h.resumedCancel)
+
+	// create new contexts
 	h.pausingCtx, h.pause = context.WithCancel(h.parentCtx)
 	h.pausedCtx, h.pausedCancel = context.WithCancel(h.parentCtx)
 
 	h.resumedCtx, h.resumedCancel = context.WithCancel(h.parentCtx)
 
 	h.resumingCtx, h.resume = context.WithCancel(h.parentCtx)
+
+	// cancel last context to indicate the running state
 	closeContextWithContext(h.parentCtx, h.resumingCtx, h.resume) // called last
 }
 
@@ -200,6 +212,11 @@ func (h *Handler) close() {
 }
 
 func closeContext(ctx context.Context, cancel context.CancelFunc) {
+
+	if ctx == nil {
+		return
+	}
+
 	select {
 	case <-ctx.Done():
 		// already canceled
@@ -211,6 +228,9 @@ func closeContext(ctx context.Context, cancel context.CancelFunc) {
 }
 
 func closeContextWithContext(ctx, canceledContext context.Context, cancel context.CancelFunc) error {
+	if canceledContext == nil {
+		return errors.New("canceledContext is nil")
+	}
 	select {
 	case <-ctx.Done():
 		// unexpectedly aborted cancelation
@@ -228,7 +248,7 @@ func closeContextWithContext(ctx, canceledContext context.Context, cancel contex
 			// unexpectedly aborted cancelation
 			return ctx.Err()
 		case <-canceledContext.Done():
-			// already canceled
+			// finally canceled
 			return nil
 		}
 	}
