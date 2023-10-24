@@ -145,7 +145,7 @@ func TestAMQPXSubAndPub(t *testing.T) {
 
 	eventContent := "TestAMQPXSubAndPub - event content"
 
-	amqpx.RegisterHandler(ctx, "queue-01", func(msg pool.Delivery) error {
+	amqpx.RegisterHandler("queue-01", func(msg pool.Delivery) error {
 		log.Info("subscriber of queue-01")
 		cancel()
 		return nil
@@ -194,7 +194,7 @@ func TestAMQPXSubAndPubMulti(t *testing.T) {
 	eventContent := "TestAMQPXSubAndPub - event content"
 
 	// publish -> queue-01 -> subscriber-01 -> queue-02 -> subscriber-02 -> queue-03 -> subscriber-03 -> cancel context
-	amqpx.RegisterHandler(ctx, "queue-01", func(msg pool.Delivery) error {
+	amqpx.RegisterHandler("queue-01", func(msg pool.Delivery) error {
 		log.Info("handler of subscriber-01")
 
 		err := amqpx.Publish("exchange-02", "event-02", pool.Publishing{
@@ -211,7 +211,7 @@ func TestAMQPXSubAndPubMulti(t *testing.T) {
 		pool.ConsumeOptions{ConsumerTag: "subscriber-01"},
 	)
 
-	amqpx.RegisterHandler(ctx, "queue-02", func(msg pool.Delivery) error {
+	amqpx.RegisterHandler("queue-02", func(msg pool.Delivery) error {
 		log.Info("handler of subscriber-02")
 
 		err := amqpx.Publish("exchange-03", "event-03", pool.Publishing{
@@ -226,7 +226,7 @@ func TestAMQPXSubAndPubMulti(t *testing.T) {
 		return nil
 	}, pool.ConsumeOptions{ConsumerTag: "subscriber-02"})
 
-	amqpx.RegisterHandler(ctx, "queue-03", func(msg pool.Delivery) error {
+	amqpx.RegisterHandler("queue-03", func(msg pool.Delivery) error {
 		log.Info("handler of subscriber-03: canceling context!")
 		cancel()
 		return nil
@@ -274,7 +274,7 @@ func TestAMQPXSubHandler(t *testing.T) {
 
 	eventContent := "TestAMQPXSubAndPub - event content"
 
-	amqpx.RegisterHandler(ctx, "queue-01", func(msg pool.Delivery) error {
+	amqpx.RegisterHandler("queue-01", func(msg pool.Delivery) error {
 		log.Info("subscriber of queue-01")
 		cancel()
 		return nil
@@ -337,7 +337,8 @@ func TestHandlerPauseAndResume(t *testing.T) {
 	options := []amqpx.Option{
 		amqpx.WithLogger(log),
 		amqpx.WithPublisherConnections(1),
-		amqpx.WithPublisherSessions(5), // only slow close once in the transient pool
+		amqpx.WithPublisherSessions(5),                 // only slow close once in the transient pool
+		amqpx.WithPoolOption(pool.WithSlowClose(true)), // needed for goroutine leaks tests
 	}
 
 	transientPool, err := pool.New(
@@ -345,6 +346,7 @@ func TestHandlerPauseAndResume(t *testing.T) {
 		1,
 		1,
 		pool.WithLogger(log),
+		pool.WithContext(ctx),
 		pool.WithSlowClose(true), // needed for goroutine leaks tests
 	)
 	require.NoError(t, err)
@@ -384,7 +386,7 @@ func TestHandlerPauseAndResume(t *testing.T) {
 	}
 
 	// step 2 - process messages, pause, wait, resume, process rest, cancel context
-	processingHandler := amqpx.RegisterHandler(ctx, "queue-01", func(msg pool.Delivery) (err error) {
+	handler01 := amqpx.RegisterHandler("queue-01", func(msg pool.Delivery) (err error) {
 		cnt++
 		if cnt == publish/2 {
 			err = amqpx.Publish("exchange-02", "event-02", pool.Publishing{
@@ -402,58 +404,81 @@ func TestHandlerPauseAndResume(t *testing.T) {
 	})
 
 	running := true
-	amqpx.RegisterHandler(ctx, "queue-02", func(msg pool.Delivery) (err error) {
+	amqpx.RegisterHandler("queue-02", func(msg pool.Delivery) (err error) {
 		log.Infof("received toggle request: %s", string(msg.Body))
 		if running {
-			p1, err := ts.QueueDeclarePassive("queue-01")
+			beforePause01, err := ts.QueueDeclarePassive("queue-01")
 			assert.NoError(t, err)
 			if err != nil {
 				return nil
 			}
-			assert.Equal(t, 1, p1.Consumers, "should have one consumer at p1 before pausing")
+			assert.Equal(t, 1, beforePause01.Consumers, "should have one consumer at p1 before pausing")
 
-			err = processingHandler.Pause(ctx)
+			err = handler01.Pause(context.Background())
 			require.NoError(t, err)
-			log.Infof("paused processing of %s", processingHandler.Queue())
+			log.Infof("paused processing of %s", handler01.Queue())
 			running = false
 
-			p2, err := ts.QueueDeclarePassive("queue-01")
-			assert.NoError(t, err)
+			active, err := handler01.IsActive(context.Background())
 			if err != nil {
+				assert.NoError(t, err, "IsActive after pause failed")
 				return nil
 			}
-			assert.Equal(t, 0, p2.Consumers, "should have no consumers at p2 after pausing")
 
-			amqpx.Publish("exchange-03", "event-03", pool.Publishing{
+			assert.Equal(t, running, active, "expected active to be false")
+
+			// rabbitmq broker needs some time to update its internal consumer state
+			// we already know that we stopped consuming before the broker can update its internal state.
+			time.Sleep(5 * time.Second)
+			afterPause01, err := ts.QueueDeclarePassive("queue-01")
+			if err != nil {
+				assert.NoError(t, err)
+				return nil
+			}
+
+			// after pause, there should be no more consumers on that queue
+			assert.Equal(t, 0, afterPause01.Consumers, "should have no consumers at p2 after pausing")
+
+			err = amqpx.Publish("exchange-03", "event-03", pool.Publishing{
 				ContentType: "application/json",
 				Body:        []byte(fmt.Sprintf("%s: delayed toggle back", eventContent)),
 			})
+			assert.NoError(t, err)
 
 		} else {
 
-			r1, err := ts.QueueDeclarePassive("queue-01")
+			beforeResume01, err := ts.QueueDeclarePassive("queue-01")
 			assert.NoError(t, err)
 			if err != nil {
 				return nil
 			}
-			assert.Equal(t, 0, r1.Consumers, "should have no consumers at r1 before resuming")
+			assert.Equal(t, 0, beforeResume01.Consumers, "should have no consumers at r1 before resuming")
 
-			err = processingHandler.Resume(ctx)
+			err = handler01.Resume(context.Background())
 			require.NoError(t, err)
-			log.Infof("resumed processing of %s", processingHandler.Queue())
+			log.Infof("resumed processing of %s", handler01.Queue())
 			running = true
 
-			r2, err := ts.QueueDeclarePassive("queue-01")
+			active, err := handler01.IsActive(context.Background())
+			if err != nil {
+				assert.NoError(t, err, "failed to check IsActive after resuming")
+				// do not return any errors or we will bounce
+				return nil
+			}
+
+			assert.Equal(t, running, active, "expected active to be true after resume")
+
+			afterResume01, err := ts.QueueDeclarePassive("queue-01")
 			assert.NoError(t, err)
 			if err != nil {
 				return nil
 			}
-			assert.Equal(t, 1, r2.Consumers, "should have 1 consumer at r2 after resuming")
+			assert.Equal(t, 1, afterResume01.Consumers, "should have 1 consumer at r2 after resuming")
 		}
 		return nil
 	})
 
-	amqpx.RegisterHandler(ctx, "queue-03", func(msg pool.Delivery) (err error) {
+	amqpx.RegisterHandler("queue-03", func(msg pool.Delivery) (err error) {
 		defer func() {
 			// always resume processing
 			err = amqpx.Publish("exchange-02", "event-02", pool.Publishing{
@@ -484,6 +509,10 @@ func TestHandlerPauseAndResume(t *testing.T) {
 
 		return nil
 	})
+
+	active, err := handler01.IsActive(context.Background())
+	require.NoError(t, err)
+	assert.False(t, active, "handler should not be active before amqpx has been started")
 
 	err = amqpx.Start(
 		connectURL,

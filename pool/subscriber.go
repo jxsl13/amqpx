@@ -113,7 +113,7 @@ type BatchHandlerFunc func([]Delivery) error
 // Inflight messages, limited by Channel.Qos will be buffered until received from the returned chan.
 // When the Channel or Connection is closed, all buffered and inflight messages will be dropped.
 // When the consumer identifier tag is cancelled, all inflight messages will be delivered until the returned chan is closed.
-func (s *Subscriber) RegisterHandlerFunc(ctx context.Context, queue string, hf HandlerFunc, options ...ConsumeOptions) *Handler {
+func (s *Subscriber) RegisterHandlerFunc(queue string, hf HandlerFunc, options ...ConsumeOptions) *Handler {
 	option := ConsumeOptions{
 		ConsumerTag: "",
 		AutoAck:     false,
@@ -126,7 +126,7 @@ func (s *Subscriber) RegisterHandlerFunc(ctx context.Context, queue string, hf H
 		option = options[0]
 	}
 
-	handler := NewHandler(ctx, queue, hf, option)
+	handler := NewHandler(queue, hf, option)
 	s.RegisterHandler(handler)
 	return handler
 }
@@ -140,7 +140,7 @@ func (s *Subscriber) RegisterHandler(handler *Handler) {
 	s.log.WithFields(withConsumerIfSet(handler.ConsumeOptions().ConsumerTag,
 		map[string]any{
 			"subscriber": s.pool.Name(),
-			"queue":      handler.Queue,
+			"queue":      handler.Queue(),
 		})).Info("registered message handler")
 }
 
@@ -150,12 +150,14 @@ func (s *Subscriber) RegisterHandler(handler *Handler) {
 // and then you'd have to wait indefinitly for those 20 messages to be processed, as it might take a long time for another message to arrive in the queue.
 // This is where your flushTimeout comes into play. In order to wait at most for the period of flushTimeout until a new message arrives
 // before processing the batch in your handler function.
-func (s *Subscriber) RegisterBatchHandlerFunc(ctx context.Context, queue string, hf BatchHandlerFunc, options ...BatchHandlerOption) *BatchHandler {
-	handler := NewBatchHandler(ctx, queue, hf, options...)
+func (s *Subscriber) RegisterBatchHandlerFunc(queue string, hf BatchHandlerFunc, options ...BatchHandlerOption) *BatchHandler {
+	handler := NewBatchHandler(s.ctx, queue, hf, options...)
 	s.RegisterBatchHandler(handler)
 	return handler
 }
 
+// RegisterBatchHandler registers a custom handler that MIGHT not be closed in case that the subscriber is closed.
+// The passed batch handler may be derived from a different parent context.
 func (s *Subscriber) RegisterBatchHandler(handler *BatchHandler) {
 
 	// TODO: do we want to introduce a BatchSizeLimit
@@ -210,6 +212,12 @@ func (s *Subscriber) Start() {
 func (s *Subscriber) consumer(h *Handler, wg *sync.WaitGroup) {
 	defer wg.Done()
 
+	// initialize all handler contexts
+	// to be in state resuming
+	h.start(s.ctx)
+	// close all contexts
+	defer h.close()
+
 	var err error
 	for {
 		// immutable view for every new loop iteration
@@ -217,27 +225,8 @@ func (s *Subscriber) consumer(h *Handler, wg *sync.WaitGroup) {
 		select {
 		case <-s.catchShutdown():
 			return
-		case <-hv.resumingCtx.Done():
+		case <-hv.resuming.Done():
 			err = s.consume(hv)
-			if errors.Is(err, ErrClosed) {
-				return
-			}
-		}
-	}
-}
-
-func (s *Subscriber) batchConsumer(h *BatchHandler, wg *sync.WaitGroup) {
-	defer wg.Done()
-
-	var err error
-	for {
-		// immutable view for every new loop iteration
-		hv := h.view()
-		select {
-		case <-s.catchShutdown():
-			return
-		case <-hv.resumingCtx.Done():
-			err = s.batchConsume(hv)
 			if errors.Is(err, ErrClosed) {
 				return
 			}
@@ -264,11 +253,12 @@ func (s *Subscriber) consume(view handlerView) (err error) {
 			s.infoConsumer(view.ConsumerTag, "closed")
 		} else {
 			select {
-			case <-view.pausingCtx.Done():
+			case <-view.pausing.Done():
 				// expected closing due to context cancelation
 				// cancel errors the underlying channel
+				// A canceled session is an erred session.
 				s.pool.ReturnSession(session, true)
-				view.paused()
+				view.paused.Cancel()
 				s.infoConsumer(view.ConsumerTag, "paused")
 			default:
 				// actual error
@@ -280,7 +270,7 @@ func (s *Subscriber) consume(view handlerView) (err error) {
 
 	// got a working session
 	delivery, err := session.ConsumeWithContext(
-		view.pausingCtx,
+		view.pausing.Context(),
 		view.Queue,
 		view.ConsumeOptions,
 	)
@@ -288,7 +278,7 @@ func (s *Subscriber) consume(view handlerView) (err error) {
 		return err
 	}
 
-	view.resumed()
+	view.resumed.Cancel()
 	s.infoConsumer(view.ConsumerTag, "started")
 	for {
 		select {
@@ -351,6 +341,25 @@ func (s *Subscriber) ackPostHandle(view handlerView, deliveryTag uint64, exchang
 	}
 	// successfully handled message
 	return nil
+}
+
+func (s *Subscriber) batchConsumer(h *BatchHandler, wg *sync.WaitGroup) {
+	defer wg.Done()
+
+	var err error
+	for {
+		// immutable view for every new loop iteration
+		hv := h.view()
+		select {
+		case <-s.catchShutdown():
+			return
+		case <-hv.resumingCtx.Done():
+			err = s.batchConsume(hv)
+			if errors.Is(err, ErrClosed) {
+				return
+			}
+		}
+	}
 }
 
 func (s *Subscriber) batchConsume(view batchHandlerView) (err error) {

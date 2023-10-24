@@ -89,7 +89,7 @@ func (a *AMQPX) RegisterTopologyDeleter(finalizer TopologyFunc) {
 
 // RegisterHandler registers a handler function for a specific queue.
 // consumer can be set to a unique consumer name (if left empty, a unique name will be generated)
-func (a *AMQPX) RegisterHandler(ctx context.Context, queue string, handlerFunc pool.HandlerFunc, option ...pool.ConsumeOptions) *pool.Handler {
+func (a *AMQPX) RegisterHandler(queue string, handlerFunc pool.HandlerFunc, option ...pool.ConsumeOptions) *pool.Handler {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -98,15 +98,14 @@ func (a *AMQPX) RegisterHandler(ctx context.Context, queue string, handlerFunc p
 		o = option[0]
 	}
 
-	handler := pool.NewHandler(ctx, queue, handlerFunc, o)
-
+	handler := pool.NewHandler(queue, handlerFunc, o)
 	a.handlers = append(a.handlers, handler)
 	return handler
 }
 
 // RegisterBatchHandler registers a handler function for a specific queue that processes batches.
 // consumer can be set to a unique consumer name (if left empty, a unique name will be generated)
-func (a *AMQPX) RegisterBatchHandler(ctx context.Context, queue string, handlerFunc pool.BatchHandlerFunc, option ...pool.BatchHandlerOption) *pool.BatchHandler {
+func (a *AMQPX) RegisterBatchHandler(queue string, handlerFunc pool.BatchHandlerFunc, option ...pool.BatchHandlerOption) *pool.BatchHandler {
 	//  maxBatchSize int, flushTimeout time.Duration,
 	if handlerFunc == nil {
 		panic("handlerFunc must not be nil")
@@ -115,8 +114,10 @@ func (a *AMQPX) RegisterBatchHandler(ctx context.Context, queue string, handlerF
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
+	// TODO: do we have any better contexts to pass here?
+	// Most other contexts are initialized upon startup like a.sub.ctx
+	ctx := context.Background()
 	handler := pool.NewBatchHandler(ctx, queue, handlerFunc, option...)
-
 	a.batchHandlers = append(a.batchHandlers, handler)
 	return handler
 }
@@ -311,8 +312,8 @@ func RegisterTopologyDeleter(finalizer TopologyFunc) {
 // consumer can be set to a unique consumer name (if left empty, a unique name will be generated)
 // The returned handler can be used to pause message processing and resume paused processing.
 // The processing must have been started with Start before it can be paused or resumed.
-func RegisterHandler(ctx context.Context, queue string, handlerFunc pool.HandlerFunc, option ...pool.ConsumeOptions) *pool.Handler {
-	return amqpx.RegisterHandler(ctx, queue, handlerFunc, option...)
+func RegisterHandler(queue string, handlerFunc pool.HandlerFunc, option ...pool.ConsumeOptions) *pool.Handler {
+	return amqpx.RegisterHandler(queue, handlerFunc, option...)
 }
 
 // Start starts the subscriber and publisher pools.

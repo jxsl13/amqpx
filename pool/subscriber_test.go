@@ -77,7 +77,7 @@ func TestSubscriber(t *testing.T) {
 			sub := pool.NewSubscriber(p, pool.SubscriberWithContext(ctx))
 			defer sub.Close()
 
-			sub.RegisterHandlerFunc(ctx, queueName,
+			sub.RegisterHandlerFunc(queueName,
 				func(msg pool.Delivery) error {
 
 					// handler func
@@ -201,7 +201,7 @@ func TestBatchSubscriber(t *testing.T) {
 
 			batchCount := 0
 			messageCount := 0
-			sub.RegisterBatchHandlerFunc(ctx, queueName,
+			sub.RegisterBatchHandlerFunc(queueName,
 				func(msgs []pool.Delivery) error {
 					log := logging.NewTestLogger(t)
 					assert.Equal(t, batchSize, len(msgs))

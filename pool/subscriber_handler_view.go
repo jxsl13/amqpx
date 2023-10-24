@@ -1,18 +1,14 @@
 package pool
 
-import (
-	"context"
-)
-
 // handlerView is a a snapshot of the current handler's configuration and runtime state.
 // This internal data structure is used in the corresponsing consumer.
 type handlerView struct {
 	// called in the consumer function & wrapper
-	pausingCtx context.Context
-	paused     context.CancelFunc
+	pausing done
+	paused  cancel
 
-	resumingCtx context.Context
-	resumed     context.CancelFunc
+	resuming done
+	resumed  cancel
 
 	Queue       string
 	HandlerFunc HandlerFunc
