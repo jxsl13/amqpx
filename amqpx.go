@@ -312,6 +312,12 @@ func RegisterHandler(queue string, handlerFunc pool.HandlerFunc, option ...pool.
 	return amqpx.RegisterHandler(queue, handlerFunc, option...)
 }
 
+// RegisterBatchHandler registers a handler function for a specific queue that processes batches.
+// consumer can be set to a unique consumer name (if left empty, a unique name will be generated)
+func RegisterBatchHandler(queue string, handlerFunc pool.BatchHandlerFunc, option ...pool.BatchHandlerOption) *pool.BatchHandler {
+	return amqpx.RegisterBatchHandler(queue, handlerFunc, option...)
+}
+
 // Start starts the subscriber and publisher pools.
 // In case no handlers were registered, no subscriber pool will be started.
 // connectUrl has the form: amqp://username:password@localhost:5672
