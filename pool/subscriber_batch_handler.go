@@ -17,11 +17,17 @@ const (
 // Additionally, the handler allows you to pause and resume processing from the provided queue.
 func NewBatchHandler(queue string, hf BatchHandlerFunc, options ...BatchHandlerOption) *BatchHandler {
 	// sane defaults
+	ctx := context.Background()
 	h := &BatchHandler{
-		maxBatchSize: defaultMaxBatchSize,
-		flushTimeout: defaultFlushTimeout,
+		parentCtx:    ctx,
+		pausing:      newCancelContext(ctx),
+		paused:       newCancelContext(ctx),
+		resuming:     newCancelContext(ctx),
+		resumed:      newCancelContext(ctx),
 		queue:        queue,
 		handlerFunc:  hf,
+		maxBatchSize: defaultMaxBatchSize,
+		flushTimeout: defaultFlushTimeout,
 		consumeOpts: ConsumeOptions{
 			ConsumerTag: "",
 			AutoAck:     false,
