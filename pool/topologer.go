@@ -9,7 +9,9 @@ import (
 type Topologer struct {
 	pool *Pool
 
-	log logging.Logger
+	transientOnly bool
+	log           logging.Logger
+	ctx           context.Context
 }
 
 func NewTopologer(p *Pool, options ...TopologerOption) *Topologer {
@@ -19,6 +21,7 @@ func NewTopologer(p *Pool, options ...TopologerOption) *Topologer {
 
 	option := topologerOption{
 		Logger: p.sp.log, // derive logger from session pool
+		Ctx:    p.Context(),
 	}
 
 	for _, o := range options {
@@ -28,15 +31,19 @@ func NewTopologer(p *Pool, options ...TopologerOption) *Topologer {
 	top := &Topologer{
 		pool: p,
 		log:  option.Logger,
+		ctx:  option.Ctx,
 	}
 	return top
 }
 
+// TODO: it should be possible to pass a custom context in here so that we can define
+// timeouts, especially for a topology deleter which operates on a closed context and needs a new one.
 func (t *Topologer) getSession() (*Session, error) {
-	if t.pool.SessionPoolSize() == 0 {
-		return t.pool.GetTransientSession(context.Background())
+
+	if t.transientOnly || t.pool.SessionPoolSize() == 0 {
+		return t.pool.GetTransientSession(t.ctx)
 	}
-	return t.pool.GetSession()
+	return t.pool.GetSessionCtx(t.ctx)
 }
 
 // ExchangeDeclare declares an exchange on the server. If the exchange does not

@@ -1,6 +1,7 @@
 package amqpx
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"sync"
@@ -28,6 +29,8 @@ type AMQPX struct {
 
 	topologies       []TopologyFunc
 	topologyDeleters []TopologyFunc
+
+	closeTimeout time.Duration
 
 	startOnce sync.Once
 	closeOnce sync.Once
@@ -139,11 +142,16 @@ func (a *AMQPX) Start(connectUrl string, options ...Option) (err error) {
 			PublisherConnections:  1,
 			PublisherSessions:     10,
 			SubscriberConnections: 1,
+			CloseTimeout:          15 * time.Second,
 		}
 
 		for _, o := range options {
 			o(&option)
 		}
+
+		// affects the topology deleter when close is called
+		// which stops deleting or reconnecting after the timeout
+		a.closeTimeout = option.CloseTimeout
 
 		// publisher and subscriber need to have different tcp connections (tcp pushback prevention)
 		a.pubPool, err = pool.New(
@@ -232,7 +240,15 @@ func (a *AMQPX) close() (err error) {
 		}
 
 		if a.pubPool != nil {
-			topologer := pool.NewTopologer(a.pubPool)
+
+			ctx, cancel := context.WithTimeout(context.Background(), a.closeTimeout)
+			defer cancel()
+
+			topologer := pool.NewTopologer(
+				a.pubPool,
+				pool.TopologerWithContext(ctx),
+				pool.TopologerWithTransientSessions(true),
+			)
 			for _, f := range a.topologyDeleters {
 				e := f(topologer)
 				if e != nil {

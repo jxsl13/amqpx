@@ -17,6 +17,8 @@ type option struct {
 	PublisherConnections  int
 	PublisherSessions     int
 	SubscriberConnections int
+
+	CloseTimeout time.Duration
 }
 
 type Option func(*option)
@@ -140,5 +142,18 @@ func WithSubscriberConnections(connections int) Option {
 func WithPoolOption(po pool.Option) Option {
 	return func(o *option) {
 		o.PoolOptions = append(o.PoolOptions, po)
+	}
+}
+
+// WithCloseTimeout affects the duration that the topology deleter functions are allowed to delete topologies.
+// This timeout is especially interesting for containerized environments where containers may potentionally be killed after
+// a specific timeout. To we want to cancel deletion operations before those hard kill comes into play.
+func WithCloseTimeout(timeout time.Duration) Option {
+	return func(o *option) {
+		if timeout <= 0 {
+			o.CloseTimeout = 15 * time.Second
+		} else {
+			o.CloseTimeout = timeout
+		}
 	}
 }
