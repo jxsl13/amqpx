@@ -203,14 +203,19 @@ func (s *Subscriber) Start() {
 
 func (s *Subscriber) consumer(h *Handler, wg *sync.WaitGroup) {
 	defer wg.Done()
+	var err error
+
 
 	// initialize all handler contexts
 	// to be in state resuming
-	h.start(s.ctx)
+	err = h.start(s.ctx)
+	if err != nil {
+		view := h.view()
+		s.error(view.ConsumerTag, view.Queue, err, "failed to start handler consumer")
+	}
 	// close all contexts
 	defer h.close()
 
-	var err error
 	for {
 		// immutable view for every new loop iteration
 		hv := h.view()
@@ -337,14 +342,18 @@ func (s *Subscriber) ackPostHandle(view handlerView, deliveryTag uint64, exchang
 
 func (s *Subscriber) batchConsumer(h *BatchHandler, wg *sync.WaitGroup) {
 	defer wg.Done()
+	var err error
 
 	// initialize all handler contexts
 	// to be in state resuming
-	h.start(s.ctx)
+	err = h.start(s.ctx)
+	if err != nil {
+		view := h.view()
+		s.error(view.ConsumerTag, view.Queue, err, "failed to start batch handler consumer")
+	}
 	// close all contexts
 	defer h.close()
 
-	var err error
 	for {
 		// immutable view for every new loop iteration
 		hv := h.view()
@@ -622,4 +631,12 @@ func withConsumerIfSet(consumer string, m map[string]any) map[string]any {
 		m["consumer"] = consumer
 	}
 	return m
+}
+
+func (s *Subscriber) error(consumer, queue string, err error, a ...any) {
+	s.log.WithFields(withConsumerIfSet(consumer, map[string]any{
+		"subscriber": s.pool.Name(),
+		"queue":      queue,
+		"error":      err,
+	})).Error(a...)
 }

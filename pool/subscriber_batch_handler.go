@@ -80,31 +80,56 @@ type BatchHandler struct {
 // reset creates the initial state of the object
 // initial state is the transitional state resuming (= startup and resuming after pause)
 // the passed context is the parent context of all new contexts that spawn from this
-func (h *BatchHandler) start(ctx context.Context) {
+func (h *BatchHandler) start(ctx context.Context) (err error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	defer func() {
+		if err != nil {
+			h.pausing.Cancel()
+			h.paused.Cancel()
+			h.resuming.Cancel()
+			h.resumed.Cancel()
+		}
+	}()
 
 	h.parentCtx = ctx
 
 	// reset contextx
-	h.pausing.Reset(h.parentCtx)
-	h.paused.Reset(h.parentCtx)
-
-	h.resuming.Reset(h.parentCtx)
-	h.resumed.Reset(h.parentCtx)
+	err = h.pausing.Reset(h.parentCtx)
+	if err != nil {
+		return err
+	}
+	err = h.paused.Reset(h.parentCtx)
+	if err != nil {
+		return err
+	}
+	err = h.resuming.Reset(h.parentCtx)
+	if err != nil {
+		return err
+	}
+	err = h.resumed.Reset(h.parentCtx)
+	if err != nil {
+		return err
+	}
 
 	// cancel last context to indicate the running state
 	h.resuming.Cancel() // called last
+	return nil
 }
 
 // Pause allows to halt the processing of a queue after the processing has been started by the subscriber.
 func (h *BatchHandler) Pause(ctx context.Context) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.resuming.Reset(h.parentCtx)
-	h.resumed.Reset(h.parentCtx)
-
-	err := h.pausing.CancelWithContext(ctx) // must be called last
+	err := h.resuming.Reset(h.parentCtx)
+	if err != nil {
+		return fmt.Errorf("%w: queue: %s: %v", ErrPauseFailed, h.queue, err)
+	}
+	err = h.resumed.Reset(h.parentCtx)
+	if err != nil {
+		return fmt.Errorf("%w: queue: %s: %v", ErrPauseFailed, h.queue, err)
+	}
+	err = h.pausing.CancelWithContext(ctx) // must be called last
 	if err != nil {
 		return fmt.Errorf("%w: queue: %s: %v", ErrPauseFailed, h.queue, err)
 	}
@@ -180,12 +205,18 @@ func (h *BatchHandler) Queue() string {
 	return h.queue
 }
 
+// SetQueue changes the current queue to another queue
+// from which the handler consumes messages.
+// The actual change is effective after pausing and resuming the handler.
 func (h *BatchHandler) SetQueue(queue string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.queue = queue
 }
 
+// SetHandlerFunc changes the current handler function  to another
+// handler function which processes messages..
+// The actual change is effective after pausing and resuming the handler.
 func (h *BatchHandler) SetHandlerFunc(hf BatchHandlerFunc) {
 	h.mu.Lock()
 	defer h.mu.Unlock()

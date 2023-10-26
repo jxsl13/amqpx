@@ -84,31 +84,54 @@ type Handler struct {
 // reset creates the initial state of the object
 // initial state is the transitional state resuming (= startup and resuming after pause)
 // the passed context is the parent context of all new contexts that spawn from this
-func (h *Handler) start(ctx context.Context) {
+func (h *Handler) start(ctx context.Context) (err error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-
-	h.parentCtx = ctx
+	defer func() {
+		if err != nil {
+			h.pausing.Cancel()
+			h.paused.Cancel()
+			h.resuming.Cancel()
+			h.resumed.Cancel()
+		}
+	}()
 
 	// reset contextx
-	h.pausing.Reset(h.parentCtx)
-	h.paused.Reset(h.parentCtx)
-
-	h.resuming.Reset(h.parentCtx)
-	h.resumed.Reset(h.parentCtx)
+	err = h.pausing.Reset(h.parentCtx)
+	if err != nil {
+		return err
+	}
+	err = h.paused.Reset(h.parentCtx)
+	if err != nil {
+		return err
+	}
+	err = h.resuming.Reset(h.parentCtx)
+	if err != nil {
+		return err
+	}
+	err = h.resumed.Reset(h.parentCtx)
+	if err != nil {
+		return err
+	}
 
 	// cancel last context to indicate the running state
 	h.resuming.Cancel() // called last
+	return nil
 }
 
 // Pause allows to halt the processing of a queue after the processing has been started by the subscriber.
 func (h *Handler) Pause(ctx context.Context) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.resuming.Reset(h.parentCtx)
-	h.resumed.Reset(h.parentCtx)
-
-	err := h.pausing.CancelWithContext(ctx) // must be called last
+	err := h.resuming.Reset(h.parentCtx)
+	if err != nil {
+		return fmt.Errorf("%w: queue: %s: %v", ErrPauseFailed, h.queue, err)
+	}
+	err = h.resumed.Reset(h.parentCtx)
+	if err != nil {
+		return fmt.Errorf("%w: queue: %s: %v", ErrPauseFailed, h.queue, err)
+	}
+	err = h.pausing.CancelWithContext(ctx) // must be called last
 	if err != nil {
 		return fmt.Errorf("%w: queue: %s: %v", ErrPauseFailed, h.queue, err)
 	}
@@ -126,10 +149,16 @@ func (h *Handler) Pause(ctx context.Context) error {
 func (h *Handler) Resume(ctx context.Context) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.pausing.Reset(h.parentCtx)
-	h.paused.Reset(h.parentCtx)
+	err := h.pausing.Reset(h.parentCtx)
+	if err != nil {
+		return fmt.Errorf("%w: queue: %s: %v", ErrResumeFailed, h.queue, err)
+	}
+	err = h.paused.Reset(h.parentCtx)
+	if err != nil {
+		return fmt.Errorf("%w: queue: %s: %v", ErrResumeFailed, h.queue, err)
+	}
 
-	err := h.resuming.CancelWithContext(h.parentCtx) // must be called last
+	err = h.resuming.CancelWithContext(h.parentCtx) // must be called last
 	if err != nil {
 		return fmt.Errorf("%w: queue: %s: %v", ErrResumeFailed, h.queue, err)
 	}
@@ -181,12 +210,18 @@ func (h *Handler) Queue() string {
 	return h.queue
 }
 
+// SetQueue changes the current queue to another queue
+// from which the handler consumes messages.
+// The actual change is effective after pausing and resuming the handler.
 func (h *Handler) SetQueue(queue string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.queue = queue
 }
 
+// SetHandlerFunc changes the current handler function  to another
+// handler function which processes messages..
+// The actual change is effective after pausing and resuming the handler.
 func (h *Handler) SetHandlerFunc(hf HandlerFunc) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -199,6 +234,9 @@ func (h *Handler) ConsumeOptions() ConsumeOptions {
 	return h.consumeOpts
 }
 
+// SetConsumeOptions changes the current handler function                    to another
+// handler function which processes messages..
+// The actual change is effective after pausing and resuming the handler.
 func (h *Handler) SetConsumeOptions(consumeOpts ConsumeOptions) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
