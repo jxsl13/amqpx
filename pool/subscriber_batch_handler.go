@@ -2,6 +2,7 @@ package pool
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 )
@@ -14,7 +15,7 @@ const (
 // NewHandler creates a new handler which is primarily a combination of your passed
 // handler function and the queue name from which the handler fetches messages and processes those.
 // Additionally, the handler allows you to pause and resume processing from the provided queue.
-func NewBatchHandler(ctx context.Context, queue string, hf BatchHandlerFunc, options ...BatchHandlerOption) *BatchHandler {
+func NewBatchHandler(queue string, hf BatchHandlerFunc, options ...BatchHandlerOption) *BatchHandler {
 	// sane defaults
 	h := &BatchHandler{
 		maxBatchSize: defaultMaxBatchSize,
@@ -40,10 +41,12 @@ func NewBatchHandler(ctx context.Context, queue string, hf BatchHandlerFunc, opt
 
 // BatchHandler is a struct that contains all parameter sneeded i order to register a batch handler function.
 type BatchHandler struct {
-	mu sync.Mutex
+	mu     sync.Mutex
+	closed bool
 
 	queue       string
 	handlerFunc BatchHandlerFunc
+	consumeOpts ConsumeOptions
 
 	// When <= 0, will be set to 50
 	// Number of messages a batch may contain at most
@@ -55,62 +58,102 @@ type BatchHandler struct {
 	// This value should be less than 30m (which is the (n)ack timeout of RabbitMQ)
 	// when <= 0, will be set to 5s
 	flushTimeout time.Duration
-	consumeOpts  ConsumeOptions
 
 	// untouched throughout the object's lifetime
 	parentCtx context.Context
 
 	// canceled upon pausing
-	pausingCtx context.Context
-	pause      context.CancelFunc
+	pausing *cancelContext
 
 	// canceled upon resuming
-	resumingCtx context.Context
-	resume      context.CancelFunc
+	resuming *cancelContext
 
 	// back channel to handler
-	pausedCtx context.Context
 	// called from consumer
-	pausedCancel context.CancelFunc
+	paused *cancelContext
 
 	// back channel to handler
-	resumedCtx context.Context
 	// called from consumer
-	resumedCancel context.CancelFunc
+	resumed *cancelContext
 }
 
 // reset creates the initial state of the object
-func (h *BatchHandler) reset() {
+// initial state is the transitional state resuming (= startup and resuming after pause)
+// the passed context is the parent context of all new contexts that spawn from this
+func (h *BatchHandler) start(ctx context.Context) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.pausingCtx, h.pause = context.WithCancel(h.parentCtx)
-	h.pausedCtx, h.pausedCancel = context.WithCancel(h.parentCtx)
 
-	h.resumedCtx, h.resumedCancel = context.WithCancel(h.parentCtx)
+	h.parentCtx = ctx
 
-	h.resumingCtx, h.resume = context.WithCancel(h.parentCtx)
-	h.resume() // only the resume channel should be closed initially
+	// reset contextx
+	h.pausing.Reset(h.parentCtx)
+	h.paused.Reset(h.parentCtx)
 
-	select {
-	case <-h.parentCtx.Done():
-		return
-	case <-h.resumingCtx.Done():
-		break
-	}
+	h.resuming.Reset(h.parentCtx)
+	h.resumed.Reset(h.parentCtx)
+
+	// cancel last context to indicate the running state
+	h.resuming.Cancel() // called last
 }
 
-func (h *BatchHandler) Pause() error {
+// Pause allows to halt the processing of a queue after the processing has been started by the subscriber.
+func (h *BatchHandler) Pause(ctx context.Context) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return nil
+	h.resuming.Reset(h.parentCtx)
+	h.resumed.Reset(h.parentCtx)
+
+	err := h.pausing.CancelWithContext(ctx) // must be called last
+	if err != nil {
+		return fmt.Errorf("%w: queue: %s: %v", ErrPauseFailed, h.queue, err)
+	}
+
+	select {
+	case <-h.paused.Done():
+		// waid until paused
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("%w: queue: %s: %v", ErrPauseFailed, h.queue, ctx.Err())
+	}
 }
 
 // Resume allows to continue the processing of a queue after it has been paused using Pause
 func (h *BatchHandler) Resume(ctx context.Context) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	h.pausing.Reset(h.parentCtx)
+	h.paused.Reset(h.parentCtx)
 
-	return nil
+	err := h.resuming.CancelWithContext(h.parentCtx) // must be called last
+	if err != nil {
+		return fmt.Errorf("%w: queue: %s: %v", ErrResumeFailed, h.queue, err)
+	}
+
+	select {
+	case <-h.resumed.Done():
+		// waid until resumed
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("%w: queue: %s: %v", ErrResumeFailed, h.queue, ctx.Err())
+	}
+}
+
+func (h *BatchHandler) IsActive(ctx context.Context) (active bool, err error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.closed {
+		return false, nil
+	}
+
+	select {
+	case <-h.resumed.Done():
+		return true, nil
+	case <-h.paused.Done():
+		return false, nil
+	case <-ctx.Done():
+		return false, fmt.Errorf("failed to check state of handler of queue %q: %w", h.queue, ctx.Err())
+	}
 }
 
 func (h *BatchHandler) view() batchHandlerView {
@@ -118,24 +161,11 @@ func (h *BatchHandler) view() batchHandlerView {
 	defer h.mu.Unlock()
 
 	return batchHandlerView{
-		pausingCtx:  h.pausingCtx,    // front channel handler -> consumer
-		paused:      h.pausedCancel,  // back channel consumer -> handler
-		resumingCtx: h.resumingCtx,   // front channel handler -> consumer
-		resumed:     h.resumedCancel, // back channel consumer-> handler
+		pausing:  h.pausing,  // front channel handler -> consumer
+		paused:   h.paused,   // back channel consumer -> handler
+		resuming: h.resuming, // front channel handler -> consumer
+		resumed:  h.resumed,  // back channel consumer-> handler
 
-		Queue:          h.queue,
-		HandlerFunc:    h.handlerFunc,
-		MaxBatchSize:   h.maxBatchSize,
-		FlushTimeout:   h.flushTimeout,
-		ConsumeOptions: h.consumeOpts,
-	}
-}
-
-func (h *BatchHandler) View() BatchHandlerView {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-
-	return BatchHandlerView{
 		Queue:          h.queue,
 		HandlerFunc:    h.handlerFunc,
 		MaxBatchSize:   h.maxBatchSize,
@@ -154,6 +184,24 @@ func (h *BatchHandler) SetQueue(queue string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.queue = queue
+}
+
+func (h *BatchHandler) SetHandlerFunc(hf BatchHandlerFunc) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.handlerFunc = hf
+}
+
+func (h *BatchHandler) ConsumeOptions() ConsumeOptions {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.consumeOpts
+}
+
+func (h *BatchHandler) SetConsumeOptions(consumeOpts ConsumeOptions) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.consumeOpts = consumeOpts
 }
 
 func (h *BatchHandler) MaxBatchSize() int {
@@ -186,20 +234,15 @@ func (h *BatchHandler) SetFlushTimeout(flushTimeout time.Duration) {
 	h.flushTimeout = flushTimeout
 }
 
-func (h *BatchHandler) ConsumeOptions() ConsumeOptions {
+// close closes all active contexts
+// in order to prevent dangling goroutines
+func (h *BatchHandler) close() {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return h.consumeOpts
-}
 
-func (h *BatchHandler) SetConsumeOptions(consumeOpts ConsumeOptions) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	h.consumeOpts = consumeOpts
-}
-
-func (h *BatchHandler) SetHandlerFunc(hf BatchHandlerFunc) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	h.handlerFunc = hf
+	h.pausing.Cancel()
+	h.paused.Cancel()
+	h.resuming.Cancel()
+	h.resumed.Cancel()
+	h.closed = true
 }

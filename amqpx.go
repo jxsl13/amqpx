@@ -1,7 +1,6 @@
 package amqpx
 
 import (
-	"context"
 	"fmt"
 	"strings"
 	"sync"
@@ -114,10 +113,7 @@ func (a *AMQPX) RegisterBatchHandler(queue string, handlerFunc pool.BatchHandler
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	// TODO: do we have any better contexts to pass here?
-	// Most other contexts are initialized upon startup like a.sub.ctx
-	ctx := context.Background()
-	handler := pool.NewBatchHandler(ctx, queue, handlerFunc, option...)
+	handler := pool.NewBatchHandler(queue, handlerFunc, option...)
 	a.batchHandlers = append(a.batchHandlers, handler)
 	return handler
 }

@@ -160,7 +160,6 @@ func (h *Handler) IsActive(ctx context.Context) (active bool, err error) {
 	}
 }
 
-// TODO: can we remove view?
 func (h *Handler) view() handlerView {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -170,17 +169,6 @@ func (h *Handler) view() handlerView {
 		paused:         h.paused,   // back channel consumer -> handler
 		resuming:       h.resuming, // front channel handler -> consumer
 		resumed:        h.resumed,  // back channel consumer-> handler
-		Queue:          h.queue,
-		HandlerFunc:    h.handlerFunc,
-		ConsumeOptions: h.consumeOpts,
-	}
-}
-
-func (h *Handler) View() HandlerView {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-
-	return HandlerView{
 		Queue:          h.queue,
 		HandlerFunc:    h.handlerFunc,
 		ConsumeOptions: h.consumeOpts,

@@ -1,30 +1,19 @@
 package pool
 
 import (
-	"context"
 	"time"
 )
 
-// batchHandlerView is a a snapshot of the current handler's configuration and runtime state.
+// batchHandlerView is a read only snapshot of the current handler's configuration and runtime state.
 // This internal data structure is used in the corresponsing consumer.
 type batchHandlerView struct {
 	// called in the consumer function & wrapper
-	pausingCtx context.Context
-	paused     context.CancelFunc
+	pausing done
+	paused  cancel
 
-	resumingCtx context.Context
-	resumed     context.CancelFunc
+	resuming done
+	resumed  cancel
 
-	Queue        string
-	HandlerFunc  BatchHandlerFunc
-	MaxBatchSize int
-	FlushTimeout time.Duration
-	ConsumeOptions
-}
-
-// BatchHandlerView is a a snapshot of the current handler's configuration and runtime state.
-// Interesting for api endpoints that fetch status data.
-type BatchHandlerView struct {
 	Queue        string
 	HandlerFunc  BatchHandlerFunc
 	MaxBatchSize int

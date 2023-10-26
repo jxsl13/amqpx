@@ -31,16 +31,6 @@ func (s *Subscriber) Close() {
 	s.debugSimple("closing subscriber...")
 	defer s.infoSimple("closed")
 
-	for _, h := range s.handlers {
-		h.close()
-	}
-
-	/*
-		for _, h := range s.batchHandlers {
-			// TODO: close
-		}
-	*/
-
 	s.cancel()
 	s.wg.Wait()
 
@@ -151,7 +141,7 @@ func (s *Subscriber) RegisterHandler(handler *Handler) {
 // This is where your flushTimeout comes into play. In order to wait at most for the period of flushTimeout until a new message arrives
 // before processing the batch in your handler function.
 func (s *Subscriber) RegisterBatchHandlerFunc(queue string, hf BatchHandlerFunc, options ...BatchHandlerOption) *BatchHandler {
-	handler := NewBatchHandler(s.ctx, queue, hf, options...)
+	handler := NewBatchHandler(queue, hf, options...)
 	s.RegisterBatchHandler(handler)
 	return handler
 }
@@ -169,13 +159,15 @@ func (s *Subscriber) RegisterBatchHandler(handler *BatchHandler) {
 	defer s.mu.Unlock()
 	s.batchHandlers = append(s.batchHandlers, handler)
 
+	view := handler.view()
+
 	s.log.WithFields(withConsumerIfSet(handler.ConsumeOptions().ConsumerTag,
 		map[string]any{
 			"subscriber":   s.pool.Name(),
-			"queue":        handler.Queue(),
-			"maxBatchSize": handler.MaxBatchSize(), // TODO: optimize so that we don't call getters multiple times (mutex contention)
-			"flushTimeout": handler.FlushTimeout(),
-		})).Info("registered batch handler")
+			"queue":        view.Queue,
+			"maxBatchSize": view.MaxBatchSize, // TODO: optimize so that we don't call getters multiple times (mutex contention)
+			"flushTimeout": handler.FlushTimeout,
+		})).Info("registered batch message handler")
 }
 
 // Start starts the consumers for all registered handler functions
@@ -346,6 +338,12 @@ func (s *Subscriber) ackPostHandle(view handlerView, deliveryTag uint64, exchang
 func (s *Subscriber) batchConsumer(h *BatchHandler, wg *sync.WaitGroup) {
 	defer wg.Done()
 
+	// initialize all handler contexts
+	// to be in state resuming
+	h.start(s.ctx)
+	// close all contexts
+	defer h.close()
+
 	var err error
 	for {
 		// immutable view for every new loop iteration
@@ -353,7 +351,7 @@ func (s *Subscriber) batchConsumer(h *BatchHandler, wg *sync.WaitGroup) {
 		select {
 		case <-s.catchShutdown():
 			return
-		case <-hv.resumingCtx.Done():
+		case <-hv.resuming.Done():
 			err = s.batchConsume(hv)
 			if errors.Is(err, ErrClosed) {
 				return
@@ -380,9 +378,12 @@ func (s *Subscriber) batchConsume(view batchHandlerView) (err error) {
 			s.infoConsumer(view.ConsumerTag, "closed")
 		} else {
 			select {
-			case <-view.pausingCtx.Done():
+			case <-view.pausing.Done():
 				// expected closing due to context cancelation
+				// cancel errors the underlying channel
+				// A canceled session is an erred session.
 				s.pool.ReturnSession(session, true)
+				view.paused.Cancel()
 				s.infoConsumer(view.ConsumerTag, "paused")
 			default:
 				// actual error
@@ -394,7 +395,7 @@ func (s *Subscriber) batchConsume(view batchHandlerView) (err error) {
 
 	// got a working session
 	delivery, err := session.ConsumeWithContext(
-		view.pausingCtx,
+		view.pausing.Context(),
 		view.Queue,
 		view.ConsumeOptions,
 	)
@@ -402,7 +403,7 @@ func (s *Subscriber) batchConsume(view batchHandlerView) (err error) {
 		return err
 	}
 
-	view.resumed()
+	view.resumed.Cancel()
 	s.infoConsumer(view.ConsumerTag, "started")
 
 	// preallocate memory for batch
