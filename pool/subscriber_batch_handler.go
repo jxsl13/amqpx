@@ -153,10 +153,16 @@ func (h *BatchHandler) Pause(ctx context.Context) error {
 func (h *BatchHandler) Resume(ctx context.Context) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.pausing.Reset(h.parentCtx)
-	h.paused.Reset(h.parentCtx)
+	err := h.pausing.Reset(h.parentCtx)
+	if err != nil {
+		return fmt.Errorf("%w: queue: %s: %v", ErrResumeFailed, h.queue, err)
+	}
+	err = h.paused.Reset(h.parentCtx)
+	if err != nil {
+		return fmt.Errorf("%w: queue: %s: %v", ErrResumeFailed, h.queue, err)
+	}
 
-	err := h.resuming.CancelWithContext(h.parentCtx) // must be called last
+	err = h.resuming.CancelWithContext(h.parentCtx) // must be called last
 	if err != nil {
 		return fmt.Errorf("%w: queue: %s: %v", ErrResumeFailed, h.queue, err)
 	}
