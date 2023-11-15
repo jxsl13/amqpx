@@ -212,7 +212,6 @@ func (a *AMQPX) Start(connectUrl string, options ...Option) (err error) {
 				return
 			}
 			a.sub = pool.NewSubscriber(subPool,
-				pool.SubscriberWitCloseTimeout(a.closeTimeout),
 				pool.SubscriberWithAutoClosePool(true),
 			)
 			for _, h := range a.handlers {
@@ -240,7 +239,7 @@ func (a *AMQPX) close() (err error) {
 	a.closeOnce.Do(func() {
 
 		if a.sub != nil {
-			err = errors.Join(err, a.sub.Close())
+			a.sub.Close()
 		}
 
 		if a.pub != nil {
@@ -367,6 +366,6 @@ func Get(queue string, autoAck bool) (msg pool.Delivery, ok bool, err error) {
 }
 
 // Reset closes the current package and resets its state before it was initialized and started.
-func Reset() {
-	amqpx.Reset()
+func Reset() error {
+	return amqpx.Reset()
 }
