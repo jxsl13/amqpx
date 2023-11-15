@@ -15,10 +15,9 @@ import (
 func TestNewSession(t *testing.T) {
 
 	c, err := pool.NewConnection(
-		"amqp://admin:password@localhost:5672",
+		connectURL,
 		"TestNewSession",
 		pool.ConnectionWithLogger(logging.NewTestLogger(t)),
-		pool.ConnectionWithSlowClose(true),
 	)
 	if err != nil {
 		assert.NoError(t, err)
@@ -135,10 +134,9 @@ func TestNewSession(t *testing.T) {
 func TestNewSessionDisconnect(t *testing.T) {
 
 	c, err := pool.NewConnection(
-		"amqp://admin:password@localhost:5672",
+		connectURL,
 		"TestNewSessionDisconnect",
 		pool.ConnectionWithLogger(logging.NewTestLogger(t)),
-		pool.ConnectionWithSlowClose(true),
 	)
 	if err != nil {
 		assert.NoError(t, err)
@@ -326,10 +324,9 @@ func TestNewSessionQueueDeclarePassive(t *testing.T) {
 	}()
 
 	c, err := pool.NewConnection(
-		"amqp://admin:password@localhost:5672",
+		connectURL,
 		"TestNewSessionQueueDeclarePassive",
 		pool.ConnectionWithLogger(logging.NewTestLogger(t)),
-		pool.ConnectionWithSlowClose(true),
 	)
 	if err != nil {
 		assert.NoError(t, err)

@@ -39,8 +39,6 @@ type Connection struct {
 	cancel context.CancelFunc
 
 	log logging.Logger
-
-	slowClose bool
 }
 
 // NewConnection creates a connection wrapper.
@@ -54,7 +52,6 @@ func NewConnection(connectUrl, name string, options ...ConnectionOption) (*Conne
 		ConnectionTimeout: 30 * time.Second,
 		BackoffPolicy:     newDefaultBackoffPolicy(time.Second, 15*time.Second),
 		Ctx:               context.Background(),
-		SlowClose:         false,
 	}
 
 	// apply options
@@ -96,8 +93,6 @@ func NewConnection(connectUrl, name string, options ...ConnectionOption) (*Conne
 
 		log:          option.Logger,
 		lastConnLoss: time.Now(),
-
-		slowClose: option.SlowClose, // for leak tests
 	}
 
 	err = conn.Connect()
@@ -133,28 +128,7 @@ func (ch *Connection) Close() (err error) {
 	ch.cancel() // close derived context
 
 	if !ch.isClosed() {
-		// wait for dangling goroutines to timeout before closing.
-		// upon recovery the standard library still has some goroutines open
-		// that are only closed upon some tcp connection timeout.
-		// Those routinges poll the network.
-		awaitTimeout := time.Until(ch.lastConnLoss.Add(ch.conn.Config.Heartbeat))
-		if ch.slowClose && awaitTimeout > 0 {
-			// in long running applications that were able to reestablish their connection
-			// this sleep should not affect their shutdown duration much.
-			// in short runing applications like the tests, shutdown takes longer, as we
-			// frequently kill the network connection in order to test the reconnects
-			// which requires to wait for the background network connections to timeout
-			// in order to prevent dangling goroutines from being killed.
-			time.Sleep(awaitTimeout)
-		}
-
 		return ch.conn.Close() // close internal channel
-	} else {
-		// same wait as above case
-		awaitTimeout := time.Until(ch.lastConnLoss.Add(ch.heartbeat))
-		if ch.slowClose && awaitTimeout > 0 {
-			time.Sleep(awaitTimeout)
-		}
 	}
 
 	return nil

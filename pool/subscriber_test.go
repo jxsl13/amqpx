@@ -15,7 +15,7 @@ import (
 func TestSubscriber(t *testing.T) {
 
 	sessions := 2 // publisher sessions + consumer sessions
-	p, err := pool.New("amqp://admin:password@localhost:5672", 1, sessions, pool.WithConfirms(true), pool.WithLogger(logging.NewTestLogger(t)))
+	p, err := pool.New(connectURL, 1, sessions, pool.WithConfirms(true), pool.WithLogger(logging.NewTestLogger(t)))
 	if err != nil {
 		assert.NoError(t, err)
 		return
@@ -123,7 +123,7 @@ func TestBatchSubscriber(t *testing.T) {
 		numMessages  = 50
 		batchTimeout = 10 * time.Second // keep this at a higher number for slow machines
 	)
-	p, err := pool.New("amqp://admin:password@localhost:5672", 1, sessions, pool.WithConfirms(true), pool.WithLogger(logging.NewTestLogger(t)))
+	p, err := pool.New(connectURL, 1, sessions, pool.WithConfirms(true), pool.WithLogger(logging.NewTestLogger(t)))
 	if err != nil {
 		assert.NoError(t, err)
 		return

@@ -44,8 +44,6 @@ func New(connectUrl string, numConns, numSessions int, options ...Option) (*Pool
 			TLSConfig:             nil,
 
 			Logger: logger,
-
-			SlowClose: false, // needed for goroutine leak tests
 		},
 		spo: sessionPoolOption{
 			Size:        numSessions,

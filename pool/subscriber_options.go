@@ -2,6 +2,7 @@ package pool
 
 import (
 	"context"
+	"time"
 
 	"github.com/jxsl13/amqpx/logging"
 )
@@ -9,6 +10,8 @@ import (
 type subscriberOption struct {
 	Ctx           context.Context
 	AutoClosePool bool
+
+	CloseTimeout time.Duration
 
 	Logger logging.Logger
 }
@@ -30,5 +33,15 @@ func SubscriberWithLogger(logger logging.Logger) SubscriberOption {
 func SubscriberWithAutoClosePool(autoClose bool) SubscriberOption {
 	return func(co *subscriberOption) {
 		co.AutoClosePool = autoClose
+	}
+}
+
+func SubscriberWitCloseTimeout(timeout time.Duration) SubscriberOption {
+	return func(co *subscriberOption) {
+		if timeout <= 0 {
+			co.CloseTimeout = 5 * time.Second
+		} else {
+			co.CloseTimeout = timeout
+		}
 	}
 }

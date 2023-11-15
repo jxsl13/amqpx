@@ -14,7 +14,7 @@ import (
 func TestPublisher(t *testing.T) {
 	connections := 1
 	sessions := 10 // publisher sessions + consumer sessions
-	p, err := pool.New("amqp://admin:password@localhost:5672",
+	p, err := pool.New(connectURL,
 		connections,
 		sessions,
 		pool.WithName("TestPublisher"),

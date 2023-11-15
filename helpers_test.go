@@ -97,7 +97,7 @@ func createQueue(name string, t *pool.Topologer) (err error) {
 		if err != nil {
 			return fmt.Errorf("queue %s was found even tho it should not exist: %w", name, err)
 		}
-		return fmt.Errorf("queue %s was found even tho it should not exist: %v", name, err)
+		return fmt.Errorf("queue %s was found even tho it should not exist", name)
 	}
 
 	_, err = t.QueueDeclare(name)
@@ -136,7 +136,7 @@ func createExchange(name string, t *pool.Topologer) (err error) {
 		if err != nil {
 			return fmt.Errorf("exchange %s was found even tho it should not exist: %w", name, err)
 		}
-		return fmt.Errorf("exchange %s was found even tho it should not exist: %v", name, err)
+		return fmt.Errorf("exchange %s was found even tho it should not exist", name)
 	}
 
 	err = t.ExchangeDeclare(name, pool.ExchangeKindTopic)

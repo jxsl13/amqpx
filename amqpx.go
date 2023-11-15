@@ -2,6 +2,7 @@ package amqpx
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -210,14 +211,20 @@ func (a *AMQPX) Start(connectUrl string, options ...Option) (err error) {
 			if err != nil {
 				return
 			}
-			a.sub = pool.NewSubscriber(subPool, pool.SubscriberWithAutoClosePool(true))
+			a.sub = pool.NewSubscriber(subPool,
+				pool.SubscriberWitCloseTimeout(a.closeTimeout),
+				pool.SubscriberWithAutoClosePool(true),
+			)
 			for _, h := range a.handlers {
 				a.sub.RegisterHandler(h)
 			}
 			for _, bh := range a.batchHandlers {
 				a.sub.RegisterBatchHandler(bh)
 			}
-			a.sub.Start()
+			err = a.sub.Start()
+			if err != nil {
+				return
+			}
 		}
 	})
 	return err
@@ -233,15 +240,14 @@ func (a *AMQPX) close() (err error) {
 	a.closeOnce.Do(func() {
 
 		if a.sub != nil {
-			a.sub.Close()
+			err = errors.Join(err, a.sub.Close())
 		}
 
 		if a.pub != nil {
 			a.pub.Close()
 		}
 
-		if a.pubPool != nil {
-
+		if a.pubPool != nil && len(a.topologyDeleters) > 0 {
 			ctx, cancel := context.WithTimeout(context.Background(), a.closeTimeout)
 			defer cancel()
 
@@ -251,13 +257,11 @@ func (a *AMQPX) close() (err error) {
 				pool.TopologerWithTransientSessions(true),
 			)
 			for _, f := range a.topologyDeleters {
-				e := f(topologer)
-				if e != nil {
-					err = e
-					return
-				}
+				err = errors.Join(err, f(topologer))
 			}
+		}
 
+		if a.pubPool != nil {
 			// finally close the publisher pool
 			// which is also used for topology.
 			a.pubPool.Close()
