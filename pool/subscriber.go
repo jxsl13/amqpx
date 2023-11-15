@@ -25,25 +25,11 @@ type Subscriber struct {
 	wg sync.WaitGroup
 
 	log logging.Logger
-
-	closeTimeout time.Duration
 }
 
-func (s *Subscriber) Close() (err error) {
+func (s *Subscriber) Close() {
 	s.debugSimple("closing subscriber...")
 	defer s.infoSimple("closed")
-
-	ctx, cancel := context.WithTimeout(context.Background(), s.closeTimeout)
-	defer cancel()
-	for _, h := range s.handlers {
-		err = errors.Join(err, h.Pause(ctx))
-		h.close()
-	}
-
-	for _, bh := range s.batchHandlers {
-		err = errors.Join(err, bh.Pause(ctx))
-		bh.close()
-	}
 
 	s.cancel()
 	s.wg.Wait()
@@ -51,7 +37,6 @@ func (s *Subscriber) Close() (err error) {
 	if s.autoClosePool {
 		s.pool.Close()
 	}
-	return err
 }
 
 // Wait waits until all consumers have been closed.
@@ -70,7 +55,6 @@ func NewSubscriber(p *Pool, options ...SubscriberOption) *Subscriber {
 	option := subscriberOption{
 		Ctx:           p.Context(),
 		AutoClosePool: false,
-		CloseTimeout:  5 * time.Second,
 
 		Logger: p.sp.log, // derive logger from session pool
 	}
@@ -84,7 +68,6 @@ func NewSubscriber(p *Pool, options ...SubscriberOption) *Subscriber {
 	sub := &Subscriber{
 		pool:          p,
 		autoClosePool: option.AutoClosePool,
-		closeTimeout:  option.CloseTimeout,
 		ctx:           ctx,
 		cancel:        cancel,
 
@@ -221,6 +204,7 @@ func (s *Subscriber) Start() (err error) {
 	for _, bh := range s.batchHandlers {
 		s.wg.Add(1)
 		go s.batchConsumer(bh, &s.wg)
+
 		err = bh.awaitResumed(s.ctx)
 		if err != nil {
 			return fmt.Errorf("failed to start batch consumer for queue %s: %w", bh.Queue(), err)
@@ -231,6 +215,7 @@ func (s *Subscriber) Start() (err error) {
 
 func (s *Subscriber) consumer(h *Handler, wg *sync.WaitGroup) {
 	defer wg.Done()
+	defer h.close()
 
 	var err error
 	// trigger initial startup
@@ -240,7 +225,6 @@ func (s *Subscriber) consumer(h *Handler, wg *sync.WaitGroup) {
 		s.error(opts.ConsumerTag, opts.Queue, err, "failed to start consumer")
 		return
 	}
-	defer h.close()
 
 	for {
 		select {
@@ -367,8 +351,9 @@ func (s *Subscriber) ackPostHandle(opts HandlerView, deliveryTag uint64, exchang
 
 func (s *Subscriber) batchConsumer(h *BatchHandler, wg *sync.WaitGroup) {
 	defer wg.Done()
-	var err error
+	defer h.close()
 
+	var err error
 	// initialize all handler contexts
 	// to be in state resuming
 	opts, err := h.start(s.ctx)
@@ -376,8 +361,6 @@ func (s *Subscriber) batchConsumer(h *BatchHandler, wg *sync.WaitGroup) {
 		s.error(opts.ConsumerTag, opts.Queue, err, "failed to start batch handler consumer")
 		return
 	}
-	// close all contexts
-	defer h.close()
 
 	for {
 		select {
