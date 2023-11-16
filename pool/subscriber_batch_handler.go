@@ -64,6 +64,16 @@ type BatchHandler struct {
 	sc *stateContext
 }
 
+// BatchHandlerConfig is a read only snapshot of the current handler's configuration.
+type BatchHandlerConfig struct {
+	Queue string
+	ConsumeOptions
+
+	HandlerFunc  BatchHandlerFunc
+	MaxBatchSize int
+	FlushTimeout time.Duration
+}
+
 func (h *BatchHandler) close() {
 	h.sc.Close()
 }
@@ -71,22 +81,22 @@ func (h *BatchHandler) close() {
 // reset creates the initial state of the object
 // initial state is the transitional state resuming (= startup and resuming after pause)
 // the passed context is the parent context of all new contexts that spawn from this
-func (h *BatchHandler) start(ctx context.Context) (opts BatchHandlerView, err error) {
+func (h *BatchHandler) start(ctx context.Context) (opts BatchHandlerConfig, err error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	opts = h.optionsUnguarded()
+	opts = h.configUnguarded()
 	err = h.sc.Start(ctx)
 	return opts, err
 }
 
-func (h *BatchHandler) Options() BatchHandlerView {
+func (h *BatchHandler) Config() BatchHandlerConfig {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return h.optionsUnguarded()
+	return h.configUnguarded()
 }
 
-func (h *BatchHandler) optionsUnguarded() BatchHandlerView {
-	return BatchHandlerView{
+func (h *BatchHandler) configUnguarded() BatchHandlerConfig {
+	return BatchHandlerConfig{
 		Queue:          h.queue,
 		HandlerFunc:    h.handlerFunc,
 		MaxBatchSize:   h.maxBatchSize,

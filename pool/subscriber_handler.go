@@ -55,6 +55,15 @@ type Handler struct {
 	sc *stateContext
 }
 
+// HandlerConfig is a read only snapshot of the current handler's configuration.
+// This internal data structure is used in the corresponsing consumer.
+type HandlerConfig struct {
+	Queue string
+	ConsumeOptions
+
+	HandlerFunc HandlerFunc
+}
+
 func (h *Handler) close() {
 	h.sc.Close()
 }
@@ -63,23 +72,23 @@ func (h *Handler) close() {
 // initial state is the transitional state resuming (= startup and resuming after pause)
 // the passed context is the parent context of all new contexts that spawn from this.
 // After start has been called, all contexts are alive except for the resuming context which is canceled by default.
-func (h *Handler) start(ctx context.Context) (opts HandlerView, err error) {
+func (h *Handler) start(ctx context.Context) (opts HandlerConfig, err error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	opts = h.optionsUnguarded()
+	opts = h.configUnguarded()
 	err = h.sc.Start(ctx)
 	return opts, err
 
 }
 
-func (h *Handler) Options() HandlerView {
+func (h *Handler) Config() HandlerConfig {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return h.optionsUnguarded()
+	return h.configUnguarded()
 }
 
-func (h *Handler) optionsUnguarded() HandlerView {
-	return HandlerView{
+func (h *Handler) configUnguarded() HandlerConfig {
+	return HandlerConfig{
 		Queue:          h.queue,
 		HandlerFunc:    h.handlerFunc,
 		ConsumeOptions: h.consumeOpts,
