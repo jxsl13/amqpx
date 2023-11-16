@@ -241,7 +241,7 @@ func (s *Session) AwaitConfirm(ctx context.Context, expectedTag uint64) error {
 	select {
 	case confirm, ok := <-s.confirms:
 		if !ok {
-			err := s.Error()
+			err := s.error()
 			if err != nil {
 				return err
 			}
