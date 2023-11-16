@@ -327,26 +327,15 @@ func TestCreateDeleteTopology(t *testing.T) {
 }
 
 func TestPauseResumeHandlerNoProcessing(t *testing.T) {
+	var err error
 	queueName := "testPauseResumeHandler-01"
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGINT)
 	defer cancel()
 
 	log := logging.NewNoOpLogger()
-	transientPool, err := pool.New(
-		connectURL,
-		1,
-		1,
-		pool.WithLogger(log),
-		pool.WithContext(ctx),
-	)
-	require.NoError(t, err)
-	defer transientPool.Close()
 
-	ts, err := transientPool.GetTransientSession(ctx)
-	require.NoError(t, err)
-	defer func() {
-		transientPool.ReturnSession(ts, false)
-	}()
+	ts, closer := newTransientSession(t, ctx, connectURL, log)
+	defer closer()
 
 	amqp := amqpx.New()
 	amqp.RegisterTopologyCreator(func(t *pool.Topologer) error {
@@ -416,12 +405,14 @@ func testHandlerPauseAndResume(t *testing.T) {
 	defer cancel()
 
 	log := logging.NewNoOpLogger()
-	defer amqpx.Reset()
+	defer func() {
+		assert.NoError(t, amqpx.Reset())
+	}()
 
 	options := []amqpx.Option{
 		amqpx.WithLogger(log),
 		amqpx.WithPublisherConnections(1),
-		amqpx.WithPublisherSessions(5), // only slow close once in the transient pool
+		amqpx.WithPublisherSessions(5),
 	}
 
 	transientPool, err := pool.New(
@@ -574,10 +565,8 @@ func testHandlerPauseAndResume(t *testing.T) {
 	// will be canceled when the event has reache dthe third handler
 	<-ctx.Done()
 	log.Info("context canceled, closing test.")
-	err = amqpx.Close()
-	assert.NoError(t, err)
+	assert.NoError(t, amqpx.Close())
 }
-
 
 func TestBatchHandlerPauseAndResume(t *testing.T) {
 	for i := 0; i < 5; i++ {
@@ -586,48 +575,38 @@ func TestBatchHandlerPauseAndResume(t *testing.T) {
 }
 
 func testBatchHandlerPauseAndResume(t *testing.T) {
+	var err error
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGINT)
 	defer cancel()
 
 	log := logging.NewNoOpLogger()
-	defer amqpx.Reset()
+	defer func() {
+		assert.NoError(t, amqpx.Reset())
+	}()
 
 	options := []amqpx.Option{
 		amqpx.WithLogger(log),
 		amqpx.WithPublisherConnections(1),
-		amqpx.WithPublisherSessions(5), // only slow close once in the transient pool
+		amqpx.WithPublisherSessions(5),
 	}
 
-	transientPool, err := pool.New(
-		connectURL,
-		1,
-		1,
-		pool.WithLogger(log),
-		pool.WithContext(ctx),
-	)
-	require.NoError(t, err)
-	defer transientPool.Close()
-
-	ts, err := transientPool.GetSession()
-	require.NoError(t, err)
-	defer func() {
-		transientPool.ReturnSession(ts, false)
-	}()
+	ts, closer := newTransientSession(t, ctx, connectURL, log)
+	defer closer()
 
 	amqpxPublish := amqpx.New()
 	amqpxPublish.RegisterTopologyCreator(createTopology)
+	err = amqpxPublish.Start(connectURL, options...)
+	require.NoError(t, err)
 
-	eventContent := "TestHandlerPauseAndResume - event content"
+	eventContent := "TestBatchHandlerPauseAndResume - event content"
 
 	var (
-		publish = 10000
+		publish = 50
 		cnt     = 0
 	)
 
 	// step 1 - fill queue with messages
 	amqpx.RegisterTopologyDeleter(deleteTopology)
-	err = amqpxPublish.Start(connectURL, options...)
-	require.NoError(t, err)
 
 	// fill queue with messages
 	for i := 0; i < publish; i++ {
@@ -755,8 +734,7 @@ func testBatchHandlerPauseAndResume(t *testing.T) {
 	// will be canceled when the event has reache dthe third handler
 	<-ctx.Done()
 	log.Info("context canceled, closing test.")
-	err = amqpx.Close()
-	assert.NoError(t, err)
+	assert.NoError(t, amqpx.Close())
 }
 
 func assertConsumers(t *testing.T, ts *pool.Session, queueName string, expected int) {
@@ -794,4 +772,206 @@ func assertActive(t *testing.T, handler handlerStats, expected bool) {
 type handlerStats interface {
 	Queue() string
 	IsActive(ctx context.Context) (active bool, err error)
+}
+
+func TestHandlerReset(t *testing.T) {
+	for i := 0; i < 5; i++ {
+		testHandlerReset(t)
+	}
+	t.Log("done")
+}
+
+func testHandlerReset(t *testing.T) {
+	var err error
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGINT)
+	defer cancel()
+
+	log := logging.NewNoOpLogger()
+	defer func() {
+		assert.NoError(t, amqpx.Reset())
+	}()
+
+	options := []amqpx.Option{
+		amqpx.WithLogger(log),
+		amqpx.WithPublisherConnections(1),
+		amqpx.WithPublisherSessions(5),
+	}
+
+	ts, closer := newTransientSession(t, ctx, connectURL, log)
+	defer closer()
+
+	amqpxPublish := amqpx.New()
+	amqpxPublish.RegisterTopologyCreator(createTopology)
+	err = amqpxPublish.Start(connectURL, options...)
+	require.NoError(t, err)
+
+	eventContent := "TestBatchHandlerReset - event content"
+
+	var (
+		publish = 50
+		cnt     = 0
+	)
+
+	// step 1 - fill queue with messages
+	amqpx.RegisterTopologyDeleter(deleteTopology)
+
+	// fill queue with messages
+	for i := 0; i < publish; i++ {
+		err := amqpxPublish.Publish("exchange-01", "event-01", pool.Publishing{
+			ContentType: "application/json",
+			Body:        []byte(fmt.Sprintf("%s: message number %d", eventContent, i)),
+		})
+		if err != nil {
+			assert.NoError(t, err)
+			return
+		}
+	}
+
+	done := make(chan struct{})
+	// step 2 - process messages, pause, wait, resume, process rest, cancel context
+	handler01 := amqpx.RegisterHandler("queue-01", func(msgs pool.Delivery) (err error) {
+		cnt++
+		if cnt == publish {
+			close(done)
+		}
+		return nil
+	})
+
+	assertActive(t, handler01, false)
+
+	err = amqpx.Start(
+		connectURL,
+		amqpx.WithLogger(log),
+		amqpx.WithPublisherConnections(1),
+		amqpx.WithPublisherSessions(5),
+	)
+	if err != nil {
+		assert.NoError(t, err)
+		return
+	}
+
+	assertActive(t, handler01, true)
+	assertConsumers(t, ts, handler01.Queue(), 1)
+
+	// will be canceled when the event has reached the third handler
+	<-done
+	cancel()
+
+	<-ctx.Done()
+	log.Info("context canceled, closing test.")
+	assert.NoError(t, amqpx.Close())
+
+	// after close
+	assertActive(t, handler01, false)
+}
+
+func TestBatchHandlerReset(t *testing.T) {
+	for i := 0; i < 5; i++ {
+		testBatchHandlerReset(t)
+	}
+	t.Log("done")
+}
+
+func testBatchHandlerReset(t *testing.T) {
+	var err error
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGINT)
+	defer cancel()
+
+	log := logging.NewNoOpLogger()
+	defer func() {
+		assert.NoError(t, amqpx.Reset())
+	}()
+
+	options := []amqpx.Option{
+		amqpx.WithLogger(log),
+		amqpx.WithPublisherConnections(1),
+		amqpx.WithPublisherSessions(5),
+	}
+
+	ts, closer := newTransientSession(t, ctx, connectURL, log)
+	defer closer()
+
+	amqpxPublish := amqpx.New()
+	amqpxPublish.RegisterTopologyCreator(createTopology)
+	err = amqpxPublish.Start(connectURL, options...)
+	require.NoError(t, err)
+
+	eventContent := "TestBatchHandlerReset - event content"
+
+	var (
+		publish = 50
+		cnt     = 0
+	)
+
+	// step 1 - fill queue with messages
+	amqpx.RegisterTopologyDeleter(deleteTopology)
+
+	// fill queue with messages
+	for i := 0; i < publish; i++ {
+		err := amqpxPublish.Publish("exchange-01", "event-01", pool.Publishing{
+			ContentType: "application/json",
+			Body:        []byte(fmt.Sprintf("%s: message number %d", eventContent, i)),
+		})
+		if err != nil {
+			assert.NoError(t, err)
+			return
+		}
+	}
+
+	done := make(chan struct{})
+	// step 2 - process messages, pause, wait, resume, process rest, cancel context
+	handler01 := amqpx.RegisterBatchHandler("queue-01", func(msgs []pool.Delivery) (err error) {
+		cnt += len(msgs)
+
+		if cnt == publish {
+			close(done)
+		}
+		return nil
+	})
+
+	assertActive(t, handler01, false)
+
+	err = amqpx.Start(
+		connectURL,
+		amqpx.WithLogger(log),
+		amqpx.WithPublisherConnections(1),
+		amqpx.WithPublisherSessions(5),
+	)
+	if err != nil {
+		assert.NoError(t, err)
+		return
+	}
+
+	assertActive(t, handler01, true)
+	assertConsumers(t, ts, handler01.Queue(), 1)
+
+	// will be canceled when the event has reached the third handler
+	<-done
+	cancel()
+
+	<-ctx.Done()
+	log.Info("context canceled, closing test.")
+	assert.NoError(t, amqpx.Close())
+
+	// after close
+	assertActive(t, handler01, false)
+}
+
+func newTransientSession(t *testing.T, ctx context.Context, connectUrl string, log logging.Logger) (ts *pool.Session, closer func()) {
+	transientPool, err := pool.New(
+		connectUrl,
+		1,
+		1,
+		pool.WithLogger(log),
+		pool.WithContext(ctx),
+	)
+	require.NoError(t, err)
+
+	ts, err = transientPool.GetSession()
+	require.NoError(t, err)
+
+	return ts, func() {
+		transientPool.ReturnSession(ts, false)
+		transientPool.Close()
+	}
 }

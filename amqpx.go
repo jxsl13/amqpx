@@ -51,6 +51,27 @@ func New() *AMQPX {
 	}
 }
 
+// Reset closes the current package and resets its state before it was initialized and started.
+func (a *AMQPX) Reset() error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	err := a.close()
+
+	a.pubPool = nil
+	a.pub = nil
+	a.sub = nil
+
+	a.handlers = make([]*pool.Handler, 0)
+	a.batchHandlers = make([]*pool.BatchHandler, 0)
+
+	a.topologies = make([]TopologyFunc, 0)
+	a.topologyDeleters = make([]TopologyFunc, 0)
+
+	a.startOnce = sync.Once{}
+	a.closeOnce = sync.Once{}
+	return err
+}
+
 // NewURL creates a new connection string for the NewSessionFactory
 // hostname: 	e.g. localhost
 // port:        e.g. 5672
@@ -190,10 +211,13 @@ func (a *AMQPX) Start(connectUrl string, options ...Option) (err error) {
 		// create subscriber pool in case handlers were registered
 		requiredHandlers := len(a.handlers) + len(a.batchHandlers)
 		if requiredHandlers > 0 {
-			sessions := requiredHandlers
-			connections := option.SubscriberConnections
-			if connections < 0 || sessions < connections {
-				connections = sessions
+			var (
+				sessions    = requiredHandlers
+				connections = requiredHandlers
+			)
+
+			if option.SubscriberConnections > connections {
+				connections = option.SubscriberConnections
 			}
 
 			// subscriber needs as many channels as there are handler functions
@@ -291,25 +315,6 @@ func (a *AMQPX) Get(queue string, autoAck bool) (msg pool.Delivery, ok bool, err
 
 	// publisher is used because this is a testing method for the publisher
 	return a.pub.Get(queue, autoAck)
-}
-
-// Reset closes the current package and resets its state before it was initialized and started.
-func (a *AMQPX) Reset() error {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	err := a.close()
-
-	a.pubPool = nil
-	a.pub = nil
-	a.sub = nil
-
-	a.handlers = make([]*pool.Handler, 0)
-	a.topologies = make([]TopologyFunc, 0)
-	a.topologyDeleters = make([]TopologyFunc, 0)
-
-	a.startOnce = sync.Once{}
-	a.closeOnce = sync.Once{}
-	return err
 }
 
 // RegisterTopology registers a topology creating function that is called upon
