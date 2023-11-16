@@ -14,6 +14,7 @@
 - connection & session (channel) pooling
 - reconnect handling
 - batch processing
+- pause/resume consumers
 - clean shutdown handling
 - sane defaults
 - resilience & robustness over performance by default (publisher & subscriber acks)
