@@ -161,7 +161,9 @@ func (sp *SessionPool) ReturnSession(session *Session, erred bool) {
 	} else {
 		// healthy sessions may contain pending confirmation messages
 		// cleanup confirmations from previous session usage
-		session.flushConfirms()
+		_ = session.flushConfirms()
+		// flush errors
+		_ = session.Error()
 	}
 
 	select {

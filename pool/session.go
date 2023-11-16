@@ -241,6 +241,10 @@ func (s *Session) AwaitConfirm(ctx context.Context, expectedTag uint64) error {
 	select {
 	case confirm, ok := <-s.confirms:
 		if !ok {
+			err := s.Error()
+			if err != nil {
+				return err
+			}
 			return fmt.Errorf("confirms channel %w", ErrClosed)
 		}
 		if !confirm.Ack {
@@ -1267,7 +1271,7 @@ flush:
 	return confirms
 }
 
-// Error returns the first error from the errors channel
+// Error returns all errors from the errors channel
 // and flushes all other pending errors from the channel
 // In case that there are no errors, nil is returned.
 func (s *Session) Error() error {
@@ -1283,19 +1287,14 @@ func (s *Session) error() error {
 	)
 	for {
 		select {
-		case <-s.catchShutdown():
-			return fmt.Errorf("session %w", ErrClosed)
 		case e, ok := <-s.errors:
 			if !ok {
-				return amqp091.ErrClosed
+				if err != nil {
+					return err
+				}
+				return fmt.Errorf("errors channel %w", ErrClosed)
 			}
-			// only overwrite with the first error
-			if err == nil {
-				err = e
-			} else {
-				// flush all other errors after the first one
-				continue
-			}
+			err = errors.Join(err, e)
 		default:
 			return err
 		}
