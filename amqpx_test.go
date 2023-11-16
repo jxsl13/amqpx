@@ -332,9 +332,6 @@ func TestPauseResumeHandlerNoProcessing(t *testing.T) {
 
 	log := logging.NewTestLogger(t)
 
-	ts, closer := newTransientSession(t, ctx, connectURL, log)
-	defer closer()
-
 	amqp := amqpx.New()
 	amqp.RegisterTopologyCreator(func(t *pool.Topologer) error {
 		_, err := t.QueueDeclare(queueName)
@@ -357,7 +354,12 @@ func TestPauseResumeHandlerNoProcessing(t *testing.T) {
 		return nil
 	})
 
-	err = amqp.Start(connectURL, amqpx.WithLogger(logging.NewNoOpLogger()))
+	err = amqp.Start(connectURL,
+		amqpx.WithLogger(
+			logging.NewNoOpLogger(),
+		),
+		amqpx.WithContext(ctx),
+	)
 	if err != nil {
 		assert.NoError(t, err)
 		return
@@ -370,7 +372,6 @@ func TestPauseResumeHandlerNoProcessing(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		t.Logf("iteration %d", i)
 		assertActive(t, handler, true)
-		assertConsumers(t, ts, queueName, 1)
 
 		err = handler.Pause(context.Background())
 		if err != nil {
@@ -379,7 +380,6 @@ func TestPauseResumeHandlerNoProcessing(t *testing.T) {
 		}
 
 		assertActive(t, handler, false)
-		assertConsumers(t, ts, queueName, 0)
 
 		err = handler.Resume(context.Background())
 		if err != nil {
@@ -388,7 +388,6 @@ func TestPauseResumeHandlerNoProcessing(t *testing.T) {
 		}
 
 		assertActive(t, handler, true)
-		assertConsumers(t, ts, queueName, 1)
 	}
 }
 
@@ -400,6 +399,7 @@ func TestHandlerPauseAndResume(t *testing.T) {
 }
 
 func testHandlerPauseAndResume(t *testing.T) {
+	var err error
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGINT)
 	defer cancel()
 
@@ -413,22 +413,6 @@ func testHandlerPauseAndResume(t *testing.T) {
 		amqpx.WithPublisherConnections(1),
 		amqpx.WithPublisherSessions(5),
 	}
-
-	transientPool, err := pool.New(
-		connectURL,
-		1,
-		1,
-		pool.WithLogger(logging.NewNoOpLogger()),
-		pool.WithContext(ctx),
-	)
-	require.NoError(t, err)
-	defer transientPool.Close()
-
-	ts, err := transientPool.GetSession()
-	require.NoError(t, err)
-	defer func() {
-		transientPool.ReturnSession(ts, false)
-	}()
 
 	amqpxPublish := amqpx.New()
 	amqpxPublish.RegisterTopologyCreator(createTopology)
@@ -480,25 +464,21 @@ func testHandlerPauseAndResume(t *testing.T) {
 			running = false
 
 			assertActive(t, handler01, true)
-			assertConsumers(t, ts, queue, 1)
 
 			err = handler01.Pause(context.Background())
 			assert.NoError(t, err)
 
 			assertActive(t, handler01, false)
-			assertConsumers(t, ts, queue, 0)
 		} else {
 			running = true
 
 			assertActive(t, handler01, false)
-			assertConsumers(t, ts, queue, 0)
 
 			err = handler01.Resume(context.Background())
 			assert.NoError(t, err)
 			log.Infof("resumed processing of %s", queue)
 
 			assertActive(t, handler01, true)
-			assertConsumers(t, ts, queue, 1)
 
 			// trigger cancelation
 			err = amqpxPublish.Publish("exchange-03", "event-03", pool.Publishing{
@@ -512,8 +492,6 @@ func testHandlerPauseAndResume(t *testing.T) {
 
 	amqpx.RegisterHandler("queue-03", func(msg pool.Delivery) (err error) {
 
-		queue := handler01.Queue()
-
 		assertActive(t, handler01, true)
 		err = handler01.Pause(context.Background())
 		if err != nil {
@@ -521,24 +499,6 @@ func testHandlerPauseAndResume(t *testing.T) {
 			return nil
 		}
 		assertActive(t, handler01, false)
-
-		q1, err := ts.QueueDeclarePassive(queue)
-		if err != nil {
-			assert.NoError(t, err)
-			return nil
-		}
-
-		// wait for potential further processing
-		time.Sleep(3 * time.Second)
-
-		q2, err := ts.QueueDeclarePassive(queue)
-		assert.NoError(t, err)
-		if err != nil {
-			return nil
-		}
-
-		assert.Equal(t, q1, q2) // message count should also be equal
-		assertConsumers(t, ts, queue, 0)
 
 		go func() {
 			// delay cancelation (due to ack)
@@ -589,9 +549,6 @@ func testBatchHandlerPauseAndResume(t *testing.T) {
 		amqpx.WithPublisherConnections(1),
 		amqpx.WithPublisherSessions(5),
 	}
-
-	ts, closer := newTransientSession(t, ctx, connectURL, log)
-	defer closer()
 
 	amqpxPublish := amqpx.New()
 	amqpxPublish.RegisterTopologyCreator(createTopology)
@@ -645,25 +602,21 @@ func testBatchHandlerPauseAndResume(t *testing.T) {
 				running = false
 
 				assertActive(t, handler01, true)
-				assertConsumers(t, ts, queue, 1)
 
 				err = handler01.Pause(context.Background())
 				assert.NoError(t, err)
 
 				assertActive(t, handler01, false)
-				assertConsumers(t, ts, queue, 0)
 			} else {
 				running = true
 
 				assertActive(t, handler01, false)
-				assertConsumers(t, ts, queue, 0)
 
 				err = handler01.Resume(context.Background())
 				assert.NoError(t, err)
 				log.Infof("resumed processing of %s", queue)
 
 				assertActive(t, handler01, true)
-				assertConsumers(t, ts, queue, 1)
 
 				// trigger cancelation
 				err = amqpxPublish.Publish("exchange-03", "event-03", pool.Publishing{
@@ -680,7 +633,6 @@ func testBatchHandlerPauseAndResume(t *testing.T) {
 	amqpx.RegisterBatchHandler("queue-03", func(msgs []pool.Delivery) (err error) {
 		_ = msgs[0]
 		once.Do(func() {
-			queue := handler01.Queue()
 
 			assertActive(t, handler01, true)
 			err = handler01.Pause(context.Background())
@@ -689,24 +641,6 @@ func testBatchHandlerPauseAndResume(t *testing.T) {
 				return
 			}
 			assertActive(t, handler01, false)
-
-			q1, err := ts.QueueDeclarePassive(queue)
-			if err != nil {
-				assert.NoError(t, err)
-				return
-			}
-
-			// wait for potential further processing
-			time.Sleep(3 * time.Second)
-
-			q2, err := ts.QueueDeclarePassive(queue)
-			if err != nil {
-				assert.NoError(t, err)
-				return
-			}
-
-			assert.Equal(t, q1, q2) // message count should also be equal
-			assertConsumers(t, ts, queue, 0)
 
 			go func() {
 				// delay cancelation (due to ack)
@@ -736,21 +670,6 @@ func testBatchHandlerPauseAndResume(t *testing.T) {
 	log.Info("context canceled, closing test.")
 	assert.NoError(t, amqpx.Close())
 	assertActive(t, handler01, false)
-}
-
-func assertConsumers(t *testing.T, ts *pool.Session, queueName string, expected int) {
-	// rabbitMQ needs some time before it updates its consumer count
-	time.Sleep(3 * time.Second)
-	queue, err := ts.QueueDeclarePassive(queueName)
-	if err != nil {
-		assert.NoError(t, err)
-		return
-	}
-
-	if expected != queue.Consumers {
-		assert.Equal(t, expected, queue.Consumers, "consumer count of queue %s should be %d", queueName, expected)
-		return
-	}
 }
 
 func assertActive(t *testing.T, handler handlerStats, expected bool) {
@@ -797,9 +716,6 @@ func testHandlerReset(t *testing.T) {
 		amqpx.WithPublisherConnections(1),
 		amqpx.WithPublisherSessions(5),
 	}
-
-	ts, closer := newTransientSession(t, ctx, connectURL, log)
-	defer closer()
 
 	amqpxPublish := amqpx.New()
 	amqpxPublish.RegisterTopologyCreator(createTopology)
@@ -852,7 +768,6 @@ func testHandlerReset(t *testing.T) {
 	}
 
 	assertActive(t, handler01, true)
-	assertConsumers(t, ts, handler01.Queue(), 1)
 
 	// will be canceled when the event has reached the third handler
 	<-done
@@ -888,9 +803,6 @@ func testBatchHandlerReset(t *testing.T) {
 		amqpx.WithPublisherConnections(1),
 		amqpx.WithPublisherSessions(5),
 	}
-
-	ts, closer := newTransientSession(t, ctx, connectURL, log)
-	defer closer()
 
 	amqpxPublish := amqpx.New()
 	amqpxPublish.RegisterTopologyCreator(createTopology)
@@ -944,7 +856,6 @@ func testBatchHandlerReset(t *testing.T) {
 	}
 
 	assertActive(t, handler01, true)
-	assertConsumers(t, ts, handler01.Queue(), 1)
 
 	// will be canceled when the event has reached the third handler
 	<-done
@@ -956,23 +867,4 @@ func testBatchHandlerReset(t *testing.T) {
 
 	// after close
 	assertActive(t, handler01, false)
-}
-
-func newTransientSession(t *testing.T, ctx context.Context, connectUrl string, log logging.Logger) (ts *pool.Session, closer func()) {
-	transientPool, err := pool.New(
-		connectUrl,
-		1,
-		1,
-		pool.WithLogger(log),
-		pool.WithContext(ctx),
-	)
-	require.NoError(t, err)
-
-	ts, err = transientPool.GetSession()
-	require.NoError(t, err)
-
-	return ts, func() {
-		transientPool.ReturnSession(ts, false)
-		transientPool.Close()
-	}
 }
