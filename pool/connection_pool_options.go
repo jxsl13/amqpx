@@ -6,6 +6,8 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"runtime/debug"
+	"strings"
 	"time"
 
 	"github.com/jxsl13/amqpx/logging"
@@ -27,10 +29,20 @@ type connectionPoolOption struct {
 type ConnectionPoolOption func(*connectionPoolOption)
 
 func defaultAppName() string {
+
+	if bi, ok := debug.ReadBuildInfo(); ok && bi.Path != "" {
+		parts := strings.Split(bi.Path, "/")
+		if len(parts) > 0 {
+			return parts[len(parts)-1]
+		}
+	}
+
+	// fallback
 	appNameWithExt := filepath.Base(os.Args[0])
 	ext := filepath.Ext(appNameWithExt)
 	appNameWithoutExt := appNameWithExt[:len(appNameWithExt)-len(ext)]
 	return appNameWithoutExt
+
 }
 
 // ConnectionPoolWithLogger allows to set a custom logger.
