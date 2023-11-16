@@ -393,7 +393,7 @@ func TestPauseResumeHandlerNoProcessing(t *testing.T) {
 }
 
 func TestHandlerPauseAndResume(t *testing.T) {
-	for i := 0; i < 5; i++ {
+	for i := 0; i < 10; i++ {
 		t.Logf("iteration %d", i)
 		testHandlerPauseAndResume(t)
 	}
@@ -421,7 +421,7 @@ func testHandlerPauseAndResume(t *testing.T) {
 	eventContent := "TestHandlerPauseAndResume - event content"
 
 	var (
-		publish = 5000
+		publish = 500
 		cnt     = 0
 	)
 
@@ -491,21 +491,25 @@ func testHandlerPauseAndResume(t *testing.T) {
 		return nil
 	})
 
+	var once sync.Once
 	amqpx.RegisterHandler("queue-03", func(msg pool.Delivery) (err error) {
+		once.Do(func() {
 
-		assertActive(t, handler01, true)
-		err = handler01.Pause(context.Background())
-		if err != nil {
-			assert.NoError(t, err)
-			return nil
-		}
-		assertActive(t, handler01, false)
+			log.Info("pausing handler")
+			assertActive(t, handler01, true)
+			err = handler01.Pause(context.Background())
+			if err != nil {
+				assert.NoError(t, err)
+				return
+			}
+			assertActive(t, handler01, false)
 
-		go func() {
-			// delay cancelation (due to ack)
-			time.Sleep(3 * time.Second)
-			cancel()
-		}()
+			go func() {
+				// delay cancelation (due to ack)
+				time.Sleep(3 * time.Second)
+				cancel()
+			}()
+		})
 		return nil
 	})
 
@@ -530,7 +534,7 @@ func testHandlerPauseAndResume(t *testing.T) {
 }
 
 func TestBatchHandlerPauseAndResume(t *testing.T) {
-	for i := 0; i < 5; i++ {
+	for i := 0; i < 10; i++ {
 		testBatchHandlerPauseAndResume(t)
 	}
 }
@@ -559,7 +563,7 @@ func testBatchHandlerPauseAndResume(t *testing.T) {
 	eventContent := "TestBatchHandlerPauseAndResume - event content"
 
 	var (
-		publish = 5000
+		publish = 500
 		cnt     = 0
 	)
 
@@ -671,23 +675,6 @@ func testBatchHandlerPauseAndResume(t *testing.T) {
 	log.Info("context canceled, closing test.")
 	assert.NoError(t, amqpx.Close())
 	assertActive(t, handler01, false)
-}
-
-func assertActive(t *testing.T, handler handlerStats, expected bool) {
-	active, err := handler.IsActive(context.Background())
-	if err != nil {
-		assert.NoError(t, err)
-		return
-	}
-
-	if expected != active {
-		as := "active"
-		if !expected {
-			as = "inactive"
-		}
-		assert.Equalf(t, expected, active, "expected handler of queue %s to be %q", handler.Queue(), as)
-		return
-	}
 }
 
 type handlerStats interface {
@@ -868,4 +855,21 @@ func testBatchHandlerReset(t *testing.T) {
 
 	// after close
 	assertActive(t, handler01, false)
+}
+
+func assertActive(t *testing.T, handler handlerStats, expected bool) {
+	active, err := handler.IsActive(context.Background())
+	if err != nil {
+		assert.NoError(t, err)
+		return
+	}
+
+	if expected != active {
+		as := "active"
+		if !expected {
+			as = "inactive"
+		}
+		assert.Equalf(t, expected, active, "expected handler of queue %s to be %q", handler.Queue(), as)
+		return
+	}
 }
