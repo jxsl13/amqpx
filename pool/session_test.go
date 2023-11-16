@@ -15,10 +15,9 @@ import (
 func TestNewSession(t *testing.T) {
 
 	c, err := pool.NewConnection(
-		"amqp://admin:password@localhost:5672",
+		connectURL,
 		"TestNewSession",
 		pool.ConnectionWithLogger(logging.NewTestLogger(t)),
-		pool.ConnectionWithSlowClose(true),
 	)
 	if err != nil {
 		assert.NoError(t, err)
@@ -43,7 +42,7 @@ func TestNewSession(t *testing.T) {
 			}()
 
 			queueName := fmt.Sprintf("TestNewSession-Queue-%d", id)
-			err = s.QueueDeclare(queueName)
+			_, err = s.QueueDeclare(queueName)
 			if err != nil {
 				assert.NoError(t, err)
 				return
@@ -135,10 +134,9 @@ func TestNewSession(t *testing.T) {
 func TestNewSessionDisconnect(t *testing.T) {
 
 	c, err := pool.NewConnection(
-		"amqp://admin:password@localhost:5672",
+		connectURL,
 		"TestNewSessionDisconnect",
 		pool.ConnectionWithLogger(logging.NewTestLogger(t)),
-		pool.ConnectionWithSlowClose(true),
 	)
 	if err != nil {
 		assert.NoError(t, err)
@@ -208,7 +206,7 @@ func TestNewSessionDisconnect(t *testing.T) {
 			started2()
 
 			queueName := fmt.Sprintf("TestNewSession-Queue-%d", id)
-			err = s.QueueDeclare(queueName)
+			_, err = s.QueueDeclare(queueName)
 			if err != nil {
 				assert.NoError(t, err)
 				return
@@ -315,4 +313,60 @@ func TestNewSessionDisconnect(t *testing.T) {
 
 	wg.Wait()
 	time.Sleep(10 * time.Second) // await dangling io goroutines to timeout
+}
+
+func TestNewSessionQueueDeclarePassive(t *testing.T) {
+	var wg sync.WaitGroup
+
+	defer func() {
+		wg.Wait()
+		time.Sleep(10 * time.Second) // await dangling io goroutines to timeout
+	}()
+
+	c, err := pool.NewConnection(
+		connectURL,
+		"TestNewSessionQueueDeclarePassive",
+		pool.ConnectionWithLogger(logging.NewTestLogger(t)),
+	)
+	if err != nil {
+		assert.NoError(t, err)
+		return
+	}
+	defer func() {
+		c.Close() // can be nil or error
+	}()
+
+	session, err := pool.NewSession(c, fmt.Sprintf("TestNewSessionQueueDeclarePassive-%d", 1), pool.SessionWithConfirms(true))
+	if err != nil {
+		assert.NoError(t, err)
+		return
+	}
+	defer func() {
+		assert.NoError(t, session.Close())
+	}()
+
+	for i := 0; i < 100; i++ {
+		qname := fmt.Sprintf("TestNewSessionQueueDeclarePassive-queue-%d", i)
+		q, err := session.QueueDeclare(qname)
+		if err != nil {
+			assert.NoError(t, err)
+			return
+		}
+		assert.Equalf(t, 0, q.Consumers, "expected 0 consumers when declaring a queue: %s", qname)
+
+		// executed upon return
+		defer func() {
+			_, err := session.QueueDelete(qname)
+			assert.NoErrorf(t, err, "failed to delete queue: %s", qname)
+		}()
+
+		q, err = session.QueueDeclarePassive(qname)
+		if err != nil {
+			assert.NoErrorf(t, err, "QueueDeclarePassive failed for queue: %s", qname)
+			return
+		}
+
+		assert.Equalf(t, 0, q.Consumers, "queue should not have any consumers: %s", qname)
+	}
+
 }

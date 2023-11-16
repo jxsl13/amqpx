@@ -6,6 +6,8 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"runtime/debug"
+	"strings"
 	"time"
 
 	"github.com/jxsl13/amqpx/logging"
@@ -22,17 +24,25 @@ type connectionPoolOption struct {
 	TLSConfig             *tls.Config
 
 	Logger logging.Logger
-
-	SlowClose bool // for leak tests
 }
 
 type ConnectionPoolOption func(*connectionPoolOption)
 
 func defaultAppName() string {
+
+	if bi, ok := debug.ReadBuildInfo(); ok && bi.Path != "" {
+		parts := strings.Split(bi.Path, "/")
+		if len(parts) > 0 {
+			return parts[len(parts)-1]
+		}
+	}
+
+	// fallback
 	appNameWithExt := filepath.Base(os.Args[0])
 	ext := filepath.Ext(appNameWithExt)
 	appNameWithoutExt := appNameWithExt[:len(appNameWithExt)-len(ext)]
 	return appNameWithoutExt
+
 }
 
 // ConnectionPoolWithLogger allows to set a custom logger.
@@ -106,12 +116,21 @@ func ConnectionPoolWithTLS(config *tls.Config) ConnectionPoolOption {
 type BackoffFunc func(retry int) (sleep time.Duration)
 
 func newDefaultBackoffPolicy(min, max time.Duration) BackoffFunc {
+	r := rand.New(rand.NewSource(time.Now().Unix()))
+
+	factor := time.Second
+	for _, scale := range []time.Duration{time.Hour, time.Minute, time.Second, time.Millisecond, time.Microsecond, time.Nanosecond} {
+		d := min.Truncate(scale)
+		if d > 0 {
+			factor = scale
+			break
+		}
+	}
 
 	return func(retry int) (sleep time.Duration) {
-		r := rand.New(rand.NewSource(time.Now().Unix()))
 
-		wait := 2 << maxi(0, mini(32, retry)) * time.Second
-		jitter := time.Duration(r.Int63n(int64(wait) / 5)) // max 20% jitter
+		wait := 2 << maxi(0, mini(32, retry)) * factor
+		jitter := time.Duration(r.Int63n(int64(maxi(1, int(wait)/5)))) // max 20% jitter
 		wait = min + wait + jitter
 		if wait > max {
 			wait = max
@@ -132,13 +151,4 @@ func maxi(a, b int) int {
 		return a
 	}
 	return b
-}
-
-// ConnectionPoolWithSlowCLose is onl yinteresting for integration tests of this library.
-// We want to wait for dangling tcp standard library goroutines to timeout before we signal that
-// the connection pool is closed. This option affects every connection in the connection pool.
-func ConnectionPoolWithSlowClose(slowClose bool) ConnectionPoolOption {
-	return func(po *connectionPoolOption) {
-		po.SlowClose = slowClose
-	}
 }

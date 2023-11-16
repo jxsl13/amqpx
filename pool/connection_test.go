@@ -14,10 +14,9 @@ import (
 
 func TestNewSingleConnection(t *testing.T) {
 	c, err := pool.NewConnection(
-		"amqp://admin:password@localhost:5672",
+		connectURL,
 		"TestNewSingleConnection",
 		pool.ConnectionWithLogger(logging.NewTestLogger(t)),
-		pool.ConnectionWithSlowClose(true),
 	)
 
 	if err != nil {
@@ -35,10 +34,9 @@ func TestNewSingleConnectionWithDisconnect(t *testing.T) {
 	started()
 	defer stopped()
 	c, err := pool.NewConnection(
-		"amqp://admin:password@localhost:5672",
+		connectURL,
 		"TestNewSingleConnection",
 		pool.ConnectionWithLogger(logging.NewTestLogger(t)),
-		pool.ConnectionWithSlowClose(true),
 	)
 
 	if err != nil {
@@ -61,10 +59,9 @@ func TestNewConnection(t *testing.T) {
 			defer wg.Done()
 
 			c, err := pool.NewConnection(
-				"amqp://admin:password@localhost:5672",
+				connectURL,
 				fmt.Sprintf("TestNewConnection-%d", id),
 				pool.ConnectionWithLogger(logging.NewTestLogger(t)),
-				pool.ConnectionWithSlowClose(true),
 			)
 			if err != nil {
 				assert.NoError(t, err)
@@ -98,10 +95,9 @@ func TestNewConnectionDisconnect(t *testing.T) {
 			defer wg.Done()
 
 			c, err := pool.NewConnection(
-				"amqp://admin:password@localhost:5672",
+				connectURL,
 				fmt.Sprintf("TestNewConnectionDisconnect-%d", id),
 				//pool.ConnectionWithLogger(logging.NewTestLogger(t)),
-				pool.ConnectionWithSlowClose(true),
 			)
 			if err != nil {
 				assert.NoError(t, err)

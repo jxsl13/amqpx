@@ -9,14 +9,13 @@ import (
 
 	"github.com/jxsl13/amqpx/logging"
 	"github.com/jxsl13/amqpx/pool"
-	"github.com/rabbitmq/amqp091-go"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestSubscriber(t *testing.T) {
 
 	sessions := 2 // publisher sessions + consumer sessions
-	p, err := pool.New("amqp://admin:password@localhost:5672", 1, sessions, pool.WithConfirms(true), pool.WithLogger(logging.NewTestLogger(t)))
+	p, err := pool.New(connectURL, 1, sessions, pool.WithConfirms(true), pool.WithLogger(logging.NewTestLogger(t)))
 	if err != nil {
 		assert.NoError(t, err)
 		return
@@ -39,7 +38,7 @@ func TestSubscriber(t *testing.T) {
 			defer p.ReturnSession(ts, false)
 
 			queueName := fmt.Sprintf("TestSubscriber-Queue-%d", id)
-			err = ts.QueueDeclare(queueName)
+			_, err = ts.QueueDeclare(queueName)
 			if err != nil {
 				assert.NoError(t, err)
 				return
@@ -79,7 +78,7 @@ func TestSubscriber(t *testing.T) {
 			defer sub.Close()
 
 			sub.RegisterHandlerFunc(queueName,
-				func(msg amqp091.Delivery) error {
+				func(msg pool.Delivery) error {
 
 					// handler func
 					receivedMsg := string(msg.Body)
@@ -124,7 +123,7 @@ func TestBatchSubscriber(t *testing.T) {
 		numMessages  = 50
 		batchTimeout = 10 * time.Second // keep this at a higher number for slow machines
 	)
-	p, err := pool.New("amqp://admin:password@localhost:5672", 1, sessions, pool.WithConfirms(true), pool.WithLogger(logging.NewTestLogger(t)))
+	p, err := pool.New(connectURL, 1, sessions, pool.WithConfirms(true), pool.WithLogger(logging.NewTestLogger(t)))
 	if err != nil {
 		assert.NoError(t, err)
 		return
@@ -147,7 +146,7 @@ func TestBatchSubscriber(t *testing.T) {
 			defer p.ReturnSession(ts, false)
 
 			queueName := fmt.Sprintf("TestBatchSubscriber-Queue-%d", id)
-			err = ts.QueueDeclare(queueName)
+			_, err = ts.QueueDeclare(queueName)
 			if err != nil {
 				assert.NoError(t, err)
 				return
@@ -202,8 +201,8 @@ func TestBatchSubscriber(t *testing.T) {
 
 			batchCount := 0
 			messageCount := 0
-			sub.RegisterBatchHandlerFunc(queueName, batchSize, batchTimeout,
-				func(msgs []amqp091.Delivery) error {
+			sub.RegisterBatchHandlerFunc(queueName,
+				func(msgs []pool.Delivery) error {
 					log := logging.NewTestLogger(t)
 					assert.Equal(t, batchSize, len(msgs))
 
@@ -221,10 +220,12 @@ func TestBatchSubscriber(t *testing.T) {
 					}
 					return nil
 				},
-				pool.ConsumeOptions{
+				pool.WithMaxBatchSize(batchSize),
+				pool.WithBatchFlushTimeout(batchTimeout),
+				pool.WithBatchConsumeOptions(pool.ConsumeOptions{
 					ConsumerTag: fmt.Sprintf("Consumer-%s", queueName),
 					Exclusive:   true,
-				},
+				}),
 			)
 			sub.Start()
 

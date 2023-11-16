@@ -32,8 +32,6 @@ type ConnectionPool struct {
 	cancel context.CancelFunc
 
 	log logging.Logger
-
-	slowClose bool
 }
 
 // NewConnectionPool creates a new connection pool which has a maximum size it
@@ -54,8 +52,7 @@ func NewConnectionPool(connectUrl string, numConns int, options ...ConnectionPoo
 		ConnTimeout:           30 * time.Second,
 		TLSConfig:             nil,
 
-		Logger:    logging.NewNoOpLogger(),
-		SlowClose: false, // for leak tests
+		Logger: logging.NewNoOpLogger(),
 	}
 
 	// apply options
@@ -94,8 +91,6 @@ func newConnectionPoolFromOption(connectUrl string, option connectionPoolOption)
 		cancel: cancel,
 
 		log: option.Logger,
-
-		slowClose: option.SlowClose,
 	}
 
 	cp.debug("initializing pool connections")
@@ -139,7 +134,6 @@ func (cp *ConnectionPool) deriveCachedConnection(id int) (*Connection, error) {
 		ConnectionWithTLS(cp.tls),
 		ConnectionWithCached(true),
 		ConnectionWithLogger(cp.log),
-		ConnectionWithSlowClose(cp.slowClose),
 	)
 }
 
@@ -172,7 +166,6 @@ func (cp *ConnectionPool) GetTransientConnection(ctx context.Context) (*Connecti
 		ConnectionWithHeartbeatInterval(cp.heartbeat),
 		ConnectionWithTLS(cp.tls),
 		ConnectionWithCached(false),
-		ConnectionWithSlowClose(cp.slowClose),
 	)
 	if err == nil {
 		return conn, nil

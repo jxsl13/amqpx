@@ -13,7 +13,7 @@ import (
 func TestNewSessionPool(t *testing.T) {
 	connections := 1
 	sessions := 10
-	p, err := pool.NewConnectionPool("amqp://admin:password@localhost:5672", connections,
+	p, err := pool.NewConnectionPool(connectURL, connections,
 		pool.ConnectionPoolWithName("TestNewConnectionPool"),
 		pool.ConnectionPoolWithLogger(logging.NewTestLogger(t)),
 	)

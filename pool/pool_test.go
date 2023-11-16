@@ -5,21 +5,31 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jxsl13/amqpx"
 	"github.com/jxsl13/amqpx/logging"
 	"github.com/jxsl13/amqpx/pool"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/goleak"
 )
 
+var (
+	connectURL = amqpx.NewURL("localhost", 5672, "admin", "password")
+)
+
 func TestMain(m *testing.M) {
-	goleak.VerifyTestMain(m)
+	goleak.VerifyTestMain(
+		m,
+		goleak.IgnoreTopFunction("internal/poll.runtime_pollWait"),
+		goleak.IgnoreTopFunction("github.com/rabbitmq/amqp091-go.(*Connection).heartbeater"),
+		goleak.IgnoreTopFunction("net/http.(*persistConn).writeLoop"),
+	)
 }
 
 func TestNew(t *testing.T) {
 	connections := 2
 	sessions := 10
 
-	p, err := pool.New("amqp://admin:password@localhost:5672", connections, sessions,
+	p, err := pool.New(connectURL, connections, sessions,
 		pool.WithName("TestNew"),
 		pool.WithLogger(logging.NewTestLogger(t)),
 	)

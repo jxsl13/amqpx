@@ -12,7 +12,7 @@ import (
 
 func TestNewConnectionPool(t *testing.T) {
 	connections := 5
-	p, err := pool.NewConnectionPool("amqp://admin:password@localhost:5672", connections,
+	p, err := pool.NewConnectionPool(connectURL, connections,
 		pool.ConnectionPoolWithName("TestNewConnectionPool"),
 		pool.ConnectionPoolWithLogger(logging.NewTestLogger(t)),
 	)
@@ -42,7 +42,7 @@ func TestNewConnectionPool(t *testing.T) {
 
 func TestNewConnectionPoolDisconnect(t *testing.T) {
 	connections := 100
-	p, err := pool.NewConnectionPool("amqp://admin:password@localhost:5672", connections,
+	p, err := pool.NewConnectionPool(connectURL, connections,
 		pool.ConnectionPoolWithName("TestNewConnectionPoolDisconnect"),
 		pool.ConnectionPoolWithLogger(logging.NewTestLogger(t)),
 	)

@@ -104,6 +104,23 @@ func (sp *SessionPool) GetSession() (*Session, error) {
 	}
 }
 
+// GetSessionCtx gets a pooled session.
+// blocks until a session is acquired from the pool, the session pool was closed or the passed context was canceled.
+func (sp *SessionPool) GetSessionCtx(ctx context.Context) (*Session, error) {
+	select {
+	case <-sp.catchShutdown():
+		return nil, ErrClosed
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case session, ok := <-sp.sessions:
+		if !ok {
+			return nil, fmt.Errorf("failed to get session: %w", ErrClosed)
+		}
+
+		return session, nil
+	}
+}
+
 // GetTransientSession returns a transient session.
 // This method may return an error when the context ha sbeen closed before a session could be obtained.
 // A transient session creates a transient connection under the hood.
@@ -144,7 +161,9 @@ func (sp *SessionPool) ReturnSession(session *Session, erred bool) {
 	} else {
 		// healthy sessions may contain pending confirmation messages
 		// cleanup confirmations from previous session usage
-		session.flushConfirms()
+		_ = session.flushConfirms()
+		// flush errors
+		_ = session.Error()
 	}
 
 	select {

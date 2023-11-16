@@ -6,11 +6,10 @@ import (
 	"time"
 
 	"github.com/jxsl13/amqpx/logging"
-	"github.com/rabbitmq/amqp091-go"
 )
 
 var (
-	QuorumQueue = amqp091.Table{
+	QuorumQueue = Table{
 		"x-queue-type": "quorum",
 	}
 )
@@ -45,8 +44,6 @@ func New(connectUrl string, numConns, numSessions int, options ...Option) (*Pool
 			TLSConfig:             nil,
 
 			Logger: logger,
-
-			SlowClose: false, // needed for goroutine leak tests
 		},
 		spo: sessionPoolOption{
 			Size:        numSessions,
@@ -86,6 +83,14 @@ func (p *Pool) Close() {
 // GetSession returns a new session from the pool, only returns an error upon shutdown.
 func (p *Pool) GetSession() (*Session, error) {
 	return p.sp.GetSession()
+}
+
+// GetSessionCtx returns a new session from the pool, only returns an error upon shutdown or when the passed context was canceled.
+func (p *Pool) GetSessionCtx(ctx context.Context) (*Session, error) {
+	if p.sp.ctx == ctx {
+		return p.sp.GetSession()
+	}
+	return p.sp.GetSessionCtx(ctx)
 }
 
 // GetTransientSession returns a new session which is decoupled from anyshutdown mechanism, thus

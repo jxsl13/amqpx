@@ -2,6 +2,7 @@ package pool
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -240,6 +241,10 @@ func (s *Session) AwaitConfirm(ctx context.Context, expectedTag uint64) error {
 	select {
 	case confirm, ok := <-s.confirms:
 		if !ok {
+			err := s.error()
+			if err != nil {
+				return err
+			}
 			return fmt.Errorf("confirms channel %w", ErrClosed)
 		}
 		if !confirm.Ack {
@@ -270,7 +275,7 @@ func (s *Session) AwaitConfirm(ctx context.Context, expectedTag uint64) error {
 type Publishing struct {
 	// Application or exchange specific fields,
 	// the headers exchange will inspect this field.
-	Headers amqp091.Table
+	Headers Table
 
 	// Properties
 	ContentType     string    // MIME content type
@@ -371,27 +376,21 @@ func (s *Session) retryPublish(f func() (uint64, error)) (tag uint64, err error)
 }
 
 // Get is only supposed to be used for testing purposes, do not us eit to poll the queue periodically.
-func (s *Session) Get(queue string, autoAck bool) (msg *amqp091.Delivery, ok bool, err error) {
+func (s *Session) Get(queue string, autoAck bool) (msg Delivery, ok bool, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	return s.retryGet(func() (*amqp091.Delivery, bool, error) {
-		m, ok, err := s.channel.Get(queue, autoAck)
-		return &m, ok, err
-	})
-}
-
-func (s *Session) retryGet(f func() (*amqp091.Delivery, bool, error)) (msg *amqp091.Delivery, ok bool, err error) {
-	for {
-		msg, ok, err := f()
-		if err == nil {
-			return msg, ok, nil
-		}
-		err = s.tryRecover(err)
+	err = s.retry(func() error {
+		msg, ok, err = s.channel.Get(queue, autoAck)
 		if err != nil {
-			return nil, false, err
+			return err
 		}
+		return nil
+	})
+	if err != nil {
+		return Delivery{}, false, err
 	}
+	return msg, ok, nil
 }
 
 // Nack rejects the message.
@@ -431,7 +430,7 @@ type ConsumeOptions struct {
 	// Optional arguments can be provided that have specific semantics for the queue or server.
 	NoWait bool
 	// Args are aditional implementation dependent parameters.
-	Args amqp091.Table
+	Args Table
 }
 
 // Consume immediately starts delivering queued messages.
@@ -449,7 +448,7 @@ type ConsumeOptions struct {
 // Inflight messages, limited by Channel.Qos will be buffered until received from the returned chan.
 // When the Channel or Connection is closed, all buffered and inflight messages will be dropped.
 // When the consumer identifier tag is cancelled, all inflight messages will be delivered until the returned chan is closed.
-func (s *Session) Consume(queue string, option ...ConsumeOptions) (<-chan amqp091.Delivery, error) {
+func (s *Session) Consume(queue string, option ...ConsumeOptions) (<-chan Delivery, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -471,9 +470,13 @@ func (s *Session) Consume(queue string, option ...ConsumeOptions) (<-chan amqp09
 
 	}
 
+	var (
+		c   <-chan Delivery
+		err error
+	)
 	// retries to connect and attempts to start a consumer
-	c, err := s.consumeRetry(func() (<-chan amqp091.Delivery, error) {
-		return s.channel.Consume(
+	err = s.retry(func() error {
+		c, err = s.channel.Consume(
 			queue,
 			o.ConsumerTag,
 			o.AutoAck,
@@ -482,6 +485,10 @@ func (s *Session) Consume(queue string, option ...ConsumeOptions) (<-chan amqp09
 			o.NoWait,
 			o.Args,
 		)
+		if err != nil {
+			return err
+		}
+		return nil
 	})
 	if err != nil {
 		return nil, err
@@ -491,17 +498,70 @@ func (s *Session) Consume(queue string, option ...ConsumeOptions) (<-chan amqp09
 	return c, nil
 }
 
-func (s *Session) consumeRetry(f func() (<-chan amqp091.Delivery, error)) (<-chan amqp091.Delivery, error) {
-	for {
-		c, err := f()
-		if err == nil {
-			return c, nil
-		}
-		err = s.tryRecover(err)
-		if err != nil {
-			return nil, err
-		}
+// Consume immediately starts delivering queued messages.
+//
+// Begin receiving on the returned chan Delivery before any other operation on the Connection or Channel.
+// Continues deliveries to the returned chan Delivery until Channel.Cancel, Connection.Close, Channel.Close, or an AMQP exception occurs.
+// Consumers must range over the chan to ensure all deliveries are received.
+//
+// Unreceived deliveries will block all methods on the same connection.
+// All deliveries in AMQP must be acknowledged.
+// It is expected of the consumer to call Delivery.Ack after it has successfully processed the delivery.
+//
+// If the consumer is cancelled or the channel or connection is closed any unacknowledged deliveries will be requeued at the end of the same queue.
+//
+// Inflight messages, limited by Channel.Qos will be buffered until received from the returned chan.
+// When the Channel or Connection is closed, all buffered and inflight messages will be dropped.
+// When the consumer identifier tag is cancelled, all inflight messages will be delivered until the returned chan is closed.
+func (s *Session) ConsumeWithContext(ctx context.Context, queue string, option ...ConsumeOptions) (<-chan Delivery, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// defaults
+	o := ConsumeOptions{
+		AutoAck:   false,
+		Exclusive: false,
+		NoLocal:   false, // not used by RabbitMQ
+		NoWait:    false,
+		Args:      nil,
 	}
+	if len(option) > 0 {
+		o = option[0]
+	}
+
+	if o.ConsumerTag == "" {
+		// use our own consumer naming
+		o.ConsumerTag = s.Name()
+
+	}
+
+	var (
+		c   <-chan Delivery
+		err error
+	)
+	// retries to connect and attempts to start a consumer
+	err = s.retry(func() error {
+		c, err = s.channel.ConsumeWithContext(
+			ctx,
+			queue,
+			o.ConsumerTag,
+			o.AutoAck,
+			o.Exclusive,
+			o.NoLocal,
+			o.NoWait,
+			o.Args,
+		)
+		if err != nil {
+			return err
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	s.consumers[o.ConsumerTag] = true
+
+	return c, nil
 }
 
 func (s *Session) retry(f func() error) error {
@@ -566,9 +626,9 @@ type ExchangeDeclareOptions struct {
 	// The channel may be closed as a result of an error.  Add a NotifyClose listener
 	// to respond to any exceptions.
 	NoWait bool
-	// Optional amqp091.Table of arguments that are specific to the server's implementation of
+	// Optional Table of arguments that are specific to the server's implementation of
 	// the exchange can be sent for exchange types that require extra parameters.
-	Args amqp091.Table
+	Args Table
 }
 
 // ExchangeDeclare declares an exchange on the server. If the exchange does not
@@ -588,7 +648,7 @@ type ExchangeDeclareOptions struct {
 // how messages are routed through it. Once an exchange is declared, its type
 // cannot be changed.  The common types are "direct", "fanout", "topic" and
 // "headers".
-func (s *Session) ExchangeDeclare(name string, kind string, option ...ExchangeDeclareOptions) error {
+func (s *Session) ExchangeDeclare(name string, kind ExchangeKind, option ...ExchangeDeclareOptions) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -607,7 +667,7 @@ func (s *Session) ExchangeDeclare(name string, kind string, option ...ExchangeDe
 	return s.retry(func() error {
 		return s.channel.ExchangeDeclare(
 			name,
-			kind,
+			string(kind),
 			o.Durable,
 			o.AutoDelete,
 			o.Internal,
@@ -615,6 +675,50 @@ func (s *Session) ExchangeDeclare(name string, kind string, option ...ExchangeDe
 			o.Args,
 		)
 	})
+}
+
+// ExchangeDeclarePassive is functionally and parametrically equivalent to
+// ExchangeDeclare, except that it sets the "passive" attribute to true. A passive
+// exchange is assumed by RabbitMQ to already exist, and attempting to connect to a
+// non-existent exchange will cause RabbitMQ to throw an exception. This function
+// can be used to detect the existence of an exchange.
+func (s *Session) ExchangeDeclarePassive(name string, kind ExchangeKind, option ...ExchangeDeclareOptions) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// sane defaults
+	o := ExchangeDeclareOptions{
+		Durable:    true,
+		AutoDelete: false,
+		Internal:   false,
+		NoWait:     false,
+		Args:       nil,
+	}
+	if len(option) > 0 {
+		o = option[0]
+	}
+
+	err := s.retry(func() error {
+		return s.channel.ExchangeDeclarePassive(
+			name,
+			string(kind),
+			o.Durable,
+			o.AutoDelete,
+			o.Internal,
+			o.NoWait,
+			o.Args,
+		)
+	})
+
+	if err == nil {
+		return nil
+	}
+
+	ae := &amqp091.Error{}
+	if errors.As(err, &ae) {
+		return fmt.Errorf("exchange %w: %w", ErrNotFound, ae)
+	}
+	return err
 }
 
 type ExchangeDeleteOptions struct {
@@ -691,7 +795,7 @@ type QueueDeclareOptions struct {
 	//
 	NoWait bool
 	// Args are additional properties you can set, like the queue type.
-	Args amqp091.Table
+	Args Table
 }
 
 // QueueDeclare declares a queue to hold messages and deliver to consumers.
@@ -715,7 +819,46 @@ type QueueDeclareOptions struct {
 //
 // When the error return value is not nil, you can assume the queue could not be
 // declared with these parameters, and the channel will be closed.
-func (s *Session) QueueDeclare(name string, option ...QueueDeclareOptions) error {
+func (s *Session) QueueDeclare(name string, option ...QueueDeclareOptions) (Queue, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	o := QueueDeclareOptions{
+		Durable:    true,
+		AutoDelete: false,
+		Exclusive:  false,
+		NoWait:     false,
+		Args:       QuorumQueue,
+	}
+	if len(option) > 0 {
+		o = option[0]
+	}
+	var (
+		err   error
+		queue amqp091.Queue
+	)
+	err = s.retry(func() error {
+		queue, err = s.channel.QueueDeclare(
+			name,
+			o.Durable,
+			o.AutoDelete,
+			o.Exclusive,
+			o.NoWait,
+			o.Args,
+		)
+		return err
+	})
+	if err != nil {
+		return Queue{}, err
+	}
+
+	return Queue(queue), nil
+}
+
+// QueueDeclarePassive is functionally and parametrically equivalent to QueueDeclare, except that it sets the "passive" attribute to true.
+// A passive queue is assumed by RabbitMQ to already exist, and attempting to connect to a non-existent queue will cause RabbitMQ to throw an exception.
+// This function can be used to test for the existence of a queue.
+func (s *Session) QueueDeclarePassive(name string, option ...QueueDeclareOptions) (Queue, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -730,8 +873,12 @@ func (s *Session) QueueDeclare(name string, option ...QueueDeclareOptions) error
 		o = option[0]
 	}
 
-	return s.retry(func() error {
-		_, err := s.channel.QueueDeclare(
+	var (
+		err   error
+		queue amqp091.Queue
+	)
+	err = s.retry(func() error {
+		queue, err = s.channel.QueueDeclarePassive(
 			name,
 			o.Durable,
 			o.AutoDelete,
@@ -741,6 +888,16 @@ func (s *Session) QueueDeclare(name string, option ...QueueDeclareOptions) error
 		)
 		return err
 	})
+
+	if err == nil {
+		return Queue(queue), nil
+	}
+
+	ae := &amqp091.Error{}
+	if errors.As(err, &ae) {
+		return Queue{}, fmt.Errorf("queue %w: %w", ErrNotFound, ae)
+	}
+	return Queue{}, err
 }
 
 // QueueDeleteOptions are options for deleting a queue.
@@ -804,7 +961,7 @@ type QueueBindOptions struct {
 	// closed with an error.
 	NoWait bool
 	// Additional implementation specific arguments
-	Args amqp091.Table
+	Args Table
 }
 
 // QueueBind binds an exchange to a queue so that publishings to the exchange will
@@ -874,12 +1031,12 @@ func (s *Session) QueueBind(queueName string, routingKey string, exchange string
 // arguments.
 // It is possible to send and empty string for the exchange name which means to
 // unbind the queue from the default exchange.
-func (s *Session) QueueUnbind(name string, routingKey string, exchange string, arg ...amqp091.Table) error {
+func (s *Session) QueueUnbind(name string, routingKey string, exchange string, arg ...Table) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	// default
-	var option amqp091.Table = nil
+	var option Table = nil
 	if len(arg) > 0 {
 		option = arg[0]
 	}
@@ -889,6 +1046,41 @@ func (s *Session) QueueUnbind(name string, routingKey string, exchange string, a
 	})
 }
 
+type QueuePurgeOptions struct {
+	// If NoWait is true, do not wait for the server response and the number of messages purged will not be meaningful.
+	NoWait bool
+}
+
+// QueuePurge removes all messages from the named queue which are not waiting to be acknowledged.
+// Messages that have been delivered but have not yet been acknowledged will not be removed.
+// When successful, returns the number of messages purged.
+func (s *Session) QueuePurge(name string, options ...QueuePurgeOptions) (int, error) {
+	opt := QueuePurgeOptions{
+		NoWait: false,
+	}
+	if len(options) > 0 {
+		opt = options[0]
+	}
+
+	var (
+		numPurgedMessages int = 0
+		err               error
+	)
+
+	err = s.retry(func() error {
+		numPurgedMessages, err = s.channel.QueuePurge(name, opt.NoWait)
+		if err != nil {
+			return err
+		}
+		return nil
+	})
+
+	if err != nil {
+		return 0, err
+	}
+	return numPurgedMessages, nil
+}
+
 type ExchangeBindOptions struct {
 	// When NoWait is true, do not wait for the server to confirm the binding.  If any
 	// error occurs the channel will be closed.  Add a listener to NotifyClose to
@@ -896,7 +1088,7 @@ type ExchangeBindOptions struct {
 	NoWait bool
 
 	// Optional arguments specific to the exchanges bound can also be specified.
-	Args amqp091.Table
+	Args Table
 }
 
 // ExchangeBind binds an exchange to another exchange to create inter-exchange
@@ -956,7 +1148,7 @@ type ExchangeUnbindOptions struct {
 	// Optional arguments that are specific to the type of exchanges bound can also be
 	// provided.  These must match the same arguments specified in ExchangeBind to
 	// identify the binding.
-	Args amqp091.Table
+	Args Table
 }
 
 // ExchangeUnbind unbinds the destination exchange from the source exchange on the
@@ -1079,7 +1271,7 @@ flush:
 	return confirms
 }
 
-// Error returns the first error from the errors channel
+// Error returns all errors from the errors channel
 // and flushes all other pending errors from the channel
 // In case that there are no errors, nil is returned.
 func (s *Session) Error() error {
@@ -1095,19 +1287,14 @@ func (s *Session) error() error {
 	)
 	for {
 		select {
-		case <-s.catchShutdown():
-			return fmt.Errorf("session %w", ErrClosed)
 		case e, ok := <-s.errors:
 			if !ok {
-				return amqp091.ErrClosed
+				if err != nil {
+					return err
+				}
+				return fmt.Errorf("errors channel %w", ErrClosed)
 			}
-			// only overwrite with the first error
-			if err == nil {
-				err = e
-			} else {
-				// flush all other errors after the first one
-				continue
-			}
+			err = errors.Join(err, e)
 		default:
 			return err
 		}
