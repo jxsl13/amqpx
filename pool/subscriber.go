@@ -63,6 +63,7 @@ func NewSubscriber(p *Pool, options ...SubscriberOption) *Subscriber {
 		o(&option)
 	}
 
+	// decouple from parent in order to individually close the context
 	ctx, cancel := context.WithCancel(option.Ctx)
 
 	sub := &Subscriber{
@@ -158,7 +159,7 @@ func (s *Subscriber) RegisterBatchHandler(handler *BatchHandler) {
 	defer s.mu.Unlock()
 	s.batchHandlers = append(s.batchHandlers, handler)
 
-	opts := handler.Options()
+	opts := handler.Config()
 
 	s.log.WithFields(withConsumerIfSet(handler.ConsumeOptions().ConsumerTag,
 		map[string]any{
@@ -253,25 +254,8 @@ func (s *Subscriber) consume(h *Handler) (err error) {
 		return err
 	}
 	defer func() {
-		if errors.Is(err, ErrClosed) {
-			// graceful shutdown
-			s.pool.ReturnSession(session, false)
-			s.infoConsumer(opts.ConsumerTag, "closed")
-			return
-		}
-
-		select {
-		case <-h.pausing().Done():
-			// expected closing due to context cancelation
-			// cancel errors the underlying channel
-			// A canceled session is an erred session.
-			s.pool.ReturnSession(session, true)
-			s.infoConsumer(opts.ConsumerTag, "paused")
-		default:
-			// actual error
-			s.pool.ReturnSession(session, true)
-			s.warnConsumer(opts.ConsumerTag, err, "closed unexpectedly")
-		}
+		// err evaluation upon defer
+		s.returnSession(h, session, err)
 	}()
 
 	// got a working session
@@ -315,7 +299,7 @@ func (s *Subscriber) consume(h *Handler) (err error) {
 }
 
 // (n)ack delivery and signal that message was processed by the service
-func (s *Subscriber) ackPostHandle(opts HandlerView, deliveryTag uint64, exchange, routingKey string, session *Session, handlerErr error) (err error) {
+func (s *Subscriber) ackPostHandle(opts HandlerConfig, deliveryTag uint64, exchange, routingKey string, session *Session, handlerErr error) (err error) {
 	var ackErr error
 	if handlerErr != nil {
 		// requeue message if possible
@@ -389,25 +373,8 @@ func (s *Subscriber) batchConsume(h *BatchHandler) (err error) {
 		return err
 	}
 	defer func() {
-		if errors.Is(err, ErrClosed) {
-			// graceful shutdown
-			s.pool.ReturnSession(session, false)
-			s.infoConsumer(opts.ConsumerTag, "closed")
-			return
-		}
-
-		select {
-		case <-h.pausing().Done():
-			// expected closing due to context cancelation
-			// cancel errors the underlying channel
-			// A canceled session is an erred session.
-			s.pool.ReturnSession(session, true)
-			s.infoConsumer(opts.ConsumerTag, "paused")
-		default:
-			// actual error
-			s.pool.ReturnSession(session, true)
-			s.warnConsumer(opts.ConsumerTag, err, "closed unexpectedly")
-		}
+		// err evaluation upon defer
+		s.returnSession(h, session, err)
 	}()
 
 	// got a working session
@@ -506,7 +473,7 @@ func (s *Subscriber) batchConsume(h *BatchHandler) (err error) {
 	}
 }
 
-func (s *Subscriber) ackBatchPostHandle(opts BatchHandlerView, lastDeliveryTag uint64, currentBatchSize int, session *Session, handlerErr error) (err error) {
+func (s *Subscriber) ackBatchPostHandle(opts BatchHandlerConfig, lastDeliveryTag uint64, currentBatchSize int, session *Session, handlerErr error) (err error) {
 	var ackErr error
 	// processing failed
 	if handlerErr != nil {
@@ -540,6 +507,36 @@ func (s *Subscriber) ackBatchPostHandle(opts BatchHandlerView, lastDeliveryTag u
 	}
 	// successfully handled message
 	return nil
+}
+
+type handler interface {
+	ConsumeOptions() ConsumeOptions
+	Queue() string
+	pausing() doner
+}
+
+func (s *Subscriber) returnSession(h handler, session *Session, err error) {
+	opts := h.ConsumeOptions()
+
+	if errors.Is(err, ErrClosed) {
+		// graceful shutdown
+		s.pool.ReturnSession(session, false)
+		s.infoConsumer(opts.ConsumerTag, "closed")
+		return
+	}
+
+	select {
+	case <-h.pausing().Done():
+		// expected closing due to context cancelation
+		// cancel errors the underlying channel
+		// A canceled session is an erred session.
+		s.pool.ReturnSession(session, true)
+		s.infoConsumer(opts.ConsumerTag, "paused")
+	default:
+		// actual error
+		s.pool.ReturnSession(session, true)
+		s.warnConsumer(opts.ConsumerTag, err, "closed unexpectedly")
+	}
 }
 
 func (s *Subscriber) catchShutdown() <-chan struct{} {
