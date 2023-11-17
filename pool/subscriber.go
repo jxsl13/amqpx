@@ -214,6 +214,56 @@ func (s *Subscriber) Start() (err error) {
 	return nil
 }
 
+func (s *Subscriber) retry(consumerType string, h handler, f func() (err error)) {
+	var (
+		backoff = newDefaultBackoffPolicy(1*time.Millisecond, 5*time.Second)
+		retry   = 0
+		err     error
+		timer   = time.NewTimer(0)
+		drained = false
+	)
+	defer closeTimer(timer, &drained)
+
+	for {
+		opts := h.QueueConfig()
+
+		err = f()
+		// only return if closed
+		if errors.Is(err, ErrClosed) {
+			return
+		}
+		// consume was canceled due to context being closed (paused)
+		if errors.Is(err, context.Canceled) {
+			s.infoConsumer(opts.ConsumerTag, fmt.Sprintf("%s paused: pausing %v", consumerType, err))
+			continue
+		}
+
+		if errors.Is(err, ErrDeliveryClosed) {
+			select {
+			case <-h.pausing().Done():
+				s.infoConsumer(opts.ConsumerTag, fmt.Sprintf("%s paused: %v", consumerType, err))
+				continue
+			default:
+				// not paused
+			}
+		}
+
+		s.error(opts.ConsumerTag, opts.Queue, err, fmt.Sprintf("%s closed unexpectedly: %v", consumerType, err))
+
+		retry++
+		resetTimer(timer, backoff(retry), &drained)
+
+		select {
+		case <-s.catchShutdown():
+			return
+		case <-timer.C:
+			// at this point we know that the timer channel has been drained
+			drained = true
+			continue
+		}
+	}
+}
+
 func (s *Subscriber) consumer(h *Handler, wg *sync.WaitGroup) {
 	defer wg.Done()
 	defer h.close()
@@ -227,17 +277,14 @@ func (s *Subscriber) consumer(h *Handler, wg *sync.WaitGroup) {
 		return
 	}
 
-	for {
+	s.retry("consumer", h, func() error {
 		select {
 		case <-s.catchShutdown():
-			return
+			return ErrClosed
 		case <-h.resuming().Done():
-			err = s.consume(h)
-			if errors.Is(err, ErrClosed) {
-				return
-			}
+			return s.consume(h)
 		}
-	}
+	})
 }
 
 func (s *Subscriber) consume(h *Handler) (err error) {
@@ -346,17 +393,14 @@ func (s *Subscriber) batchConsumer(h *BatchHandler, wg *sync.WaitGroup) {
 		return
 	}
 
-	for {
+	s.retry("batch consumer", h, func() error {
 		select {
 		case <-s.catchShutdown():
-			return
+			return ErrClosed
 		case <-h.resuming().Done():
-			err = s.batchConsume(h)
-			if errors.Is(err, ErrClosed) {
-				return
-			}
+			return s.batchConsume(h)
 		}
-	}
+	})
 }
 
 func (s *Subscriber) batchConsume(h *BatchHandler) (err error) {
@@ -510,13 +554,12 @@ func (s *Subscriber) ackBatchPostHandle(opts BatchHandlerConfig, lastDeliveryTag
 }
 
 type handler interface {
-	ConsumeOptions() ConsumeOptions
-	Queue() string
+	QueueConfig() QueueConfig
 	pausing() doner
 }
 
 func (s *Subscriber) returnSession(h handler, session *Session, err error) {
-	opts := h.ConsumeOptions()
+	opts := h.QueueConfig()
 
 	if errors.Is(err, ErrClosed) {
 		// graceful shutdown
