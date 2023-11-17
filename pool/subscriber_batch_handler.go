@@ -95,6 +95,16 @@ func (h *BatchHandler) Config() BatchHandlerConfig {
 	return h.configUnguarded()
 }
 
+func (h *BatchHandler) QueueConfig() QueueConfig {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	return QueueConfig{
+		Queue:          h.queue,
+		ConsumeOptions: h.consumeOpts,
+	}
+}
+
 func (h *BatchHandler) configUnguarded() BatchHandlerConfig {
 	return BatchHandlerConfig{
 		Queue:          h.queue,

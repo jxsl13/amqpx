@@ -87,6 +87,16 @@ func (h *Handler) Config() HandlerConfig {
 	return h.configUnguarded()
 }
 
+func (h *Handler) QueueConfig() QueueConfig {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	return QueueConfig{
+		Queue:          h.queue,
+		ConsumeOptions: h.consumeOpts,
+	}
+}
+
 func (h *Handler) configUnguarded() HandlerConfig {
 	return HandlerConfig{
 		Queue:          h.queue,
@@ -170,4 +180,11 @@ func (h *Handler) SetConsumeOptions(consumeOpts ConsumeOptions) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.consumeOpts = consumeOpts
+}
+
+// QueueConfig is a read only snapshot of the current handler's queue configuration.
+// It is the common configuration between the handler and the batch handler.
+type QueueConfig struct {
+	Queue string
+	ConsumeOptions
 }

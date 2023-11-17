@@ -677,6 +677,155 @@ func testBatchHandlerPauseAndResume(t *testing.T) {
 	assertActive(t, handler01, false)
 }
 
+func TestQueueDeletedConsumerReconnect(t *testing.T) {
+	queueName := "TestQueueDeletedConsumerReconnect-01"
+	var err error
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGINT)
+	defer cancel()
+
+	log := logging.NewTestLogger(t)
+	defer func() {
+		assert.NoError(t, amqpx.Reset())
+	}()
+
+	ts, closer := newTransientSession(t, connectURL)
+	defer closer()
+
+	// step 1 - fill queue with messages
+	amqpx.RegisterTopologyCreator(func(t *pool.Topologer) error {
+		_, err := t.QueueDeclare(queueName)
+		if err != nil {
+			return err
+		}
+		return nil
+	})
+	amqpx.RegisterTopologyDeleter(func(t *pool.Topologer) error {
+		_, err := t.QueueDelete(queueName)
+		if err != nil {
+			return err
+		}
+		return nil
+	})
+
+	h := amqpx.RegisterHandler(queueName, func(msg pool.Delivery) (err error) {
+		return nil
+	})
+
+	assertActive(t, h, false)
+
+	err = amqpx.Start(
+		connectURL,
+		amqpx.WithLogger(log),
+	)
+	if err != nil {
+		assert.NoError(t, err)
+		return
+	}
+
+	assert.NoError(t, h.Pause(context.Background()))
+	assertActive(t, h, false)
+
+	_, err = ts.QueueDelete(queueName)
+	assert.NoError(t, err)
+
+	tctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	err = h.Resume(tctx)
+	cancel()
+	assert.Error(t, err)
+	assertActive(t, h, false)
+
+	_, err = ts.QueueDeclare(queueName)
+	assert.NoError(t, err)
+
+	tctx, cancel = context.WithTimeout(ctx, 5*time.Second)
+	err = h.Resume(tctx)
+	cancel()
+	assert.NoError(t, err)
+	assertActive(t, h, true)
+}
+
+func TestQueueDeletedBatchConsumerReconnect(t *testing.T) {
+	queueName := "TestQueueDeletedBatchConsumerReconnect-01"
+	var err error
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGINT)
+	defer cancel()
+
+	log := logging.NewTestLogger(t)
+	defer func() {
+		assert.NoError(t, amqpx.Reset())
+	}()
+
+	ts, closer := newTransientSession(t, connectURL)
+	defer closer()
+
+	// step 1 - fill queue with messages
+	amqpx.RegisterTopologyCreator(func(t *pool.Topologer) error {
+		_, err := t.QueueDeclare(queueName)
+		if err != nil {
+			return err
+		}
+		return nil
+	})
+	amqpx.RegisterTopologyDeleter(func(t *pool.Topologer) error {
+		_, err := t.QueueDelete(queueName)
+		if err != nil {
+			return err
+		}
+		return nil
+	})
+
+	h := amqpx.RegisterBatchHandler(queueName, func(msg []pool.Delivery) (err error) {
+		return nil
+	})
+
+	assertActive(t, h, false)
+
+	err = amqpx.Start(
+		connectURL,
+		amqpx.WithLogger(log),
+	)
+	if err != nil {
+		assert.NoError(t, err)
+		return
+	}
+
+	assert.NoError(t, h.Pause(context.Background()))
+	assertActive(t, h, false)
+
+	_, err = ts.QueueDelete(queueName)
+	assert.NoError(t, err)
+
+	tctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	err = h.Resume(tctx)
+	cancel()
+	assert.Error(t, err)
+	assertActive(t, h, false)
+
+	_, err = ts.QueueDeclare(queueName)
+	assert.NoError(t, err)
+
+	tctx, cancel = context.WithTimeout(ctx, 5*time.Second)
+	err = h.Resume(tctx)
+	cancel()
+	assert.NoError(t, err)
+	assertActive(t, h, true)
+}
+
+func newTransientSession(t *testing.T, connectUrl string) (session *pool.Session, closer func()) {
+	p, err := pool.New(connectUrl, 1, 1, pool.WithLogger(logging.NewTestLogger(t)))
+	require.NoError(t, err)
+
+	s, err := p.GetSession()
+	require.NoError(t, err)
+
+	return s, func() {
+		err = s.Close()
+		assert.NoError(t, err)
+		p.Close()
+		assert.NoError(t, err)
+	}
+}
+
 type handlerStats interface {
 	Queue() string
 	IsActive(ctx context.Context) (active bool, err error)
