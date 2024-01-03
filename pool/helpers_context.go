@@ -292,12 +292,7 @@ func (sc *stateContext) Resume(ctx context.Context) error {
 }
 
 func (sc *stateContext) IsActive(ctx context.Context) (active bool, err error) {
-	closed := func() bool {
-		sc.mu.RLock()
-		defer sc.mu.RUnlock()
-		return sc.closed
-	}()
-	if closed {
+	if sc.isClosed() {
 		return false, nil
 	}
 
@@ -312,12 +307,7 @@ func (sc *stateContext) IsActive(ctx context.Context) (active bool, err error) {
 }
 
 func (sc *stateContext) AwaitResumed(ctx context.Context) (err error) {
-	closed := func() bool {
-		sc.mu.RLock()
-		defer sc.mu.RUnlock()
-		return sc.closed
-	}()
-	if closed {
+	if sc.isClosed() {
 		return ErrClosed
 	}
 
@@ -330,12 +320,7 @@ func (sc *stateContext) AwaitResumed(ctx context.Context) (err error) {
 }
 
 func (sc *stateContext) AwaitPaused(ctx context.Context) (err error) {
-	closed := func() bool {
-		sc.mu.RLock()
-		defer sc.mu.RUnlock()
-		return sc.closed
-	}()
-	if closed {
+	if sc.isClosed() {
 		return ErrClosed
 	}
 
@@ -345,6 +330,12 @@ func (sc *stateContext) AwaitPaused(ctx context.Context) (err error) {
 	case <-ctx.Done():
 		return fmt.Errorf("failed to check state: %w", ctx.Err())
 	}
+}
+
+func (sc *stateContext) isClosed() bool {
+	sc.mu.RLock()
+	defer sc.mu.RUnlock()
+	return sc.closed
 }
 
 // close closes all active contexts

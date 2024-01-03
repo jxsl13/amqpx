@@ -31,6 +31,9 @@ type Session struct {
 
 	consumers map[string]bool // saves consumer names in order to cancel them upon session closure
 
+	// a session should not be used in a multithreaded context
+	// but only one session per goroutine. That is why we keep this
+	// as a Mutex and not a RWMutex.
 	mu     sync.Mutex
 	ctx    context.Context
 	cancel context.CancelFunc
