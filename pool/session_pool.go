@@ -147,7 +147,7 @@ func (sp *SessionPool) ReturnSession(session *Session, erred bool) {
 
 	// don't ass non-managed sessions back to the channel
 	if !session.IsCached() {
-		session.Close()
+		_ = session.Close()
 		return
 	}
 
@@ -168,7 +168,7 @@ func (sp *SessionPool) ReturnSession(session *Session, erred bool) {
 
 	select {
 	case <-sp.catchShutdown():
-		session.Close()
+		_ = session.Close()
 	case sp.sessions <- session:
 	}
 }
@@ -190,11 +190,14 @@ SessionClose:
 	for {
 		select {
 		// flush sessions channel
-		case session := <-sp.sessions:
+		case session, ok := <-sp.sessions:
+			if !ok {
+				break SessionClose
+			}
 			wg.Add(1)
 			go func(*Session) {
 				defer wg.Done()
-				session.Close()
+				_ = session.Close()
 			}(session)
 
 		default:
