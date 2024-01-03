@@ -21,11 +21,12 @@ func NewBatchHandler(queue string, hf BatchHandlerFunc, options ...BatchHandlerO
 
 	// sane defaults
 	h := &BatchHandler{
-		sc:           newStateContext(context.Background()),
-		queue:        queue,
-		handlerFunc:  hf,
-		maxBatchSize: defaultMaxBatchSize,
-		flushTimeout: defaultFlushTimeout,
+		sc:            newStateContext(context.Background()),
+		queue:         queue,
+		handlerFunc:   hf,
+		maxBatchSize:  defaultMaxBatchSize,
+		maxBatchBytes: 0, // unlimited by default
+		flushTimeout:  defaultFlushTimeout,
 		consumeOpts: ConsumeOptions{
 			ConsumerTag: "",
 			AutoAck:     false,
@@ -55,6 +56,11 @@ type BatchHandler struct {
 	// before processing is triggered
 	maxBatchSize int
 
+	// In case that the batch size exceeds this limit, the batch is passed to the handler function.
+	// This indicates that a batch will contains at least one message for processing.
+	// If the value is set to 0, the batch size is unlimited.
+	maxBatchBytes int
+
 	// FlushTimeout is the duration that is waited for the next message from a queue before
 	// the batch is closed and passed for processing.
 	// This value should be less than 30m (which is the (n)ack timeout of RabbitMQ)
@@ -69,8 +75,15 @@ type BatchHandlerConfig struct {
 	Queue string
 	ConsumeOptions
 
-	HandlerFunc  BatchHandlerFunc
+	HandlerFunc BatchHandlerFunc
+
+	// Maximum number of messages
 	MaxBatchSize int
+
+	// Maximum size of a batch in bytes (soft limit which triggers a batch to be processed)
+	// does not guarantee that the batch size is not exceeded.
+	MaxBatchBytes int
+
 	FlushTimeout time.Duration
 }
 
@@ -110,6 +123,7 @@ func (h *BatchHandler) configUnguarded() BatchHandlerConfig {
 		Queue:          h.queue,
 		HandlerFunc:    h.handlerFunc,
 		MaxBatchSize:   h.maxBatchSize,
+		MaxBatchBytes:  h.maxBatchBytes,
 		FlushTimeout:   h.flushTimeout,
 		ConsumeOptions: h.consumeOpts,
 	}
@@ -186,22 +200,31 @@ func (h *BatchHandler) ConsumeOptions() ConsumeOptions {
 func (h *BatchHandler) SetConsumeOptions(consumeOpts ConsumeOptions) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.consumeOpts = consumeOpts
+	WithBatchConsumeOptions(consumeOpts)(h)
 }
 
 func (h *BatchHandler) MaxBatchSize() int {
-	h.mu.Lock()
-	defer h.mu.Unlock()
+	h.mu.RLock()
+	defer h.mu.RUnlock()
 	return h.maxBatchSize
 }
 
 func (h *BatchHandler) SetMaxBatchSize(maxBatchSize int) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if maxBatchSize <= 0 {
-		maxBatchSize = defaultMaxBatchSize
-	}
-	h.maxBatchSize = maxBatchSize
+	WithMaxBatchSize(maxBatchSize)(h)
+}
+
+func (h *BatchHandler) MaxBatchBytes() int {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.maxBatchBytes
+}
+
+func (h *BatchHandler) SetMaxBatchBytes(maxBatchBytes int) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	WithMaxBatchBytes(maxBatchBytes)(h)
 }
 
 func (h *BatchHandler) FlushTimeout() time.Duration {
@@ -213,8 +236,5 @@ func (h *BatchHandler) FlushTimeout() time.Duration {
 func (h *BatchHandler) SetFlushTimeout(flushTimeout time.Duration) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if flushTimeout <= 0 {
-		flushTimeout = defaultFlushTimeout
-	}
-	h.flushTimeout = flushTimeout
+	WithBatchFlushTimeout(flushTimeout)(h)
 }

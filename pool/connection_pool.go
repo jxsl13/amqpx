@@ -205,7 +205,7 @@ func (cp *ConnectionPool) ReturnConnection(conn *Connection, flag bool) {
 
 	// close transient connections
 	if !conn.IsCached() {
-		conn.Close()
+		_ = conn.Close()
 	}
 
 	err := cp.connections.Put(conn)
@@ -213,7 +213,7 @@ func (cp *ConnectionPool) ReturnConnection(conn *Connection, flag bool) {
 		// queue was disposed of,
 		// indicating pool shutdown
 		// -> close connection upon pool shutdown
-		conn.Close()
+		_ = conn.Close()
 	}
 }
 
@@ -232,16 +232,16 @@ func (cp *ConnectionPool) Close() {
 	for !cp.connections.Empty() {
 		items := cp.connections.Dispose()
 
+		wg.Add(len(items))
 		for _, item := range items {
 			conn, ok := item.(*Connection)
 			if !ok {
 				panic("item in connection queue is not a connection")
 			}
 
-			wg.Add(1)
 			go func(c *Connection) {
 				defer wg.Done()
-				c.Close()
+				_ = c.Close()
 			}(conn)
 		}
 	}
