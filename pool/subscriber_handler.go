@@ -46,7 +46,7 @@ func NewHandler(queue string, hf HandlerFunc, option ...ConsumeOptions) *Handler
 // Handler is a struct that contains all parameters needed in order to register a handler function
 // to the provided queue. Additionally, the handler allows you to pause and resume processing or messages.
 type Handler struct {
-	mu          sync.Mutex
+	mu          sync.RWMutex
 	queue       string
 	handlerFunc HandlerFunc
 	consumeOpts ConsumeOptions
@@ -82,14 +82,14 @@ func (h *Handler) start(ctx context.Context) (opts HandlerConfig, err error) {
 }
 
 func (h *Handler) Config() HandlerConfig {
-	h.mu.Lock()
-	defer h.mu.Unlock()
+	h.mu.RLock()
+	defer h.mu.RUnlock()
 	return h.configUnguarded()
 }
 
 func (h *Handler) QueueConfig() QueueConfig {
-	h.mu.Lock()
-	defer h.mu.Unlock()
+	h.mu.RLock()
+	defer h.mu.RUnlock()
 
 	return QueueConfig{
 		Queue:          h.queue,
@@ -153,8 +153,8 @@ func (h *Handler) Queue() string {
 // from which the handler consumes messages.
 // The actual change is effective after pausing and resuming the handler.
 func (h *Handler) SetQueue(queue string) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
+	h.mu.RLock()
+	defer h.mu.RUnlock()
 	h.queue = queue
 }
 
@@ -168,8 +168,8 @@ func (h *Handler) SetHandlerFunc(hf HandlerFunc) {
 }
 
 func (h *Handler) ConsumeOptions() ConsumeOptions {
-	h.mu.Lock()
-	defer h.mu.Unlock()
+	h.mu.RLock()
+	defer h.mu.RUnlock()
 	return h.consumeOpts
 }
 
