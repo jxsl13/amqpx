@@ -45,7 +45,7 @@ func NewBatchHandler(queue string, hf BatchHandlerFunc, options ...BatchHandlerO
 
 // BatchHandler is a struct that contains all parameters needed in order to register a batch handler function.
 type BatchHandler struct {
-	mu          sync.Mutex
+	mu          sync.RWMutex
 	queue       string
 	handlerFunc BatchHandlerFunc
 	consumeOpts ConsumeOptions
@@ -90,14 +90,14 @@ func (h *BatchHandler) start(ctx context.Context) (opts BatchHandlerConfig, err 
 }
 
 func (h *BatchHandler) Config() BatchHandlerConfig {
-	h.mu.Lock()
-	defer h.mu.Unlock()
+	h.mu.RLock()
+	defer h.mu.RUnlock()
 	return h.configUnguarded()
 }
 
 func (h *BatchHandler) QueueConfig() QueueConfig {
-	h.mu.Lock()
-	defer h.mu.Unlock()
+	h.mu.RLock()
+	defer h.mu.RUnlock()
 
 	return QueueConfig{
 		Queue:          h.queue,
@@ -154,8 +154,8 @@ func (h *BatchHandler) awaitPaused(ctx context.Context) error {
 }
 
 func (h *BatchHandler) Queue() string {
-	h.mu.Lock()
-	defer h.mu.Unlock()
+	h.mu.RLock()
+	defer h.mu.RUnlock()
 	return h.queue
 }
 
@@ -178,8 +178,8 @@ func (h *BatchHandler) SetHandlerFunc(hf BatchHandlerFunc) {
 }
 
 func (h *BatchHandler) ConsumeOptions() ConsumeOptions {
-	h.mu.Lock()
-	defer h.mu.Unlock()
+	h.mu.RLock()
+	defer h.mu.RUnlock()
 	return h.consumeOpts
 }
 
@@ -205,8 +205,8 @@ func (h *BatchHandler) SetMaxBatchSize(maxBatchSize int) {
 }
 
 func (h *BatchHandler) FlushTimeout() time.Duration {
-	h.mu.Lock()
-	defer h.mu.Unlock()
+	h.mu.RLock()
+	defer h.mu.RUnlock()
 	return h.flushTimeout
 }
 

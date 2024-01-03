@@ -25,7 +25,7 @@ type AMQPX struct {
 	pub     *pool.Publisher
 	sub     *pool.Subscriber
 
-	mu            sync.Mutex
+	mu            sync.RWMutex
 	handlers      []*pool.Handler
 	batchHandlers []*pool.BatchHandler
 
@@ -296,8 +296,8 @@ func (a *AMQPX) close() (err error) {
 // Publish a message to a specific exchange with a given routingKey.
 // You may set exchange to "" and routingKey to your queue name in order to publish directly to a queue.
 func (a *AMQPX) Publish(exchange string, routingKey string, msg pool.Publishing) error {
-	a.mu.Lock()
-	defer a.mu.Unlock()
+	a.mu.RLock()
+	defer a.mu.RUnlock()
 	if a.pub == nil {
 		panic("amqpx package was not started")
 	}
@@ -307,8 +307,8 @@ func (a *AMQPX) Publish(exchange string, routingKey string, msg pool.Publishing)
 
 // Get is only supposed to be used for testing, do not use get for polling any broker queues.
 func (a *AMQPX) Get(queue string, autoAck bool) (msg pool.Delivery, ok bool, err error) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
+	a.mu.RLock()
+	defer a.mu.RUnlock()
 	if a.pub == nil {
 		panic("amqpx package was not started")
 	}

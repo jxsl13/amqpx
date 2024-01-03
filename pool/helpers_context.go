@@ -117,7 +117,7 @@ func (c *cancelContext) Reset(parentCtx context.Context) error {
 }
 
 type stateContext struct {
-	mu sync.Mutex
+	mu sync.RWMutex
 
 	parentCtx context.Context
 
@@ -293,8 +293,8 @@ func (sc *stateContext) Resume(ctx context.Context) error {
 
 func (sc *stateContext) IsActive(ctx context.Context) (active bool, err error) {
 	closed := func() bool {
-		sc.mu.Lock()
-		defer sc.mu.Unlock()
+		sc.mu.RLock()
+		defer sc.mu.RUnlock()
 		return sc.closed
 	}()
 	if closed {
@@ -313,8 +313,8 @@ func (sc *stateContext) IsActive(ctx context.Context) (active bool, err error) {
 
 func (sc *stateContext) AwaitResumed(ctx context.Context) (err error) {
 	closed := func() bool {
-		sc.mu.Lock()
-		defer sc.mu.Unlock()
+		sc.mu.RLock()
+		defer sc.mu.RUnlock()
 		return sc.closed
 	}()
 	if closed {
@@ -331,8 +331,8 @@ func (sc *stateContext) AwaitResumed(ctx context.Context) (err error) {
 
 func (sc *stateContext) AwaitPaused(ctx context.Context) (err error) {
 	closed := func() bool {
-		sc.mu.Lock()
-		defer sc.mu.Unlock()
+		sc.mu.RLock()
+		defer sc.mu.RUnlock()
 		return sc.closed
 	}()
 	if closed {
