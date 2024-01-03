@@ -17,6 +17,8 @@ services:
       RABBITMQ_PASSWORD: password
       RABBITMQ_DISK_FREE_RELATIVE_LIMIT: 0.1
       RABBITMQ_VM_MEMORY_HIGH_WATERMARK: 0.5
+      # See: https://www.rabbitmq.com/access-control.html#loopback-users
+      RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS: "-rabbit loopback_users []"
     networks:
       - rabbitnet
 
