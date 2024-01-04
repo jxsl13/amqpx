@@ -134,7 +134,7 @@ func (h *BatchHandler) Pause(ctx context.Context) error {
 	return h.sc.Pause(ctx)
 }
 
-func (h *BatchHandler) pausing() doner {
+func (h *BatchHandler) pausing() context.Context {
 	return h.sc.Pausing()
 }
 
@@ -147,7 +147,7 @@ func (h *BatchHandler) Resume(ctx context.Context) error {
 	return h.sc.Resume(ctx)
 }
 
-func (h *BatchHandler) resuming() doner {
+func (h *BatchHandler) resuming() context.Context {
 	return h.sc.Resuming()
 }
 

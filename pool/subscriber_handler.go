@@ -110,7 +110,7 @@ func (h *Handler) Pause(ctx context.Context) error {
 	return h.sc.Pause(ctx)
 }
 
-func (h *Handler) pausing() doner {
+func (h *Handler) pausing() context.Context {
 	return h.sc.Pausing()
 }
 
@@ -123,7 +123,7 @@ func (h *Handler) Resume(ctx context.Context) error {
 	return h.sc.Resume(ctx)
 }
 
-func (h *Handler) resuming() doner {
+func (h *Handler) resuming() context.Context {
 	return h.sc.Resuming()
 }
 

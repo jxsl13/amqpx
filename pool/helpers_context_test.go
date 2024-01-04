@@ -98,8 +98,8 @@ func TestStateContextConcurrentTransitions(t *testing.T) {
 
 	var wg sync.WaitGroup
 	var (
-		numGoroutines = 1000
-		iterations    = 1000
+		numGoroutines = 2000
+		iterations    = 10000
 	)
 	trigger := make(chan struct{})
 
@@ -117,19 +117,17 @@ func TestStateContextConcurrentTransitions(t *testing.T) {
 			case <-trigger:
 				//log.Infof("routine %d triggered", id)
 			}
-			time.Sleep(time.Duration(id) * 2 * time.Millisecond)
+			time.Sleep(time.Duration(id/100) * 20 * time.Millisecond)
 
 			for i := 0; i < iterations; i++ {
 				if id%2 == 0 {
 					assert.NoError(t, sc.Resume(ctx))
 					// log.Infof("routine %d resumed", id)
 					pause.Add(1)
-					time.Sleep(20 * time.Millisecond)
 				} else {
 					assert.NoError(t, sc.Pause(ctx))
 					// log.Infof("routine %d paused", id)
 					resume.Add(1)
-					time.Sleep(20 * time.Millisecond)
 				}
 			}
 		}(i)
@@ -150,7 +148,7 @@ func TestStateContextConcurrentTransitions(t *testing.T) {
 			case <-trigger:
 				//log.Infof("routine %d triggered", id)
 			}
-			time.Sleep(time.Duration(id) * 10 * time.Millisecond)
+			time.Sleep(time.Duration(id/100) * 10 * time.Millisecond)
 
 			for i := 0; i < iterations; i++ {
 				switch id % 3 {
@@ -158,17 +156,14 @@ func TestStateContextConcurrentTransitions(t *testing.T) {
 					_, err := sc.IsActive(ctx)
 					assert.NoError(t, err)
 					active.Add(1)
-					time.Sleep(20 * time.Millisecond)
 				case 1:
 					assert.NoError(t, sc.AwaitPaused(ctx))
 					// log.Infof("routine %d await paused", id)
 					awaitPaused.Add(1)
-					time.Sleep(20 * time.Millisecond)
 				case 2:
 					assert.NoError(t, sc.AwaitResumed(ctx))
 					// log.Infof("routine %d await resumed", id)
 					awaitResumed.Add(1)
-					time.Sleep(20 * time.Millisecond)
 				}
 			}
 
