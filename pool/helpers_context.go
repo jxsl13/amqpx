@@ -117,7 +117,7 @@ func (c *cancelContext) Reset(parentCtx context.Context) error {
 }
 
 type stateContext struct {
-	mu sync.RWMutex
+	mu sync.Mutex
 
 	parentCtx context.Context
 
@@ -203,12 +203,12 @@ func (sc *stateContext) Resumed() {
 	sc.resumed.Cancel()
 }
 
-func (sc *stateContext) Resuming() doner {
-	return sc.resuming
+func (sc *stateContext) Resuming() context.Context {
+	return sc.resuming.Context()
 }
 
-func (sc *stateContext) Pausing() doner {
-	return sc.pausing
+func (sc *stateContext) Pausing() context.Context {
+	return sc.pausing.Context()
 }
 
 func (sc *stateContext) Pause(ctx context.Context) error {
@@ -333,8 +333,8 @@ func (sc *stateContext) AwaitPaused(ctx context.Context) (err error) {
 }
 
 func (sc *stateContext) isClosed() bool {
-	sc.mu.RLock()
-	defer sc.mu.RUnlock()
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
 	return sc.closed
 }
 
@@ -353,9 +353,4 @@ func (sc *stateContext) closeUnguarded() {
 	sc.resuming.Cancel()
 	sc.resumed.Cancel()
 	sc.closed = true
-}
-
-type doner interface {
-	Done() <-chan struct{}
-	Context() context.Context
 }

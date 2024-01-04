@@ -308,7 +308,7 @@ func (s *Subscriber) consume(h *Handler) (err error) {
 
 	// got a working session
 	delivery, err := session.ConsumeWithContext(
-		h.pausing().Context(),
+		h.pausing(),
 		opts.Queue,
 		opts.ConsumeOptions,
 	)
@@ -424,7 +424,7 @@ func (s *Subscriber) batchConsume(h *BatchHandler) (err error) {
 
 	// got a working session
 	delivery, err := session.ConsumeWithContext(
-		h.pausing().Context(),
+		h.pausing(),
 		opts.Queue,
 		opts.ConsumeOptions,
 	)
@@ -608,7 +608,7 @@ func (s *Subscriber) ackBatchPostHandle(opts BatchHandlerConfig, lastDeliveryTag
 
 type handler interface {
 	QueueConfig() QueueConfig
-	pausing() doner
+	pausing() context.Context
 }
 
 func (s *Subscriber) returnSession(h handler, session *Session, err error) {

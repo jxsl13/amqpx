@@ -5,6 +5,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -19,6 +20,9 @@ func NewTestLogger(t *testing.T) *TestLogger {
 }
 
 func newTestLoggerWithFields(l *TestLogger, fields Fields) *TestLogger {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
 	n := &TestLogger{
 		t:      l.t,
 		fields: make(map[string]any, len(fields)+len(l.fields)),
@@ -38,6 +42,7 @@ func newTestLoggerWithFields(l *TestLogger, fields Fields) *TestLogger {
 type TestLogger struct {
 	t      *testing.T
 	fields map[string]any
+	mu     sync.Mutex
 }
 
 func (l *TestLogger) Debugf(format string, args ...any) {
@@ -138,23 +143,33 @@ func (l *TestLogger) fieldsMsg(level, msg string) string {
 func (l *TestLogger) logf(prefix, format string, args ...any) {
 	l.t.Helper()
 	lpref := strings.ToLower(prefix)
-	msg := fmt.Sprintf(format, args...)
-	if strings.Contains(lpref, "panic") || strings.Contains(lpref, "fatal") {
-		l.t.Fatal(l.fieldsMsg(prefix, msg))
-	} else {
-		l.t.Log(l.fieldsMsg(prefix, msg))
+	arg := fmt.Sprintf(format, args...)
 
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	msg := l.fieldsMsg(prefix, arg)
+	if lpref == "panic" || lpref == "fatal" {
+		l.t.Fatal(msg)
+	} else {
+		l.t.Log(msg)
 	}
 
 }
 
 func (l *TestLogger) log(prefix string, args ...any) {
 	l.t.Helper()
-	msg := fmt.Sprint(args...)
+
 	lpref := strings.ToLower(prefix)
-	if strings.Contains(lpref, "panic") || strings.Contains(lpref, "fatal") {
-		l.t.Fatal(l.fieldsMsg(prefix, msg))
+	arg := fmt.Sprint(args...)
+
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	msg := l.fieldsMsg(prefix, arg)
+	if lpref == "panic" || lpref == "fatal" {
+		l.mu.Lock()
+		l.t.Fatal(msg)
+		l.mu.Unlock()
 	} else {
-		l.t.Log(l.fieldsMsg(prefix, msg))
+		l.t.Log(msg)
 	}
 }
