@@ -89,3 +89,144 @@ func WithConfirms(requirePublishConfirms bool) Option {
 		SessionPoolWithConfirms(requirePublishConfirms)(&po.spo)
 	}
 }
+
+// WithConnectionRecoverCallback allows to set a custom connection recovery callback
+func WithConnectionRecoverCallback(callback ConnectionRecoverCallback) Option {
+	return func(po *poolOption) {
+		ConnectionPoolWithRecoverCallback(callback)(&po.cpo)
+	}
+}
+
+// WithSessionRecoverCallback allows to set a custom session recovery callback
+func WithSessionRecoverCallback(callback SessionRetryCallback) Option {
+	return func(po *poolOption) {
+		SessionPoolWithRetryCallback(callback)(&po.spo)
+	}
+}
+
+// WithSessionRetryCallback allows to set a custom retry callback for the session pool.
+// This will set the same retry callback for all operations.
+func WithSessionRetryCallback(callback SessionRetryCallback) Option {
+	return func(po *poolOption) {
+		SessionPoolWithRetryCallback(callback)(&po.spo)
+	}
+}
+
+// WithSessionPublishRetryCallback allows to set a custom retry callback for the session pool.
+func WithSessionPublishRetryCallback(callback SessionRetryCallback) Option {
+	return func(po *poolOption) {
+		SessionPoolWithPublishRetryCallback(callback)(&po.spo)
+	}
+}
+
+// WithSessionGetRetryCallback allows to set a custom retry callback for the session pool.
+func WithSessionGetRetryCallback(callback SessionRetryCallback) Option {
+	return func(po *poolOption) {
+		SessionPoolWithGetRetryCallback(callback)(&po.spo)
+	}
+}
+
+// WithSessionConsumeRetryCallback allows to set a custom retry callback for the session pool.
+func WithSessionConsumeRetryCallback(callback SessionRetryCallback) Option {
+	return func(po *poolOption) {
+		SessionPoolWithConsumeRetryCallback(callback)(&po.spo)
+	}
+}
+
+// WithSessionConsumeContextRetryCallback allows to set a custom retry callback for the session pool.
+func WithSessionConsumeContextRetryCallback(callback SessionRetryCallback) Option {
+	return func(po *poolOption) {
+		SessionPoolWithConsumeContextRetryCallback(callback)(&po.spo)
+	}
+}
+
+// WithSessionExchangeDeclareRetryCallback allows to set a custom retry callback for the session pool.
+func WithSessionExchangeDeclareRetryCallback(callback SessionRetryCallback) Option {
+	return func(po *poolOption) {
+		SessionPoolWithExchangeDeclareRetryCallback(callback)(&po.spo)
+	}
+}
+
+// WithSessionExchangeDeclarePassiveRetryCallback allows to set a custom retry callback for the session pool.
+func WithSessionExchangeDeclarePassiveRetryCallback(callback SessionRetryCallback) Option {
+	return func(po *poolOption) {
+		SessionPoolWithExchangeDeclarePassiveRetryCallback(callback)(&po.spo)
+	}
+}
+
+// WithSessionExchangeDeleteRetryCallback allows to set a custom retry callback for the session pool.
+func WithSessionExchangeDeleteRetryCallback(callback SessionRetryCallback) Option {
+	return func(po *poolOption) {
+		SessionPoolWithExchangeDeleteRetryCallback(callback)(&po.spo)
+	}
+}
+
+// WithSessionQueueDeclareRetryCallback allows to set a custom retry callback for the session pool.
+func WithSessionQueueDeclareRetryCallback(callback SessionRetryCallback) Option {
+	return func(po *poolOption) {
+		SessionPoolWithQueueDeclareRetryCallback(callback)(&po.spo)
+	}
+}
+
+// WithSessionQueueDeclarePassiveRetryCallback allows to set a custom retry callback for the session pool.
+func WithSessionQueueDeclarePassiveRetryCallback(callback SessionRetryCallback) Option {
+	return func(po *poolOption) {
+		SessionPoolWithQueueDeclarePassiveRetryCallback(callback)(&po.spo)
+	}
+}
+
+// WithSessionQueueDeleteRetryCallback allows to set a custom retry callback for the session pool.
+func WithSessionQueueDeleteRetryCallback(callback SessionRetryCallback) Option {
+	return func(po *poolOption) {
+		SessionPoolWithQueueDeleteRetryCallback(callback)(&po.spo)
+	}
+}
+
+// WithSessionQueueBindRetryCallback allows to set a custom retry callback for the session pool.
+func WithSessionQueueBindRetryCallback(callback SessionRetryCallback) Option {
+	return func(po *poolOption) {
+		SessionPoolWithQueueBindRetryCallback(callback)(&po.spo)
+	}
+}
+
+// WithSessionQueueUnbindRetryCallback allows to set a custom retry callback for the session pool.
+func WithSessionQueueUnbindRetryCallback(callback SessionRetryCallback) Option {
+	return func(po *poolOption) {
+		SessionPoolWithQueueUnbindRetryCallback(callback)(&po.spo)
+	}
+}
+
+// WithSessionQueuePurgeRetryCallback allows to set a custom retry callback for the session pool.
+func WithSessionQueuePurgeRetryCallback(callback SessionRetryCallback) Option {
+	return func(po *poolOption) {
+		SessionPoolWithQueuePurgeRetryCallback(callback)(&po.spo)
+	}
+}
+
+// WithSessionExchangeBindRetryCallback allows to set a custom retry callback for the session pool.
+func WithSessionExchangeBindRetryCallback(callback SessionRetryCallback) Option {
+	return func(po *poolOption) {
+		SessionPoolWithExchangeBindRetryCallback(callback)(&po.spo)
+	}
+}
+
+// WithSessionExchangeUnbindRetryCallback allows to set a custom retry callback for the session pool.
+func WithSessionExchangeUnbindRetryCallback(callback SessionRetryCallback) Option {
+	return func(po *poolOption) {
+		SessionPoolWithExchangeUnbindRetryCallback(callback)(&po.spo)
+	}
+}
+
+// WithSessionQoSRetryCallback allows to set a custom retry callback for the session pool.
+func WithSessionQoSRetryCallback(callback SessionRetryCallback) Option {
+	return func(po *poolOption) {
+		SessionPoolWithQoSRetryCallback(callback)(&po.spo)
+	}
+}
+
+// WithSessionFlowRetryCallback allows to set a custom retry callback for the session pool.
+func WithSessionFlowRetryCallback(callback SessionRetryCallback) Option {
+	return func(po *poolOption) {
+		SessionPoolWithFlowRetryCallback(callback)(&po.spo)
+	}
+}

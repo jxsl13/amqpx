@@ -24,6 +24,25 @@ type SessionPool struct {
 	cancel context.CancelFunc
 
 	log logging.Logger
+
+	RecoverCallback                     SessionRetryCallback
+	PublishRetryCallback                SessionRetryCallback
+	GetRetryCallback                    SessionRetryCallback
+	ConsumeRetryCallback                SessionRetryCallback
+	ConsumeContextRetryCallback         SessionRetryCallback
+	ExchangeDeclareRetryCallback        SessionRetryCallback
+	ExchangeDeclarePassiveRetryCallback SessionRetryCallback
+	ExchangeDeleteRetryCallback         SessionRetryCallback
+	QueueDeclareRetryCallback           SessionRetryCallback
+	QueueDeclarePassiveRetryCallback    SessionRetryCallback
+	QueueDeleteRetryCallback            SessionRetryCallback
+	QueueBindRetryCallback              SessionRetryCallback
+	QueueUnbindRetryCallback            SessionRetryCallback
+	QueuePurgeRetryCallback             SessionRetryCallback
+	ExchangeBindRetryCallback           SessionRetryCallback
+	ExchangeUnbindRetryCallback         SessionRetryCallback
+	QoSRetryCallback                    SessionRetryCallback
+	FlowRetryCallback                   SessionRetryCallback
 }
 
 func NewSessionPool(pool *ConnectionPool, numSessions int, options ...SessionPoolOption) (*SessionPool, error) {
@@ -65,6 +84,25 @@ func newSessionPoolFromOption(pool *ConnectionPool, ctx context.Context, option 
 		cancel: cancel,
 
 		log: option.Logger,
+
+		RecoverCallback:                     option.RecoverCallback,
+		PublishRetryCallback:                option.PublishRetryCallback,
+		GetRetryCallback:                    option.GetRetryCallback,
+		ConsumeRetryCallback:                option.ConsumeRetryCallback,
+		ConsumeContextRetryCallback:         option.ConsumeContextRetryCallback,
+		ExchangeDeclareRetryCallback:        option.ExchangeDeclareRetryCallback,
+		ExchangeDeclarePassiveRetryCallback: option.ExchangeDeclarePassiveRetryCallback,
+		ExchangeDeleteRetryCallback:         option.ExchangeDeleteRetryCallback,
+		QueueDeclareRetryCallback:           option.QueueDeclareRetryCallback,
+		QueueDeclarePassiveRetryCallback:    option.QueueDeclarePassiveRetryCallback,
+		QueueDeleteRetryCallback:            option.QueueDeleteRetryCallback,
+		QueueBindRetryCallback:              option.QueueBindRetryCallback,
+		QueueUnbindRetryCallback:            option.QueueUnbindRetryCallback,
+		QueuePurgeRetryCallback:             option.QueuePurgeRetryCallback,
+		ExchangeBindRetryCallback:           option.ExchangeBindRetryCallback,
+		ExchangeUnbindRetryCallback:         option.ExchangeUnbindRetryCallback,
+		QoSRetryCallback:                    option.QoSRetryCallback,
+		FlowRetryCallback:                   option.FlowRetryCallback,
 	}
 
 	sp.debug("initializing pool sessions...")
@@ -130,13 +168,46 @@ func (sp *SessionPool) GetTransientSession(ctx context.Context) (*Session, error
 		return nil, err
 	}
 
-	transientId := atomic.AddInt64(&sp.transientID, 1)
-	return NewSession(conn, fmt.Sprintf("%s-transient-%d", conn.Name(), transientId),
+	transientID := atomic.AddInt64(&sp.transientID, 1)
+	return sp.deriveSession(ctx, conn, int(transientID))
+}
+
+func (sp *SessionPool) deriveSession(ctx context.Context, conn *Connection, id int) (*Session, error) {
+
+	cached := conn.IsCached()
+
+	var name string
+	if cached {
+		name = fmt.Sprintf("%s-cached-session-%d", conn.Name(), id)
+	} else {
+		name = fmt.Sprintf("%s-transient-session-%d", conn.Name(), id)
+	}
+
+	return NewSession(conn, name,
 		SessionWithContext(ctx),
 		SessionWithBufferSize(sp.size),
+		SessionWithCached(cached),
 		SessionWithConfirms(sp.confirmable),
-		SessionWithCached(false),
-		SessionWithAutoCloseConnection(true),
+		SessionWithAutoCloseConnection(!cached), // only close transient connections
+		// reporting/alerting/metrics/etc. callbacks
+		SessionWithRecoverCallback(sp.RecoverCallback),
+		SessionWithPublishRetryCallback(sp.PublishRetryCallback),
+		SessionWithGetRetryCallback(sp.GetRetryCallback),
+		SessionWithConsumeRetryCallback(sp.ConsumeRetryCallback),
+		SessionWithConsumeContextRetryCallback(sp.ConsumeContextRetryCallback),
+		SessionWithExchangeDeclareRetryCallback(sp.ExchangeDeclareRetryCallback),
+		SessionWithExchangeDeclarePassiveRetryCallback(sp.ExchangeDeclarePassiveRetryCallback),
+		SessionWithExchangeDeleteRetryCallback(sp.ExchangeDeleteRetryCallback),
+		SessionWithQueueDeclareRetryCallback(sp.QueueDeclareRetryCallback),
+		SessionWithQueueDeclarePassiveRetryCallback(sp.QueueDeclarePassiveRetryCallback),
+		SessionWithQueueDeleteRetryCallback(sp.QueueDeleteRetryCallback),
+		SessionWithQueueBindRetryCallback(sp.QueueBindRetryCallback),
+		SessionWithQueueUnbindRetryCallback(sp.QueueUnbindRetryCallback),
+		SessionWithQueuePurgeRetryCallback(sp.QueuePurgeRetryCallback),
+		SessionWithExchangeBindRetryCallback(sp.ExchangeBindRetryCallback),
+		SessionWithExchangeUnbindRetryCallback(sp.ExchangeUnbindRetryCallback),
+		SessionWithQoSRetryCallback(sp.QoSRetryCallback),
+		SessionWithFlowRetryCallback(sp.FlowRetryCallback),
 	)
 }
 
@@ -234,7 +305,7 @@ func (sp *SessionPool) initCachedSession(id int) (*Session, error) {
 			return nil, err
 		}
 
-		session, err := sp.deriveCachedSession(conn, id)
+		session, err := sp.deriveSession(sp.ctx, conn, id)
 		if err != nil {
 			sp.pool.ReturnConnection(conn, true)
 			continue
@@ -243,17 +314,6 @@ func (sp *SessionPool) initCachedSession(id int) (*Session, error) {
 		sp.pool.ReturnConnection(conn, false)
 		return session, nil
 	}
-}
-
-func (sp *SessionPool) deriveCachedSession(conn *Connection, id int) (*Session, error) {
-	name := fmt.Sprintf("%s-cached-session-%d", conn.Name(), id)
-
-	return NewSession(conn, name,
-		SessionWithContext(sp.ctx),
-		SessionWithBufferSize(sp.size),
-		SessionWithCached(true),
-		SessionWithConfirms(sp.confirmable),
-	)
 }
 
 func (sp *SessionPool) info(a ...any) {
