@@ -16,6 +16,7 @@ type connectionOption struct {
 	BackoffPolicy     BackoffFunc
 	Ctx               context.Context
 	TLSConfig         *tls.Config
+	RecoverCallback   ConnectionRecoverCallback
 }
 
 type ConnectionOption func(*connectionOption)
@@ -77,5 +78,12 @@ func ConnectionWithContext(ctx context.Context) ConnectionOption {
 func ConnectionWithTLS(config *tls.Config) ConnectionOption {
 	return func(co *connectionOption) {
 		co.TLSConfig = config
+	}
+}
+
+// ConnectionWithRecoverCallback allows to set a custom recover callback.
+func ConnectionWithRecoverCallback(callback ConnectionRecoverCallback) ConnectionOption {
+	return func(co *connectionOption) {
+		co.RecoverCallback = callback
 	}
 }
