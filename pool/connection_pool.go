@@ -32,6 +32,8 @@ type ConnectionPool struct {
 	cancel context.CancelFunc
 
 	log logging.Logger
+
+	recoverCB ConnectionRecoverCallback
 }
 
 // NewConnectionPool creates a new connection pool which has a maximum size it
@@ -53,6 +55,8 @@ func NewConnectionPool(connectUrl string, numConns int, options ...ConnectionPoo
 		TLSConfig:             nil,
 
 		Logger: logging.NewNoOpLogger(),
+
+		ConnectionRecoverCallback: nil,
 	}
 
 	// apply options
@@ -91,6 +95,8 @@ func newConnectionPoolFromOption(connectUrl string, option connectionPoolOption)
 		cancel: cancel,
 
 		log: option.Logger,
+
+		recoverCB: option.ConnectionRecoverCallback,
 	}
 
 	cp.debug("initializing pool connections")
@@ -112,7 +118,7 @@ func newConnectionPoolFromOption(connectUrl string, option connectionPoolOption)
 
 func (cp *ConnectionPool) initCachedConns() error {
 	for id := 0; id < cp.size; id++ {
-		conn, err := cp.deriveCachedConnection(id)
+		conn, err := cp.deriveConnection(id, true)
 		if err != nil {
 			return fmt.Errorf("%w: %v", ErrPoolInitializationFailed, err)
 		}
@@ -124,22 +130,26 @@ func (cp *ConnectionPool) initCachedConns() error {
 	return nil
 }
 
-func (cp *ConnectionPool) deriveCachedConnection(id int) (*Connection, error) {
-	name := fmt.Sprintf("%s-cached-connection-%d", cp.name, id)
-
+func (cp *ConnectionPool) deriveConnection(id int, cached bool) (*Connection, error) {
+	var name string
+	if cached {
+		name = fmt.Sprintf("%s-cached-connection-%d", cp.name, id)
+	} else {
+		name = fmt.Sprintf("%s-transient-connection-%d", cp.name, id)
+	}
 	return NewConnection(cp.url, name,
 		ConnectionWithContext(cp.ctx),
 		ConnectionWithTimeout(cp.connTimeout),
 		ConnectionWithHeartbeatInterval(cp.heartbeat),
 		ConnectionWithTLS(cp.tls),
-		ConnectionWithCached(true),
+		ConnectionWithCached(cached),
 		ConnectionWithLogger(cp.log),
+		ConnectionWithRecoverCallback(cp.recoverCB),
 	)
 }
 
 // GetConnection only returns an error upon shutdown
 func (cp *ConnectionPool) GetConnection() (*Connection, error) {
-
 	conn, err := cp.getConnectionFromPool()
 	if err != nil {
 		return nil, err
@@ -156,17 +166,9 @@ func (cp *ConnectionPool) GetConnection() (*Connection, error) {
 // GetTransientConnection may return an error when the context was cancelled before the connection could be obtained.
 // Transient connections may be returned to the pool. The are closed properly upon returning.
 func (cp *ConnectionPool) GetTransientConnection(ctx context.Context) (*Connection, error) {
-
 	tID := atomic.AddInt64(&cp.transientID, 1)
 
-	name := fmt.Sprintf("%s-transient-connection-%d", cp.name, tID)
-	conn, err := NewConnection(cp.url, name,
-		ConnectionWithContext(ctx),
-		ConnectionWithTimeout(cp.connTimeout),
-		ConnectionWithHeartbeatInterval(cp.heartbeat),
-		ConnectionWithTLS(cp.tls),
-		ConnectionWithCached(false),
-	)
+	conn, err := cp.deriveConnection(int(tID), false)
 	if err == nil {
 		return conn, nil
 	}

@@ -39,6 +39,37 @@ type Session struct {
 	cancel context.CancelFunc
 
 	log logging.Logger
+
+	recoverCB                     sessionRetryCallback
+	publishRetryCB                sessionRetryCallback
+	getRetryCB                    sessionRetryCallback
+	consumeRetryCB                sessionRetryCallback
+	consumeContextRetryCB         sessionRetryCallback
+	exchangeDeclareRetryCB        sessionRetryCallback
+	exchangeDeclarePassiveRetryCB sessionRetryCallback
+	exchangeDeleteRetryCB         sessionRetryCallback
+	queueDeclareRetryCB           sessionRetryCallback
+	queueDeclarePassiveRetryCB    sessionRetryCallback
+	queueDeleteRetryCB            sessionRetryCallback
+	queueBindRetryCB              sessionRetryCallback
+	queueUnbindRetryCB            sessionRetryCallback
+	queuePurgeRetryCB             sessionRetryCallback
+	exchangeBindRetryCB           sessionRetryCallback
+	exchangeUnbindRetryCB         sessionRetryCallback
+	qosRetryCB                    sessionRetryCallback
+	flowRetryCB                   sessionRetryCallback
+}
+
+type sessionRetryCallback func(connName, sessionName string, retry int, err error)
+
+// we want to define the operation names at a somewhat central location.
+func newSessionRetryCallback(operation string, cb SessionRetryCallback) sessionRetryCallback {
+	if cb == nil {
+		return nil
+	}
+	return func(connName, sessionName string, retry int, err error) {
+		cb(operation, connName, sessionName, retry, err)
+	}
 }
 
 // NewSession wraps a connection and a channel in order tointeract with the message broker.
@@ -85,6 +116,25 @@ func NewSession(conn *Connection, name string, options ...SessionOption) (*Sessi
 		cancel: cancel,
 
 		log: option.Logger,
+
+		recoverCB:                     newSessionRetryCallback("recover", option.RecoverCallback),
+		publishRetryCB:                newSessionRetryCallback("publish", option.PublishRetryCallback),
+		getRetryCB:                    newSessionRetryCallback("get", option.GetRetryCallback),
+		consumeRetryCB:                newSessionRetryCallback("consume", option.ConsumeRetryCallback),
+		consumeContextRetryCB:         newSessionRetryCallback("consume_context", option.ConsumeContextRetryCallback),
+		exchangeDeclareRetryCB:        newSessionRetryCallback("exchange_declare", option.ExchangeDeclareRetryCallback),
+		exchangeDeclarePassiveRetryCB: newSessionRetryCallback("exchange_declare_passive", option.ExchangeDeclarePassiveRetryCallback),
+		exchangeDeleteRetryCB:         newSessionRetryCallback("exchange_delete", option.ExchangeDeleteRetryCallback),
+		queueDeclareRetryCB:           newSessionRetryCallback("queue_declare", option.QueueDeclareRetryCallback),
+		queueDeclarePassiveRetryCB:    newSessionRetryCallback("queue_declare_passive", option.QueueDeclarePassiveRetryCallback),
+		queueDeleteRetryCB:            newSessionRetryCallback("queue_delete", option.QueueDeleteRetryCallback),
+		queueBindRetryCB:              newSessionRetryCallback("queue_bind", option.QueueBindRetryCallback),
+		queueUnbindRetryCB:            newSessionRetryCallback("queue_unbind", option.QueueUnbindRetryCallback),
+		queuePurgeRetryCB:             newSessionRetryCallback("queue_purge", option.QueuePurgeRetryCallback),
+		exchangeBindRetryCB:           newSessionRetryCallback("exchange_bind", option.ExchangeBindRetryCallback),
+		exchangeUnbindRetryCB:         newSessionRetryCallback("exchange_unbind", option.ExchangeUnbindRetryCallback),
+		qosRetryCB:                    newSessionRetryCallback("qos", option.QoSRetryCallback),
+		flowRetryCB:                   newSessionRetryCallback("flow", option.FlowRetryCallback),
 	}
 
 	err := session.Connect()
@@ -209,7 +259,7 @@ func (s *Session) tryRecover(err error) error {
 func (s *Session) recover() error {
 
 	// tries to recover session forever
-	for {
+	for try := 0; ; try++ {
 
 		err := s.conn.Recover() // recovers connection with a backoff mechanism
 		if err != nil {
@@ -220,13 +270,17 @@ func (s *Session) recover() error {
 		// no backoff upon retry, because Recover already retries
 		// with a backoff. Sessions should be instantly created on a healthy connection
 		err = s.connect() // Creates a new channel and flushes internal buffers automatically.
-		if err != nil {
-			continue
+		if err == nil {
+			return nil
 		}
-		break
-	}
 
-	return nil
+		if s.conn.recoverCB != nil {
+			// allow a user to hook into the recovery process of a session
+			// this is expected to not be called often, as the connection should be the main cause
+			// of errors and not necessarily the session.
+			s.recoverCB(s.conn.Name(), s.name, try, err)
+		}
+	}
 }
 
 // AwaitConfirm tries to await a confirmation from the broker for a published message
@@ -246,9 +300,9 @@ func (s *Session) AwaitConfirm(ctx context.Context, expectedTag uint64) error {
 		if !ok {
 			err := s.error()
 			if err != nil {
-				return err
+				return fmt.Errorf("await confirm failed: %w", err)
 			}
-			return fmt.Errorf("confirms channel %w", ErrClosed)
+			return fmt.Errorf("await confirm failed: confirms channel %w", ErrClosed)
 		}
 		if !confirm.Ack {
 
@@ -256,18 +310,18 @@ func (s *Session) AwaitConfirm(ctx context.Context, expectedTag uint64) error {
 			// resource problems.
 			// TODO: do we want to pause here upon flow control messages
 			s.conn.PauseOnFlowControl()
-			return ErrNack
+			return fmt.Errorf("await confirm failed: %w", ErrNack)
 		}
 		if confirm.DeliveryTag != expectedTag {
-			return fmt.Errorf("%w: expected %d, got %d", ErrDeliveryTagMismatch, expectedTag, confirm.DeliveryTag)
+			return fmt.Errorf("await confirm failed: %w: expected %d, got %d", ErrDeliveryTagMismatch, expectedTag, confirm.DeliveryTag)
 		}
 		return nil
 	case <-ctx.Done():
 		err := ctx.Err()
-		return fmt.Errorf("await context %w: %v", ErrClosed, err)
+		return fmt.Errorf("await confirm: failed context %w: %w", ErrClosed, err)
 	case <-s.ctx.Done():
 		err := ctx.Err()
-		return fmt.Errorf("session %w: %v", ErrClosed, err)
+		return fmt.Errorf("await confirm failed: session %w: %w", ErrClosed, err)
 	}
 }
 
@@ -329,7 +383,7 @@ func (s *Session) Publish(ctx context.Context, exchange string, routingKey strin
 		amqpDeliverMode = 2 // persistent (persisted to disk upon arrival in queue)
 	}
 
-	return s.retryPublish(func() (uint64, error) {
+	return s.retryPublish(s.publishRetryCB, func() (uint64, error) {
 		tag = 0
 		if s.confirmable {
 			tag = s.channel.GetNextPublishSeqNo()
@@ -365,12 +419,17 @@ func (s *Session) Publish(ctx context.Context, exchange string, routingKey strin
 	})
 }
 
-func (s *Session) retryPublish(f func() (uint64, error)) (tag uint64, err error) {
-	for {
+func (s *Session) retryPublish(cb sessionRetryCallback, f func() (uint64, error)) (tag uint64, err error) {
+	for try := 0; ; try++ {
 		tag, err := f()
 		if err == nil {
 			return tag, nil
 		}
+
+		if cb != nil {
+			cb(s.conn.Name(), s.name, try, err)
+		}
+
 		err = s.tryRecover(err)
 		if err != nil {
 			return 0, err
@@ -383,7 +442,7 @@ func (s *Session) Get(queue string, autoAck bool) (msg Delivery, ok bool, err er
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	err = s.retry(func() error {
+	err = s.retry(s.getRetryCB, func() error {
 		msg, ok, err = s.channel.Get(queue, autoAck)
 		if err != nil {
 			return err
@@ -478,7 +537,7 @@ func (s *Session) Consume(queue string, option ...ConsumeOptions) (<-chan Delive
 		err error
 	)
 	// retries to connect and attempts to start a consumer
-	err = s.retry(func() error {
+	err = s.retry(s.consumeRetryCB, func() error {
 		c, err = s.channel.Consume(
 			queue,
 			o.ConsumerTag,
@@ -543,7 +602,7 @@ func (s *Session) ConsumeWithContext(ctx context.Context, queue string, option .
 		err error
 	)
 	// retries to connect and attempts to start a consumer
-	err = s.retry(func() error {
+	err = s.retry(s.consumeContextRetryCB, func() error {
 		c, err = s.channel.ConsumeWithContext(
 			ctx,
 			queue,
@@ -567,11 +626,16 @@ func (s *Session) ConsumeWithContext(ctx context.Context, queue string, option .
 	return c, nil
 }
 
-func (s *Session) retry(f func() error) error {
-	for {
+func (s *Session) retry(cb sessionRetryCallback, f func() error) error {
+
+	for try := 0; ; try++ {
 		err := f()
 		if err == nil {
 			return nil
+		}
+
+		if cb != nil {
+			cb(s.conn.Name(), s.name, try, err)
 		}
 		err = s.tryRecover(err)
 		if err != nil {
@@ -667,7 +731,7 @@ func (s *Session) ExchangeDeclare(name string, kind ExchangeKind, option ...Exch
 		o = option[0]
 	}
 
-	return s.retry(func() error {
+	return s.retry(s.exchangeDeclareRetryCB, func() error {
 		return s.channel.ExchangeDeclare(
 			name,
 			string(kind),
@@ -701,7 +765,7 @@ func (s *Session) ExchangeDeclarePassive(name string, kind ExchangeKind, option 
 		o = option[0]
 	}
 
-	err := s.retry(func() error {
+	err := s.retry(s.exchangeDeclarePassiveRetryCB, func() error {
 		return s.channel.ExchangeDeclarePassive(
 			name,
 			string(kind),
@@ -750,7 +814,7 @@ func (s *Session) ExchangeDelete(name string, option ...ExchangeDeleteOptions) e
 		o = option[0]
 	}
 
-	return s.retry(func() error {
+	return s.retry(s.exchangeDeleteRetryCB, func() error {
 		return s.channel.ExchangeDelete(name, o.IfUnused, o.NoWait)
 	})
 }
@@ -840,7 +904,7 @@ func (s *Session) QueueDeclare(name string, option ...QueueDeclareOptions) (Queu
 		err   error
 		queue amqp091.Queue
 	)
-	err = s.retry(func() error {
+	err = s.retry(s.queueDeclareRetryCB, func() error {
 		queue, err = s.channel.QueueDeclare(
 			name,
 			o.Durable,
@@ -880,7 +944,7 @@ func (s *Session) QueueDeclarePassive(name string, option ...QueueDeclareOptions
 		err   error
 		queue amqp091.Queue
 	)
-	err = s.retry(func() error {
+	err = s.retry(s.queueDeclarePassiveRetryCB, func() error {
 		queue, err = s.channel.QueueDeclarePassive(
 			name,
 			o.Durable,
@@ -947,11 +1011,16 @@ func (s *Session) QueueDelete(name string, option ...QueueDeleteOptions) (int, e
 }
 
 func (s *Session) retryQueueDelete(f func() (int, error)) (int, error) {
-	for {
+	for try := 0; ; try++ {
 		i, err := f()
 		if err == nil {
 			return i, nil
 		}
+
+		if s.queueDeleteRetryCB != nil {
+			s.queueDeleteRetryCB(s.conn.Name(), s.name, try, err)
+		}
+
 		err = s.tryRecover(err)
 		if err != nil {
 			return 0, err
@@ -1019,7 +1088,7 @@ func (s *Session) QueueBind(queueName string, routingKey string, exchange string
 		o = option[0]
 	}
 
-	return s.retry(func() error {
+	return s.retry(s.queueBindRetryCB, func() error {
 		return s.channel.QueueBind(
 			queueName,
 			routingKey,
@@ -1044,7 +1113,7 @@ func (s *Session) QueueUnbind(name string, routingKey string, exchange string, a
 		option = arg[0]
 	}
 
-	return s.retry(func() error {
+	return s.retry(s.queueUnbindRetryCB, func() error {
 		return s.channel.QueueUnbind(name, routingKey, exchange, option)
 	})
 }
@@ -1070,7 +1139,7 @@ func (s *Session) QueuePurge(name string, options ...QueuePurgeOptions) (int, er
 		err               error
 	)
 
-	err = s.retry(func() error {
+	err = s.retry(s.queuePurgeRetryCB, func() error {
 		numPurgedMessages, err = s.channel.QueuePurge(name, opt.NoWait)
 		if err != nil {
 			return err
@@ -1130,7 +1199,7 @@ func (s *Session) ExchangeBind(destination string, routingKey string, source str
 		o = option[0]
 	}
 
-	return s.retry(func() error {
+	return s.retry(s.exchangeBindRetryCB, func() error {
 		return s.channel.ExchangeBind(
 			destination,
 			routingKey,
@@ -1170,7 +1239,7 @@ func (s *Session) ExchangeUnbind(destination string, routingKey string, source s
 		o = option[0]
 	}
 
-	return s.retry(func() error {
+	return s.retry(s.exchangeUnbindRetryCB, func() error {
 		return s.channel.ExchangeUnbind(
 			destination,
 			routingKey,
@@ -1211,7 +1280,7 @@ func (s *Session) Qos(prefetchCount int, prefetchSize int) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	return s.retry(func() error {
+	return s.retry(s.qosRetryCB, func() error {
 		// session quos should not affect new sessions of the same connection
 		return s.channel.Qos(prefetchCount, prefetchSize, false)
 	})
@@ -1242,7 +1311,7 @@ func (s *Session) Flow(active bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	return s.retry(func() error {
+	return s.retry(s.flowRetryCB, func() error {
 		return s.channel.Flow(active)
 	})
 }

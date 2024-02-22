@@ -24,6 +24,8 @@ type connectionPoolOption struct {
 	TLSConfig             *tls.Config
 
 	Logger logging.Logger
+
+	ConnectionRecoverCallback ConnectionRecoverCallback
 }
 
 type ConnectionPoolOption func(*connectionPoolOption)
@@ -110,6 +112,13 @@ func ConnectionPoolWithContext(ctx context.Context) ConnectionPoolOption {
 func ConnectionPoolWithTLS(config *tls.Config) ConnectionPoolOption {
 	return func(po *connectionPoolOption) {
 		po.TLSConfig = config
+	}
+}
+
+// ConnectionPoolWithRecoverCallback allows to set a custom recover callback.
+func ConnectionPoolWithRecoverCallback(callback ConnectionRecoverCallback) ConnectionPoolOption {
+	return func(po *connectionPoolOption) {
+		po.ConnectionRecoverCallback = callback
 	}
 }
 

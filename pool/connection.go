@@ -39,6 +39,8 @@ type Connection struct {
 	cancel context.CancelFunc
 
 	log logging.Logger
+
+	recoverCB ConnectionRecoverCallback
 }
 
 // NewConnection creates a connection wrapper.
@@ -52,6 +54,7 @@ func NewConnection(connectUrl, name string, options ...ConnectionOption) (*Conne
 		ConnectionTimeout: 30 * time.Second,
 		BackoffPolicy:     newDefaultBackoffPolicy(time.Second, 15*time.Second),
 		Ctx:               context.Background(),
+		RecoverCallback:   nil,
 	}
 
 	// apply options
@@ -93,6 +96,8 @@ func NewConnection(connectUrl, name string, options ...ConnectionOption) (*Conne
 
 		log:          option.Logger,
 		lastConnLoss: time.Now(),
+
+		recoverCB: option.RecoverCallback,
 	}
 
 	err = conn.Connect()
@@ -317,7 +322,7 @@ func (ch *Connection) recover() error {
 	defer closeTimer(timer, &drained)
 
 	ch.info("recovering")
-	for retry := 0; ; retry++ {
+	for try := 0; ; try++ {
 		ch.lastConnLoss = time.Now()
 		err := ch.connect()
 		if err == nil {
@@ -329,8 +334,14 @@ func (ch *Connection) recover() error {
 			return err
 		}
 
+		if ch.recoverCB != nil {
+			// allow a user to hook into the recovery process
+			// in order to notify about the recovery process
+			ch.recoverCB(ch.name, try, err)
+		}
+
 		// reset to exponential backoff
-		resetTimer(timer, ch.errorBackoff(retry), &drained)
+		resetTimer(timer, ch.errorBackoff(try), &drained)
 
 		select {
 		case <-ch.catchShutdown():
@@ -341,7 +352,6 @@ func (ch *Connection) recover() error {
 			// retry after sleep
 			continue
 		}
-
 	}
 
 	// flagged connections can only
