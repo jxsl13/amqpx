@@ -118,7 +118,7 @@ func newConnectionPoolFromOption(connectUrl string, option connectionPoolOption)
 
 func (cp *ConnectionPool) initCachedConns() error {
 	for id := 0; id < cp.size; id++ {
-		conn, err := cp.deriveConnection(id, true)
+		conn, err := cp.deriveConnection(cp.ctx, id, true)
 		if err != nil {
 			return fmt.Errorf("%w: %v", ErrPoolInitializationFailed, err)
 		}
@@ -130,7 +130,7 @@ func (cp *ConnectionPool) initCachedConns() error {
 	return nil
 }
 
-func (cp *ConnectionPool) deriveConnection(id int, cached bool) (*Connection, error) {
+func (cp *ConnectionPool) deriveConnection(ctx context.Context, id int, cached bool) (*Connection, error) {
 	var name string
 	if cached {
 		name = fmt.Sprintf("%s-cached-connection-%d", cp.name, id)
@@ -138,7 +138,7 @@ func (cp *ConnectionPool) deriveConnection(id int, cached bool) (*Connection, er
 		name = fmt.Sprintf("%s-transient-connection-%d", cp.name, id)
 	}
 	return NewConnection(cp.url, name,
-		ConnectionWithContext(cp.ctx),
+		ConnectionWithContext(ctx),
 		ConnectionWithTimeout(cp.connTimeout),
 		ConnectionWithHeartbeatInterval(cp.heartbeat),
 		ConnectionWithTLS(cp.tls),
@@ -168,7 +168,7 @@ func (cp *ConnectionPool) GetConnection() (*Connection, error) {
 func (cp *ConnectionPool) GetTransientConnection(ctx context.Context) (*Connection, error) {
 	tID := atomic.AddInt64(&cp.transientID, 1)
 
-	conn, err := cp.deriveConnection(int(tID), false)
+	conn, err := cp.deriveConnection(ctx, int(tID), false)
 	if err == nil {
 		return conn, nil
 	}
