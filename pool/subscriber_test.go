@@ -13,9 +13,16 @@ import (
 )
 
 func TestSubscriber(t *testing.T) {
-
+	ctx := context.TODO()
 	sessions := 2 // publisher sessions + consumer sessions
-	p, err := pool.New(connectURL, 1, sessions, pool.WithConfirms(true), pool.WithLogger(logging.NewTestLogger(t)))
+	p, err := pool.New(
+		ctx,
+		connectURL,
+		1,
+		sessions,
+		pool.WithConfirms(true),
+		pool.WithLogger(logging.NewTestLogger(t)),
+	)
 	if err != nil {
 		assert.NoError(t, err)
 		return
@@ -35,50 +42,50 @@ func TestSubscriber(t *testing.T) {
 				assert.NoError(t, err)
 				return
 			}
-			defer p.ReturnSession(ts, false)
+			defer p.ReturnSession(ctx, ts, false)
 
 			queueName := fmt.Sprintf("TestSubscriber-Queue-%d", id)
-			_, err = ts.QueueDeclare(queueName)
+			_, err = ts.QueueDeclare(ctx, queueName)
 			if err != nil {
 				assert.NoError(t, err)
 				return
 			}
 			defer func() {
-				i, err := ts.QueueDelete(queueName)
+				i, err := ts.QueueDelete(ctx, queueName)
 				assert.NoError(t, err)
 				assert.Equal(t, 0, i)
 			}()
 
 			exchangeName := fmt.Sprintf("TestSubscriber-Exchange-%d", id)
-			err = ts.ExchangeDeclare(exchangeName, "topic")
+			err = ts.ExchangeDeclare(ctx, exchangeName, "topic")
 			if err != nil {
 				assert.NoError(t, err)
 				return
 			}
 			defer func() {
-				err := ts.ExchangeDelete(exchangeName)
+				err := ts.ExchangeDelete(ctx, exchangeName)
 				assert.NoError(t, err)
 			}()
 
-			err = ts.QueueBind(queueName, "#", exchangeName)
+			err = ts.QueueBind(ctx, queueName, "#", exchangeName)
 			if err != nil {
 				assert.NoError(t, err)
 				return
 			}
 			defer func() {
-				err := ts.QueueUnbind(queueName, "#", exchangeName, nil)
+				err := ts.QueueUnbind(ctx, queueName, "#", exchangeName, nil)
 				assert.NoError(t, err)
 			}()
 
 			message := fmt.Sprintf("Message-%s", queueName)
 
-			ctx, cancel := context.WithCancel(p.Context())
+			cctx, cancel := context.WithCancel(p.Context())
 
-			sub := pool.NewSubscriber(p, pool.SubscriberWithContext(ctx))
+			sub := pool.NewSubscriber(p, pool.SubscriberWithContext(cctx))
 			defer sub.Close()
 
 			sub.RegisterHandlerFunc(queueName,
-				func(msg pool.Delivery) error {
+				func(ctx context.Context, msg pool.Delivery) error {
 
 					// handler func
 					receivedMsg := string(msg.Body)
@@ -94,13 +101,17 @@ func TestSubscriber(t *testing.T) {
 					Exclusive:   true,
 				},
 			)
-			sub.Start()
+			err = sub.Start(ctx)
+			if err != nil {
+				assert.NoError(t, err)
+				return
+			}
 			time.Sleep(5 * time.Second)
 
 			pub := pool.NewPublisher(p)
 			defer pub.Close()
 
-			pub.Publish(exchangeName, "", pool.Publishing{
+			pub.Publish(ctx, exchangeName, "", pool.Publishing{
 				Mandatory:   true,
 				ContentType: "application/json",
 				Body:        []byte(message),
@@ -117,13 +128,20 @@ func TestSubscriber(t *testing.T) {
 }
 
 func TestBatchSubscriber(t *testing.T) {
-
 	var (
+		ctx          = context.TODO()
 		sessions     = 2 // publisher sessions + consumer sessions
 		numMessages  = 50
 		batchTimeout = 10 * time.Second // keep this at a higher number for slow machines
 	)
-	p, err := pool.New(connectURL, 1, sessions, pool.WithConfirms(true), pool.WithLogger(logging.NewTestLogger(t)))
+	p, err := pool.New(
+		ctx,
+		connectURL,
+		1,
+		sessions,
+		pool.WithConfirms(true),
+		pool.WithLogger(logging.NewTestLogger(t)),
+	)
 	if err != nil {
 		assert.NoError(t, err)
 		return
@@ -143,38 +161,38 @@ func TestBatchSubscriber(t *testing.T) {
 				assert.NoError(t, err)
 				return
 			}
-			defer p.ReturnSession(ts, false)
+			defer p.ReturnSession(ctx, ts, false)
 
 			queueName := fmt.Sprintf("TestBatchSubscriber-Queue-%d", id)
-			_, err = ts.QueueDeclare(queueName)
+			_, err = ts.QueueDeclare(ctx, queueName)
 			if err != nil {
 				assert.NoError(t, err)
 				return
 			}
 			defer func() {
-				i, err := ts.QueueDelete(queueName)
+				i, err := ts.QueueDelete(ctx, queueName)
 				assert.NoError(t, err)
 				assert.Equal(t, 0, i)
 			}()
 
 			exchangeName := fmt.Sprintf("TestBatchSubscriber-Exchange-%d", id)
-			err = ts.ExchangeDeclare(exchangeName, "topic")
+			err = ts.ExchangeDeclare(ctx, exchangeName, "topic")
 			if err != nil {
 				assert.NoError(t, err)
 				return
 			}
 			defer func() {
-				err := ts.ExchangeDelete(exchangeName)
+				err := ts.ExchangeDelete(ctx, exchangeName)
 				assert.NoError(t, err)
 			}()
 
-			err = ts.QueueBind(queueName, "#", exchangeName)
+			err = ts.QueueBind(ctx, queueName, "#", exchangeName)
 			if err != nil {
 				assert.NoError(t, err)
 				return
 			}
 			defer func() {
-				err := ts.QueueUnbind(queueName, "#", exchangeName, nil)
+				err := ts.QueueUnbind(ctx, queueName, "#", exchangeName, nil)
 				assert.NoError(t, err)
 			}()
 
@@ -185,7 +203,7 @@ func TestBatchSubscriber(t *testing.T) {
 			for i := 0; i < numMessages; i++ {
 				message := fmt.Sprintf("Message-%s-%d", queueName, i)
 
-				pub.Publish(exchangeName, "", pool.Publishing{
+				pub.Publish(ctx, exchangeName, "", pool.Publishing{
 					Mandatory:   true,
 					ContentType: "application/json",
 					Body:        []byte(message),
@@ -202,7 +220,7 @@ func TestBatchSubscriber(t *testing.T) {
 			batchCount := 0
 			messageCount := 0
 			sub.RegisterBatchHandlerFunc(queueName,
-				func(msgs []pool.Delivery) error {
+				func(ctx context.Context, msgs []pool.Delivery) error {
 					log := logging.NewTestLogger(t)
 					assert.Equal(t, batchSize, len(msgs))
 
@@ -227,7 +245,7 @@ func TestBatchSubscriber(t *testing.T) {
 					Exclusive:   true,
 				}),
 			)
-			sub.Start()
+			sub.Start(ctx)
 
 			// this should be canceled upon context cancelation from within the
 			// subscriber handler.
@@ -243,7 +261,6 @@ func TestBatchSubscriber(t *testing.T) {
 }
 
 func TestBatchSubscriberMaxBytes(t *testing.T) {
-
 	for i := 1; i <= 2048; i = i*2 + 1 {
 		testBatchSubscriberMaxBytes(t, i)
 	}
@@ -253,11 +270,19 @@ func testBatchSubscriberMaxBytes(t *testing.T, maxBatchBytes int) {
 	t.Helper()
 
 	var (
+		ctx          = context.TODO()
 		sessions     = 2 // publisher sessions + consumer sessions
 		numMessages  = 50
 		batchTimeout = 5 * time.Second // keep this at a higher number for slow machines
 	)
-	p, err := pool.New(connectURL, 1, sessions, pool.WithConfirms(true), pool.WithLogger(logging.NewTestLogger(t)))
+	p, err := pool.New(
+		ctx,
+		connectURL,
+		1,
+		sessions,
+		pool.WithConfirms(true),
+		pool.WithLogger(logging.NewTestLogger(t)),
+	)
 	if err != nil {
 		assert.NoError(t, err)
 		return
@@ -277,38 +302,38 @@ func testBatchSubscriberMaxBytes(t *testing.T, maxBatchBytes int) {
 				assert.NoError(t, err)
 				return
 			}
-			defer p.ReturnSession(ts, false)
+			defer p.ReturnSession(ctx, ts, false)
 
 			queueName := fmt.Sprintf("TestBatchSubscriberMaxBytes-Queue-%d", id)
-			_, err = ts.QueueDeclare(queueName)
+			_, err = ts.QueueDeclare(ctx, queueName)
 			if err != nil {
 				assert.NoError(t, err)
 				return
 			}
 			defer func() {
-				i, err := ts.QueueDelete(queueName)
+				i, err := ts.QueueDelete(ctx, queueName)
 				assert.NoError(t, err)
 				assert.Equal(t, 0, i)
 			}()
 
 			exchangeName := fmt.Sprintf("TestBatchSubscriberMaxBytes-Exchange-%d", id)
-			err = ts.ExchangeDeclare(exchangeName, "topic")
+			err = ts.ExchangeDeclare(ctx, exchangeName, "topic")
 			if err != nil {
 				assert.NoError(t, err)
 				return
 			}
 			defer func() {
-				err := ts.ExchangeDelete(exchangeName)
+				err := ts.ExchangeDelete(ctx, exchangeName)
 				assert.NoError(t, err)
 			}()
 
-			err = ts.QueueBind(queueName, "#", exchangeName)
+			err = ts.QueueBind(ctx, queueName, "#", exchangeName)
 			if err != nil {
 				assert.NoError(t, err)
 				return
 			}
 			defer func() {
-				err := ts.QueueUnbind(queueName, "#", exchangeName, nil)
+				err := ts.QueueUnbind(ctx, queueName, "#", exchangeName, nil)
 				assert.NoError(t, err)
 			}()
 
@@ -326,7 +351,7 @@ func testBatchSubscriberMaxBytes(t *testing.T, maxBatchBytes int) {
 					maxMsgLen = mlen
 				}
 
-				pub.Publish(exchangeName, "", pool.Publishing{
+				pub.Publish(ctx, exchangeName, "", pool.Publishing{
 					Mandatory:   true,
 					ContentType: "application/json",
 					Body:        []byte(message),
@@ -345,15 +370,15 @@ func testBatchSubscriberMaxBytes(t *testing.T, maxBatchBytes int) {
 			}
 			log.Debugf("expected batches: %d", expectedBatches)
 
-			ctx, cancel := context.WithCancel(p.Context())
+			cctx, cancel := context.WithCancel(p.Context())
 
-			sub := pool.NewSubscriber(p, pool.SubscriberWithContext(ctx))
+			sub := pool.NewSubscriber(p, pool.SubscriberWithContext(cctx))
 			defer sub.Close()
 
 			batchCount := 0
 			messageCount := 0
 			sub.RegisterBatchHandlerFunc(queueName,
-				func(msgs []pool.Delivery) error {
+				func(ctx context.Context, msgs []pool.Delivery) error {
 
 					for idx, msg := range msgs {
 						assert.Truef(t, len(msg.Body) > 0, "msg body is empty: message index: %d", idx)
@@ -383,7 +408,7 @@ func testBatchSubscriberMaxBytes(t *testing.T, maxBatchBytes int) {
 					Exclusive:   true,
 				}),
 			)
-			sub.Start()
+			sub.Start(ctx)
 
 			// this should be canceled upon context cancelation from within the
 			// subscriber handler.

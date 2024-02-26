@@ -3,6 +3,7 @@ package pool
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -15,24 +16,34 @@ import (
 
 // Connection is an internal representation of amqp.Connection.
 type Connection struct {
+	// connection url (user ,password, host, port, vhost, etc)
 	url  string
 	name string
 
-	cached  bool
-	flagged bool // whether an error occurred on this connection or not, indicating the connectionmust be recovered
+	// indicates that the connection is part of a connection pool.
+	cached bool
+	// if set to true, the connection is marked as broken, indicating the connection must be recovered
+	flagged bool
 
 	tls *tls.Config
 
+	// underlying amqp connection
 	conn         *amqp.Connection
 	lastConnLoss time.Time
 
+	// backoff policy
 	errorBackoff BackoffFunc
 
-	heartbeat   time.Duration
+	heartbeat time.Duration
+
+	// connection timeout is only used for the inital connection
+	// recovering connections are recovered as long as the calling context
+	// is not canceled
 	connTimeout time.Duration
 
-	errors   chan *amqp.Error
-	blockers chan amqp.Blocking
+	errors chan *amqp.Error
+	// flow control messages from rabbitmq
+	blocking chan amqp.Blocking
 
 	mu     sync.Mutex
 	ctx    context.Context
@@ -45,7 +56,7 @@ type Connection struct {
 
 // NewConnection creates a connection wrapper.
 // name: unique connection name
-func NewConnection(connectUrl, name string, options ...ConnectionOption) (*Connection, error) {
+func NewConnection(ctx context.Context, connectUrl, name string, options ...ConnectionOption) (*Connection, error) {
 	// use sane defaults
 	option := connectionOption{
 		Logger:            logging.NewNoOpLogger(),
@@ -53,7 +64,7 @@ func NewConnection(connectUrl, name string, options ...ConnectionOption) (*Conne
 		HeartbeatInterval: 15 * time.Second,
 		ConnectionTimeout: 30 * time.Second,
 		BackoffPolicy:     newDefaultBackoffPolicy(time.Second, 15*time.Second),
-		Ctx:               context.Background(),
+		Ctx:               ctx,
 		RecoverCallback:   nil,
 	}
 
@@ -62,7 +73,7 @@ func NewConnection(connectUrl, name string, options ...ConnectionOption) (*Conne
 		o(&option)
 	}
 
-	u, err := url.Parse(connectUrl)
+	u, err := url.ParseRequestURI(connectUrl)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalidConnectURL, err)
 	}
@@ -73,7 +84,7 @@ func NewConnection(connectUrl, name string, options ...ConnectionOption) (*Conne
 
 	// we derive a new context from the parent one in order to
 	// be able to close it without affecting the parent
-	ctx, cancel := context.WithCancel(option.Ctx)
+	cCtx, cancel := context.WithCancel(option.Ctx)
 
 	conn := &Connection{
 		url:     u.String(),
@@ -89,9 +100,9 @@ func NewConnection(connectUrl, name string, options ...ConnectionOption) (*Conne
 		errorBackoff: option.BackoffPolicy,
 
 		errors:   make(chan *amqp.Error, 10),
-		blockers: make(chan amqp.Blocking, 10),
+		blocking: make(chan amqp.Blocking, 10),
 
-		ctx:    ctx,
+		ctx:    cCtx,
 		cancel: cancel,
 
 		log:          option.Logger,
@@ -100,7 +111,7 @@ func NewConnection(connectUrl, name string, options ...ConnectionOption) (*Conne
 		recoverCB: option.RecoverCallback,
 	}
 
-	err = conn.Connect()
+	err = conn.Connect(ctx)
 	if err == nil {
 		return conn, nil
 	}
@@ -109,7 +120,7 @@ func NewConnection(connectUrl, name string, options ...ConnectionOption) (*Conne
 		return nil, err
 	}
 
-	err = conn.Recover()
+	err = conn.Recover(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -151,16 +162,22 @@ func (ch *Connection) Flag(flagged bool) {
 	}
 }
 
+func (ch *Connection) IsFlagged() bool {
+	ch.mu.Lock()
+	defer ch.mu.Unlock()
+	return ch.flagged
+}
+
 // Connect tries to connect (or reconnect)
 // Does not block indefinitely, but returns an error
 // upon connection failure.
-func (ch *Connection) Connect() error {
+func (ch *Connection) Connect(ctx context.Context) error {
 	ch.mu.Lock()
 	defer ch.mu.Unlock()
-	return ch.connect()
+	return ch.connect(ctx)
 }
 
-func (ch *Connection) connect() error {
+func (ch *Connection) connect(ctx context.Context) error {
 
 	// not closed, close before reconnecting
 	if !ch.isClosed() {
@@ -172,7 +189,7 @@ func (ch *Connection) connect() error {
 	amqpConn, err := amqp.DialConfig(ch.url,
 		amqp.Config{
 			Heartbeat:       ch.heartbeat,
-			Dial:            defaultDial(ch.ctx, ch.connTimeout),
+			Dial:            defaultDial(ctx, ch.connTimeout),
 			TLSClientConfig: ch.tls.Clone(),
 			Properties: amqp.Table{
 				"connection_name": ch.name,
@@ -183,31 +200,37 @@ func (ch *Connection) connect() error {
 		return fmt.Errorf("%v: %w", ErrConnectionFailed, err)
 	}
 
-	ch.info("connected")
 	// override upon reconnect
 	ch.conn = amqpConn
 	ch.errors = make(chan *amqp.Error, 10)
-	ch.blockers = make(chan amqp.Blocking, 10)
+	ch.blocking = make(chan amqp.Blocking, 10)
 
 	// ch.Errors is closed by streadway/amqp in some scenarios :(
 	ch.conn.NotifyClose(ch.errors)
-	ch.conn.NotifyBlocked(ch.blockers)
+	ch.conn.NotifyBlocked(ch.blocking)
 
+	ch.info("connected")
 	return nil
 }
 
 // PauseOnFlowControl allows you to wait and sleep while receiving flow control messages.
 // Sleeps for one second, repeatedly until the blocking has stopped.
 // Such messages will most likely be received when the broker hits its memory or disk limits.
-func (ch *Connection) PauseOnFlowControl() {
+// Returns an error in case that flow control was detected and is resolved or in case that the connection is closed.
+func (ch *Connection) PauseOnFlowControl(ctx context.Context) error {
 	ch.mu.Lock()
 	defer ch.mu.Unlock()
 
-	ch.pauseOnFlowControl()
+	return ch.pauseOnFlowControl(ctx)
 }
 
 // not threadsafe
-func (ch *Connection) pauseOnFlowControl() {
+func (ch *Connection) pauseOnFlowControl(ctx context.Context) error {
+
+	if ch.isClosed() {
+		return ErrClosed
+	}
+
 	var (
 		duration = time.Second
 		timer    = time.NewTimer(duration)
@@ -215,32 +238,53 @@ func (ch *Connection) pauseOnFlowControl() {
 	)
 	defer closeTimer(timer, &drained)
 
-	for !ch.conn.IsClosed() && !ch.isShutdown() {
+	var (
+		flowControl       = false
+		start             = time.Now()
+		reason            = ""
+		err         error = nil
+	)
 
+	for !ch.isClosed() {
 		select {
-		case blocker, ok := <-ch.blockers: // Check for flow control issues.
+		case <-ch.catchShutdown():
+			return ErrClosed
+		case <-ctx.Done():
+			return fmt.Errorf("pause on flow control failed: %w", ctx.Err())
+		case blocker, ok := <-ch.blocking: // Check for flow control issues.
 			if !ok {
-				return
+				return errFlowControlClosed
 			}
 			if !blocker.Active {
-				return
+				return nil
 			}
 
-			ch.info("pausing on flow control")
+			if !flowControl || reason != blocker.Reason {
+				reason = blocker.Reason
+				flowControl = true
+				err = fmt.Errorf("%w: reason: %s", errFlowControl, reason)
+				ch.warn(err)
+			}
+
 			resetTimer(timer, duration, &drained)
 
 			select {
 			case <-ch.catchShutdown():
-				return
+				return ErrClosed
 			case <-timer.C:
 				drained = true
 				continue
 			}
 
 		default:
-			return
+			if flowControl {
+				ch.warnf("flow control with last reason: %s: ended after %s", reason, time.Since(start))
+			}
+			return err
 		}
 	}
+
+	return nil
 }
 
 func (ch *Connection) IsClosed() bool {
@@ -286,12 +330,7 @@ func (ch *Connection) error() error {
 				return fmt.Errorf("connection and errors channel %w", ErrClosed)
 			}
 			// only overwrite with the first error
-			if err == nil {
-				err = e
-			} else {
-				// flush all other errors after the first one
-				continue
-			}
+			err = errors.Join(err, e)
 		default:
 			// return err after flushing errors channel
 			return err
@@ -301,18 +340,17 @@ func (ch *Connection) error() error {
 
 // Recover tries to recover the connection until
 // a shutdown occurs via context cancelation.
-func (ch *Connection) Recover() error {
+func (ch *Connection) Recover(ctx context.Context) error {
 	ch.mu.Lock()
 	defer ch.mu.Unlock()
-	return ch.recover()
+	return ch.recover(ctx)
 }
 
-func (ch *Connection) recover() error {
-	healthy := ch.error() == nil
+func (ch *Connection) recover(ctx context.Context) error {
+	healthy := !ch.flagged && ch.error() == nil
 
 	if healthy && !ch.isClosed() {
-		ch.pauseOnFlowControl()
-		return nil
+		return ch.pauseOnFlowControl(ctx)
 	}
 
 	var (
@@ -324,7 +362,7 @@ func (ch *Connection) recover() error {
 	ch.info("recovering")
 	for try := 0; ; try++ {
 		ch.lastConnLoss = time.Now()
-		err := ch.connect()
+		err := ch.connect(ctx)
 		if err == nil {
 			// connection established successfully
 			break
@@ -347,6 +385,9 @@ func (ch *Connection) recover() error {
 		case <-ch.catchShutdown():
 			// catch shutdown signal
 			return fmt.Errorf("connection recovery failed: connection %w", ErrClosed)
+		case <-ctx.Done():
+			// catch context cancelation
+			return fmt.Errorf("connection recovery failed: %w", ctx.Err())
 		case <-timer.C:
 			drained = true
 			// retry after sleep
@@ -382,21 +423,16 @@ func (ch *Connection) catchShutdown() <-chan struct{} {
 	return ch.ctx.Done()
 }
 
-func (ch *Connection) isShutdown() bool {
-	select {
-	case <-ch.ctx.Done():
-		return true
-	default:
-		return false
-	}
-}
-
 func (ch *Connection) info(a ...any) {
 	ch.log.WithField("connection", ch.Name()).Info(a...)
 }
 
 func (ch *Connection) warn(err error, a ...any) {
 	ch.log.WithField("connection", ch.Name()).WithField("error", err.Error()).Warn(a...)
+}
+
+func (ch *Connection) warnf(format string, a ...any) {
+	ch.log.WithField("connection", ch.Name()).Warnf(format, a...)
 }
 
 func (ch *Connection) debug(a ...any) {

@@ -1,7 +1,6 @@
 package pool
 
 import (
-	"context"
 	"crypto/tls"
 	"time"
 
@@ -58,13 +57,6 @@ func WithHeartbeatInterval(interval time.Duration) Option {
 func WithConnectionTimeout(timeout time.Duration) Option {
 	return func(po *poolOption) {
 		ConnectionPoolWithConnectionTimeout(timeout)(&po.cpo)
-	}
-}
-
-// WithContext allows to set a custom connection timeout, that MUST be >= 1 * time.Second
-func WithContext(ctx context.Context) Option {
-	return func(po *poolOption) {
-		ConnectionPoolWithContext(ctx)(&po.cpo)
 	}
 }
 

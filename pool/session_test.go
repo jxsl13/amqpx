@@ -13,8 +13,9 @@ import (
 )
 
 func TestNewSession(t *testing.T) {
-
+	ctx := context.TODO()
 	c, err := pool.NewConnection(
+		ctx,
 		connectURL,
 		"TestNewSession",
 		pool.ConnectionWithLogger(logging.NewTestLogger(t)),
@@ -42,35 +43,35 @@ func TestNewSession(t *testing.T) {
 			}()
 
 			queueName := fmt.Sprintf("TestNewSession-Queue-%d", id)
-			_, err = s.QueueDeclare(queueName)
+			_, err = s.QueueDeclare(ctx, queueName)
 			if err != nil {
 				assert.NoError(t, err)
 				return
 			}
 			defer func() {
-				i, err := s.QueueDelete(queueName)
+				i, err := s.QueueDelete(ctx, queueName)
 				assert.NoError(t, err)
 				assert.Equal(t, 0, i)
 			}()
 
 			exchangeName := fmt.Sprintf("TestNewSession-Exchange-%d", id)
-			err = s.ExchangeDeclare(exchangeName, "topic")
+			err = s.ExchangeDeclare(ctx, exchangeName, "topic")
 			if err != nil {
 				assert.NoError(t, err)
 				return
 			}
 			defer func() {
-				err := s.ExchangeDelete(exchangeName)
+				err := s.ExchangeDelete(ctx, exchangeName)
 				assert.NoError(t, err)
 			}()
 
-			err = s.QueueBind(queueName, "#", exchangeName)
+			err = s.QueueBind(ctx, queueName, "#", exchangeName)
 			if err != nil {
 				assert.NoError(t, err)
 				return
 			}
 			defer func() {
-				err := s.QueueUnbind(queueName, "#", exchangeName, nil)
+				err := s.QueueUnbind(ctx, queueName, "#", exchangeName, nil)
 				assert.NoError(t, err)
 			}()
 
@@ -132,8 +133,9 @@ func TestNewSession(t *testing.T) {
 }
 
 func TestNewSessionDisconnect(t *testing.T) {
-
+	ctx := context.TODO()
 	c, err := pool.NewConnection(
+		ctx,
 		connectURL,
 		"TestNewSessionDisconnect",
 		pool.ConnectionWithLogger(logging.NewTestLogger(t)),
@@ -184,7 +186,7 @@ func TestNewSessionDisconnect(t *testing.T) {
 			started()
 
 			exchangeName := fmt.Sprintf("TestNewSession-Exchange-%d", id)
-			err = s.ExchangeDeclare(exchangeName, "topic")
+			err = s.ExchangeDeclare(ctx, exchangeName, "topic")
 			if err != nil {
 				assert.NoError(t, err)
 				return
@@ -196,7 +198,7 @@ func TestNewSessionDisconnect(t *testing.T) {
 				start9()
 				started9()
 
-				err := s.ExchangeDelete(exchangeName)
+				err := s.ExchangeDelete(ctx, exchangeName)
 				assert.NoError(t, err)
 
 				stopped9()
@@ -206,7 +208,7 @@ func TestNewSessionDisconnect(t *testing.T) {
 			started2()
 
 			queueName := fmt.Sprintf("TestNewSession-Queue-%d", id)
-			_, err = s.QueueDeclare(queueName)
+			_, err = s.QueueDeclare(ctx, queueName)
 			if err != nil {
 				assert.NoError(t, err)
 				return
@@ -218,14 +220,14 @@ func TestNewSessionDisconnect(t *testing.T) {
 				started8()
 				stopped8()
 
-				_, err := s.QueueDelete(queueName)
+				_, err := s.QueueDelete(ctx, queueName)
 				assert.NoError(t, err)
 			}()
 
 			start3()
 			started3()
 
-			err = s.QueueBind(queueName, "#", exchangeName)
+			err = s.QueueBind(ctx, queueName, "#", exchangeName)
 			if err != nil {
 				assert.NoError(t, err)
 				return
@@ -236,7 +238,7 @@ func TestNewSessionDisconnect(t *testing.T) {
 				start7()
 				started7()
 
-				err := s.QueueUnbind(queueName, "#", exchangeName, nil)
+				err := s.QueueUnbind(ctx, queueName, "#", exchangeName, nil)
 				assert.NoError(t, err)
 
 				stopped7()
@@ -282,7 +284,7 @@ func TestNewSessionDisconnect(t *testing.T) {
 			var once sync.Once
 
 			for {
-				tag, err := s.Publish(context.Background(), exchangeName, "", pool.Publishing{
+				tag, err := s.Publish(ctx, exchangeName, "", pool.Publishing{
 					Mandatory:   true,
 					ContentType: "application/json",
 					Body:        []byte(message),
@@ -300,7 +302,7 @@ func TestNewSessionDisconnect(t *testing.T) {
 					stopped6()
 				})
 
-				err = s.AwaitConfirm(context.Background(), tag)
+				err = s.AwaitConfirm(ctx, tag)
 				if err != nil {
 					// retry because the first attempt at confirmation failed
 					continue
@@ -316,6 +318,7 @@ func TestNewSessionDisconnect(t *testing.T) {
 }
 
 func TestNewSessionQueueDeclarePassive(t *testing.T) {
+	ctx := context.TODO()
 	var wg sync.WaitGroup
 
 	defer func() {
@@ -324,6 +327,7 @@ func TestNewSessionQueueDeclarePassive(t *testing.T) {
 	}()
 
 	c, err := pool.NewConnection(
+		ctx,
 		connectURL,
 		"TestNewSessionQueueDeclarePassive",
 		pool.ConnectionWithLogger(logging.NewTestLogger(t)),
@@ -347,7 +351,7 @@ func TestNewSessionQueueDeclarePassive(t *testing.T) {
 
 	for i := 0; i < 100; i++ {
 		qname := fmt.Sprintf("TestNewSessionQueueDeclarePassive-queue-%d", i)
-		q, err := session.QueueDeclare(qname)
+		q, err := session.QueueDeclare(ctx, qname)
 		if err != nil {
 			assert.NoError(t, err)
 			return
@@ -356,11 +360,11 @@ func TestNewSessionQueueDeclarePassive(t *testing.T) {
 
 		// executed upon return
 		defer func() {
-			_, err := session.QueueDelete(qname)
+			_, err := session.QueueDelete(ctx, qname)
 			assert.NoErrorf(t, err, "failed to delete queue: %s", qname)
 		}()
 
-		q, err = session.QueueDeclarePassive(qname)
+		q, err = session.QueueDeclarePassive(ctx, qname)
 		if err != nil {
 			assert.NoErrorf(t, err, "QueueDeclarePassive failed for queue: %s", qname)
 			return

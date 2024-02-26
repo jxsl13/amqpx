@@ -64,16 +64,6 @@ func ConnectionWithBackoffPolicy(policy BackoffFunc) ConnectionOption {
 	}
 }
 
-// ConnectionWithContext allows to set a custom connection timeout, that MUST be >= 1 * time.Second
-func ConnectionWithContext(ctx context.Context) ConnectionOption {
-	if ctx == nil {
-		panic("nil context passed")
-	}
-	return func(co *connectionOption) {
-		co.Ctx = ctx
-	}
-}
-
 // ConnectionWithTLS allows to configure tls connectivity.
 func ConnectionWithTLS(config *tls.Config) ConnectionOption {
 	return func(co *connectionOption) {

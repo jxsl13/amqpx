@@ -79,10 +79,10 @@ func NewSubscriber(p *Pool, options ...SubscriberOption) *Subscriber {
 }
 
 // HandlerFunc is basically a handler for incoming messages/events.
-type HandlerFunc func(Delivery) error
+type HandlerFunc func(context.Context, Delivery) error
 
 // BatchHandlerFunc is a handler for incoming batches of messages/events
-type BatchHandlerFunc func([]Delivery) error
+type BatchHandlerFunc func(context.Context, []Delivery) error
 
 // RegisterHandlerFunc registers a consumer function that starts a consumer upon subscriber startup.
 // The consumer is identified by a string that is unique and scoped for all consumers on this channel.
@@ -174,7 +174,7 @@ func (s *Subscriber) RegisterBatchHandler(handler *BatchHandler) {
 // Start starts the consumers for all registered handler functions
 // This method is not blocking. Use Wait() to wait for all routines to shut down
 // via context cancelation (e.g. via a signal)
-func (s *Subscriber) Start() (err error) {
+func (s *Subscriber) Start(ctx context.Context) (err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.started {
@@ -196,7 +196,7 @@ func (s *Subscriber) Start() (err error) {
 	for _, h := range s.handlers {
 		s.wg.Add(1)
 		go s.consumer(h, &s.wg)
-		err = h.awaitResumed(s.ctx)
+		err = h.awaitResumed(ctx)
 		if err != nil {
 			return fmt.Errorf("failed to start consumer for queue %s: %w", h.Queue(), err)
 		}
@@ -207,7 +207,7 @@ func (s *Subscriber) Start() (err error) {
 		s.wg.Add(1)
 		go s.batchConsumer(bh, &s.wg)
 
-		err = bh.awaitResumed(s.ctx)
+		err = bh.awaitResumed(ctx)
 		if err != nil {
 			return fmt.Errorf("failed to start batch consumer for queue %s: %w", bh.Queue(), err)
 		}
@@ -297,7 +297,7 @@ func (s *Subscriber) consume(h *Handler) (err error) {
 
 	s.debugConsumer(opts.ConsumerTag, "starting consumer...")
 
-	session, err := s.pool.GetSession()
+	session, err := s.pool.GetSession(s.ctx)
 	if err != nil {
 		return err
 	}
@@ -328,7 +328,7 @@ func (s *Subscriber) consume(h *Handler) (err error) {
 			}
 
 			s.infoHandler(opts.ConsumerTag, msg.Exchange, msg.RoutingKey, opts.Queue, "received message")
-			err = opts.HandlerFunc(msg)
+			err = opts.HandlerFunc(h.pausing(), msg)
 			if opts.AutoAck {
 				if err != nil {
 					// we cannot really do anything to recover from a processing error in this case
@@ -349,35 +349,38 @@ func (s *Subscriber) consume(h *Handler) (err error) {
 // (n)ack delivery and signal that message was processed by the service
 func (s *Subscriber) ackPostHandle(opts HandlerConfig, deliveryTag uint64, exchange, routingKey string, session *Session, handlerErr error) (err error) {
 	var ackErr error
-	if handlerErr != nil {
+	if handlerErr == nil {
+		ackErr = session.Ack(deliveryTag, false)
+	} else if errors.Is(handlerErr, ErrReject) || errors.Is(handlerErr, ErrRejectSingle) {
+		ackErr = session.Nack(deliveryTag, false, false)
+	} else {
 		// requeue message if possible
 		ackErr = session.Nack(deliveryTag, false, true)
-	} else {
-		ackErr = session.Ack(deliveryTag, false)
+	}
+
+	if ackErr == nil {
+		// (n)acked or rejected successfully
+		if handlerErr == nil {
+			s.infoHandler(opts.ConsumerTag, exchange, routingKey, opts.Queue, "acked message")
+		} else if errors.Is(handlerErr, ErrReject) {
+			s.infoHandler(opts.ConsumerTag, exchange, routingKey, opts.Queue, "rejected message")
+		} else {
+			s.infoHandler(opts.ConsumerTag, exchange, routingKey, opts.Queue, "nacked message")
+		}
+		return nil
 	}
 
 	// if (n)ack fails, we know that the connection died
 	// potentially before processing already.
-	if ackErr != nil {
-		s.warnHandler(opts.ConsumerTag, exchange, routingKey, opts.Queue, ackErr, "(n)ack failed")
-		poolErr := session.Recover()
-		if poolErr != nil {
-			// only returns an error upon shutdown
-			return poolErr
-		}
-
-		// do not retry, because the broker will requeue the un(n)acked message
-		// after a timeout of (by default) 30 minutes.
-		return nil
+	s.warnHandler(opts.ConsumerTag, exchange, routingKey, opts.Queue, ackErr, "(n)ack failed")
+	poolErr := session.Recover(s.ctx)
+	if poolErr != nil {
+		// only returns an error upon shutdown
+		return poolErr
 	}
 
-	// (n)acked successfully
-	if handlerErr != nil {
-		s.infoHandler(opts.ConsumerTag, exchange, routingKey, opts.Queue, "nacked message")
-	} else {
-		s.infoHandler(opts.ConsumerTag, exchange, routingKey, opts.Queue, "acked message")
-	}
-	// successfully handled message
+	// do not retry, because the broker will requeue the un(n)acked message
+	// after a timeout of (by default) 30 minutes.
 	return nil
 }
 
@@ -413,7 +416,7 @@ func (s *Subscriber) batchConsume(h *BatchHandler) (err error) {
 
 	s.debugConsumer(opts.ConsumerTag, "starting batch consumer...")
 
-	session, err := s.pool.GetSession()
+	session, err := s.pool.GetSession(s.ctx)
 	if err != nil {
 		return err
 	}
@@ -522,7 +525,7 @@ func (s *Subscriber) batchConsume(h *BatchHandler) (err error) {
 		)
 
 		s.infoBatchHandler(opts.ConsumerTag, opts.Queue, batchSize, batchBytes, "received batch")
-		err = opts.HandlerFunc(batch)
+		err = opts.HandlerFunc(h.pausing(), batch)
 		// no acks required
 		if opts.AutoAck {
 			if err != nil {
@@ -554,55 +557,76 @@ func (s *Subscriber) batchConsume(h *BatchHandler) (err error) {
 func (s *Subscriber) ackBatchPostHandle(opts BatchHandlerConfig, lastDeliveryTag uint64, currentBatchSize, currentBatchBytes int, session *Session, handlerErr error) (err error) {
 	var ackErr error
 	// processing failed
-	if handlerErr != nil {
-		// requeue message if possible & nack all previous messages
-		ackErr = session.Nack(lastDeliveryTag, true, true)
-	} else {
+	if handlerErr == nil {
 		// ack last and all previous messages
 		ackErr = session.Ack(lastDeliveryTag, true)
+	} else if errors.Is(handlerErr, ErrReject) {
+		// reject multiple
+		ackErr = session.Nack(lastDeliveryTag, true, false)
+	} else if errors.Is(handlerErr, ErrRejectSingle) {
+		// reject single
+		ackErr = session.Nack(lastDeliveryTag, false, false)
+	} else {
+		// requeue message if possible & nack all previous messages
+		ackErr = session.Nack(lastDeliveryTag, true, true)
+	}
+
+	if ackErr == nil {
+		if handlerErr == nil {
+			s.infoBatchHandler(
+				opts.ConsumerTag,
+				opts.Queue,
+				currentBatchSize,
+				currentBatchBytes,
+				"acked batch",
+			)
+		} else if errors.Is(handlerErr, ErrReject) {
+			s.infoBatchHandler(
+				opts.ConsumerTag,
+				opts.Queue,
+				currentBatchSize,
+				currentBatchBytes,
+				"rejected batch",
+			)
+		} else if errors.Is(handlerErr, ErrRejectSingle) {
+			s.infoBatchHandler(
+				opts.ConsumerTag,
+				opts.Queue,
+				currentBatchSize,
+				currentBatchBytes,
+				"rejected single message in batch",
+			)
+		} else {
+			s.infoBatchHandler(
+				opts.ConsumerTag,
+				opts.Queue,
+				currentBatchSize,
+				currentBatchBytes,
+				"nacked batch",
+			)
+		}
+		// successfully handled message
+		return nil
 	}
 
 	// if (n)ack fails, we know that the connection died
 	// potentially before processing already.
-	if ackErr != nil {
-		s.warnBatchHandler(
-			opts.ConsumerTag,
-			opts.Queue,
-			currentBatchSize,
-			currentBatchBytes,
-			ackErr,
-			"batch (n)ack failed",
-		)
-		poolErr := session.Recover()
-		if poolErr != nil {
-			// only returns an error upon shutdown
-			return poolErr
-		}
-
-		// do not retry, because the broker will requeue the un(n)acked message
-		// after a timeout of by default 30 minutes.
-		return nil
+	s.warnBatchHandler(
+		opts.ConsumerTag,
+		opts.Queue,
+		currentBatchSize,
+		currentBatchBytes,
+		ackErr,
+		"batch (n)ack failed",
+	)
+	poolErr := session.Recover(s.ctx)
+	if poolErr != nil {
+		// only returns an error upon shutdown
+		return poolErr
 	}
 
-	// (n)acked successfully
-	if handlerErr != nil {
-		s.infoBatchHandler(
-			opts.ConsumerTag,
-			opts.Queue,
-			currentBatchSize,
-			currentBatchBytes,
-			"nacked batch",
-		)
-	} else {
-		s.infoBatchHandler(
-			opts.ConsumerTag,
-			opts.Queue,
-			currentBatchSize,
-			currentBatchBytes,
-			"acked batch",
-		)
-	}
-	// successfully handled message
+	// do not retry, because the broker will requeue the un(n)acked message
+	// after a timeout of by default 30 minutes.
 	return nil
 }
 
@@ -616,7 +640,7 @@ func (s *Subscriber) returnSession(h handler, session *Session, err error) {
 
 	if errors.Is(err, ErrClosed) {
 		// graceful shutdown
-		s.pool.ReturnSession(session, false)
+		s.pool.ReturnSession(s.ctx, session, false)
 		s.infoConsumer(opts.ConsumerTag, "closed")
 		return
 	}
@@ -626,11 +650,11 @@ func (s *Subscriber) returnSession(h handler, session *Session, err error) {
 		// expected closing due to context cancelation
 		// cancel errors the underlying channel
 		// A canceled session is an erred session.
-		s.pool.ReturnSession(session, true)
+		s.pool.ReturnSession(s.ctx, session, true)
 		s.infoConsumer(opts.ConsumerTag, "paused")
 	default:
 		// actual error
-		s.pool.ReturnSession(session, true)
+		s.pool.ReturnSession(s.ctx, session, true)
 		s.warnConsumer(opts.ConsumerTag, err, "closed unexpectedly")
 	}
 }

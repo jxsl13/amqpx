@@ -4,11 +4,11 @@ services:
   rabbitmq:
     image: docker.io/bitnami/rabbitmq:latest
     ports:
-      - '4369:4369'
-      - '5551:5551'
-      - '5552:5552'
+      #- '4369:4369'
+      #- '5551:5551'
+      #- '5552:5552'
       #- '5672:5672' # proxied through toxiproxy
-      - '25672:25672'
+      #- '25672:25672'
       # user interface
       - '15672:15672'
     environment:
@@ -22,6 +22,27 @@ services:
     networks:
       - rabbitnet
 
+  rabbitmq-broken:
+    image: docker.io/bitnami/rabbitmq:latest
+    ports:
+      #- '14369:4369'
+      #- '15551:5551'
+      #- '15552:5552'
+      #- '5672:5672' # proxied through toxiproxy
+      #- '35672:25672'
+      # user interface
+      - '25672:15672'
+    environment:
+      RABBITMQ_NODE_TYPE: stats
+      RABBITMQ_USERNAME: admin
+      RABBITMQ_PASSWORD: password
+      #RABBITMQ_DISK_FREE_RELATIVE_LIMIT: 100
+      RABBITMQ_VM_MEMORY_HIGH_WATERMARK: 1000
+      # See: https://www.rabbitmq.com/access-control.html#loopback-users
+      RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS: "-rabbit loopback_users []"
+    networks:
+      - rabbitnet
+
   toxiproxy:
     image: ghcr.io/shopify/toxiproxy:2.5.0
     command:
@@ -29,7 +50,8 @@ services:
       - -config=/toxiproxy.json
     ports:
       - 8474:8474
-      - 5672:5672
+      - 5672:5672 # normal rabbitmq
+      - 5673:5673 # broken rabbitmq
     networks:
       - rabbitnet
     volumes:

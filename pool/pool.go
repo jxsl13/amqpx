@@ -19,7 +19,7 @@ type Pool struct {
 	sp *SessionPool
 }
 
-func New(connectUrl string, numConns, numSessions int, options ...Option) (*Pool, error) {
+func New(ctx context.Context, connectUrl string, numConns, numSessions int, options ...Option) (*Pool, error) {
 	if numConns < 1 {
 		return nil, fmt.Errorf("%w: %d", errInvalidPoolSize, numConns)
 	}
@@ -27,8 +27,6 @@ func New(connectUrl string, numConns, numSessions int, options ...Option) (*Pool
 	if numSessions < 1 {
 		numSessions = numConns
 	}
-
-	ctx := context.Background()
 
 	logger := logging.NewNoOpLogger()
 
@@ -81,16 +79,8 @@ func (p *Pool) Close() {
 }
 
 // GetSession returns a new session from the pool, only returns an error upon shutdown.
-func (p *Pool) GetSession() (*Session, error) {
-	return p.sp.GetSession()
-}
-
-// GetSessionCtx returns a new session from the pool, only returns an error upon shutdown or when the passed context was canceled.
-func (p *Pool) GetSessionCtx(ctx context.Context) (*Session, error) {
-	if p.sp.ctx == ctx {
-		return p.sp.GetSession()
-	}
-	return p.sp.GetSessionCtx(ctx)
+func (p *Pool) GetSession(ctx context.Context) (*Session, error) {
+	return p.sp.GetSession(ctx)
 }
 
 // GetTransientSession returns a new session which is decoupled from anyshutdown mechanism, thus
@@ -103,8 +93,8 @@ func (p *Pool) GetTransientSession(ctx context.Context) (*Session, error) {
 // ReturnSession returns a Session back to the pool.
 // If the session was returned due to an error, erred should be set to true, otherwise
 // erred should be set to false.
-func (p *Pool) ReturnSession(session *Session, erred bool) {
-	p.sp.ReturnSession(session, erred)
+func (p *Pool) ReturnSession(ctx context.Context, session *Session, erred bool) {
+	p.sp.ReturnSession(ctx, session, erred)
 }
 
 func (p *Pool) Context() context.Context {

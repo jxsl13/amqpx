@@ -21,6 +21,23 @@ var (
 	// ErrNotFound is returned by ExchangeDeclarePassive or QueueDeclarePassive in the case that
 	// the queue was not found.
 	ErrNotFound = errors.New("not found")
+
+	// errFlowControl is returned when the server is under flow control
+	// TODO: make public api after a while
+	errFlowControl = errors.New("flow control")
+
+	// errFlowControlClosed is returned when the flow control channel is closed
+	// Specifically interesting when awaiting publish confirms
+	// TODO: make public api after a while
+	errFlowControlClosed = errors.New("flow control channel closed")
+
+	// ErrReject can be used to reject a specific message
+	// This is a special error that negatively acknowledges messages and does not reuque them.
+	ErrReject = errors.New("message rejected")
+
+	// ErrRejectSingle can be used to reject a specific message
+	// This is a special error that negatively acknowledges messages and does not reuque them
+	ErrRejectSingle = errors.New("single message rejected")
 )
 
 var (

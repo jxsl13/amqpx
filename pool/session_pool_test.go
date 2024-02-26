@@ -1,6 +1,7 @@
 package pool_test
 
 import (
+	"context"
 	"sync"
 	"testing"
 	"time"
@@ -11,9 +12,10 @@ import (
 )
 
 func TestNewSessionPool(t *testing.T) {
+	ctx := context.TODO()
 	connections := 1
 	sessions := 10
-	p, err := pool.NewConnectionPool(connectURL, connections,
+	p, err := pool.NewConnectionPool(ctx, connectURL, connections,
 		pool.ConnectionPoolWithName("TestNewConnectionPool"),
 		pool.ConnectionPoolWithLogger(logging.NewTestLogger(t)),
 	)
@@ -35,13 +37,13 @@ func TestNewSessionPool(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			s, err := sp.GetSession()
+			s, err := sp.GetSession(ctx)
 			if err != nil {
 				assert.NoError(t, err)
 				return
 			}
 			time.Sleep(3 * time.Second)
-			sp.ReturnSession(s, false)
+			sp.ReturnSession(ctx, s, false)
 		}()
 	}
 

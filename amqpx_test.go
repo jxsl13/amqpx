@@ -32,19 +32,21 @@ func TestMain(m *testing.M) {
 }
 
 func TestExchangeDeclarePassive(t *testing.T) {
+	ctx := context.TODO()
 	defer amqpx.Reset()
 
 	eName := "exchange-01"
 	var err error
-	amqpx.RegisterTopologyCreator(func(t *pool.Topologer) error {
-		return createExchange(eName, t)
+	amqpx.RegisterTopologyCreator(func(ctx context.Context, t *pool.Topologer) error {
+		return createExchange(ctx, eName, t)
 	})
 
-	amqpx.RegisterTopologyDeleter(func(t *pool.Topologer) error {
-		return deleteExchange(eName, t)
+	amqpx.RegisterTopologyDeleter(func(ctx context.Context, t *pool.Topologer) error {
+		return deleteExchange(ctx, eName, t)
 	})
 
 	err = amqpx.Start(
+		ctx,
 		connectURL,
 		amqpx.WithLogger(logging.NewTestLogger(t)),
 		amqpx.WithPublisherConnections(1),
@@ -54,19 +56,21 @@ func TestExchangeDeclarePassive(t *testing.T) {
 }
 
 func TestQueueDeclarePassive(t *testing.T) {
+	ctx := context.TODO()
 	defer amqpx.Reset()
 
 	qName := "queue-01"
 	var err error
-	amqpx.RegisterTopologyCreator(func(t *pool.Topologer) error {
-		return createQueue(qName, t)
+	amqpx.RegisterTopologyCreator(func(ctx context.Context, t *pool.Topologer) error {
+		return createQueue(ctx, qName, t)
 	})
 
-	amqpx.RegisterTopologyDeleter(func(t *pool.Topologer) error {
-		return deleteQueue(qName, t)
+	amqpx.RegisterTopologyDeleter(func(ctx context.Context, t *pool.Topologer) error {
+		return deleteQueue(ctx, qName, t)
 	})
 
 	err = amqpx.Start(
+		ctx,
 		connectURL,
 		amqpx.WithLogger(logging.NewTestLogger(t)),
 		amqpx.WithPublisherConnections(1),
@@ -76,12 +80,14 @@ func TestQueueDeclarePassive(t *testing.T) {
 }
 
 func TestAMQPXPub(t *testing.T) {
+	ctx := context.TODO()
 	defer amqpx.Reset()
 
 	amqpx.RegisterTopologyCreator(createTopology)
 	amqpx.RegisterTopologyDeleter(deleteTopology)
 
 	err := amqpx.Start(
+		ctx,
 		connectURL,
 		amqpx.WithLogger(logging.NewNoOpLogger()),
 		amqpx.WithPublisherConnections(1),
@@ -100,7 +106,7 @@ func TestAMQPXPub(t *testing.T) {
 	event := "TestAMQPXPub - event content"
 
 	// publish event to first queue
-	err = amqpx.Publish("exchange-01", "event-01", pool.Publishing{
+	err = amqpx.Publish(ctx, "exchange-01", "event-01", pool.Publishing{
 		ContentType: "application/json",
 		Body:        []byte(event),
 	})
@@ -114,7 +120,7 @@ func TestAMQPXPub(t *testing.T) {
 		ok  bool
 	)
 	for i := 0; i < 20; i++ {
-		msg, ok, err = amqpx.Get("queue-01", false)
+		msg, ok, err = amqpx.Get(ctx, "queue-01", false)
 		if err != nil {
 			assert.NoError(t, err)
 			return
@@ -135,24 +141,26 @@ func TestAMQPXPub(t *testing.T) {
 }
 
 func TestAMQPXSubAndPub(t *testing.T) {
+	ctx := context.TODO()
 	log := logging.NewTestLogger(t)
 	defer amqpx.Reset()
 
 	amqpx.RegisterTopologyCreator(createTopology)
 	amqpx.RegisterTopologyDeleter(deleteTopology)
 
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGINT)
+	ctx, cancel := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGINT)
 	defer cancel()
 
 	eventContent := "TestAMQPXSubAndPub - event content"
 
-	amqpx.RegisterHandler("queue-01", func(msg pool.Delivery) error {
+	amqpx.RegisterHandler("queue-01", func(ctx context.Context, msg pool.Delivery) error {
 		log.Info("subscriber of queue-01")
 		cancel()
 		return nil
 	})
 
 	err := amqpx.Start(
+		ctx,
 		connectURL,
 		amqpx.WithLogger(logging.NewNoOpLogger()),
 		amqpx.WithPublisherConnections(1),
@@ -165,7 +173,7 @@ func TestAMQPXSubAndPub(t *testing.T) {
 
 	// publish event to first queue
 
-	err = amqpx.Publish("exchange-01", "event-01", pool.Publishing{
+	err = amqpx.Publish(ctx, "exchange-01", "event-01", pool.Publishing{
 		ContentType: "application/json",
 		Body:        []byte(eventContent),
 	})
@@ -182,22 +190,23 @@ func TestAMQPXSubAndPub(t *testing.T) {
 }
 
 func TestAMQPXSubAndPubMulti(t *testing.T) {
+	ctx := context.TODO()
 	log := logging.NewTestLogger(t)
 	defer amqpx.Reset()
 
 	amqpx.RegisterTopologyCreator(createTopology)
 	amqpx.RegisterTopologyDeleter(deleteTopology)
 
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGINT)
+	ctx, cancel := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGINT)
 	defer cancel()
 
 	eventContent := "TestAMQPXSubAndPub - event content"
 
 	// publish -> queue-01 -> subscriber-01 -> queue-02 -> subscriber-02 -> queue-03 -> subscriber-03 -> cancel context
-	amqpx.RegisterHandler("queue-01", func(msg pool.Delivery) error {
+	amqpx.RegisterHandler("queue-01", func(ctx context.Context, msg pool.Delivery) error {
 		log.Info("handler of subscriber-01")
 
-		err := amqpx.Publish("exchange-02", "event-02", pool.Publishing{
+		err := amqpx.Publish(ctx, "exchange-02", "event-02", pool.Publishing{
 			ContentType: msg.ContentType,
 			Body:        msg.Body,
 		})
@@ -212,10 +221,10 @@ func TestAMQPXSubAndPubMulti(t *testing.T) {
 		pool.ConsumeOptions{ConsumerTag: "subscriber-01"},
 	)
 
-	amqpx.RegisterHandler("queue-02", func(msg pool.Delivery) error {
+	amqpx.RegisterHandler("queue-02", func(ctx context.Context, msg pool.Delivery) error {
 		log.Info("handler of subscriber-02")
 
-		err := amqpx.Publish("exchange-03", "event-03", pool.Publishing{
+		err := amqpx.Publish(ctx, "exchange-03", "event-03", pool.Publishing{
 			ContentType: msg.ContentType,
 			Body:        msg.Body,
 		})
@@ -227,13 +236,14 @@ func TestAMQPXSubAndPubMulti(t *testing.T) {
 		return nil
 	}, pool.ConsumeOptions{ConsumerTag: "subscriber-02"})
 
-	amqpx.RegisterHandler("queue-03", func(msg pool.Delivery) error {
+	amqpx.RegisterHandler("queue-03", func(ctx context.Context, msg pool.Delivery) error {
 		log.Info("handler of subscriber-03: canceling context!")
 		cancel()
 		return nil
 	}, pool.ConsumeOptions{ConsumerTag: "subscriber-03"})
 
 	err := amqpx.Start(
+		ctx,
 		connectURL,
 		amqpx.WithLogger(log),
 		amqpx.WithPublisherConnections(1),
@@ -246,7 +256,7 @@ func TestAMQPXSubAndPubMulti(t *testing.T) {
 
 	// publish event to first queue
 
-	err = amqpx.Publish("exchange-01", "event-01", pool.Publishing{
+	err = amqpx.Publish(ctx, "exchange-01", "event-01", pool.Publishing{
 		ContentType: "application/json",
 		Body:        []byte(eventContent),
 	})
@@ -263,24 +273,26 @@ func TestAMQPXSubAndPubMulti(t *testing.T) {
 }
 
 func TestAMQPXSubHandler(t *testing.T) {
+	ctx := context.TODO()
 	log := logging.NewTestLogger(t)
 	defer amqpx.Reset()
 
 	amqpx.RegisterTopologyCreator(createTopology)
 	amqpx.RegisterTopologyDeleter(deleteTopology)
 
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGINT)
+	ctx, cancel := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGINT)
 	defer cancel()
 
 	eventContent := "TestAMQPXSubAndPub - event content"
 
-	amqpx.RegisterHandler("queue-01", func(msg pool.Delivery) error {
+	amqpx.RegisterHandler("queue-01", func(ctx context.Context, msg pool.Delivery) error {
 		log.Info("subscriber of queue-01")
 		cancel()
 		return nil
 	})
 
 	err := amqpx.Start(
+		ctx,
 		connectURL,
 		amqpx.WithLogger(logging.NewNoOpLogger()),
 		amqpx.WithPublisherConnections(1),
@@ -293,7 +305,7 @@ func TestAMQPXSubHandler(t *testing.T) {
 
 	// publish event to first queue
 
-	err = amqpx.Publish("exchange-01", "event-01", pool.Publishing{
+	err = amqpx.Publish(ctx, "exchange-01", "event-01", pool.Publishing{
 		ContentType: "application/json",
 		Body:        []byte(eventContent),
 	})
@@ -310,6 +322,7 @@ func TestAMQPXSubHandler(t *testing.T) {
 }
 
 func TestCreateDeleteTopology(t *testing.T) {
+	ctx := context.TODO()
 	log := logging.NewTestLogger(t)
 	defer amqpx.Reset()
 
@@ -317,6 +330,7 @@ func TestCreateDeleteTopology(t *testing.T) {
 	amqpx.RegisterTopologyDeleter(deleteTopology)
 
 	err := amqpx.Start(
+		ctx,
 		connectURL,
 		amqpx.WithLogger(log),
 		amqpx.WithPublisherConnections(1),
@@ -334,32 +348,31 @@ func TestPauseResumeHandlerNoProcessing(t *testing.T) {
 	log := logging.NewTestLogger(t)
 
 	amqp := amqpx.New()
-	amqp.RegisterTopologyCreator(func(t *pool.Topologer) error {
-		_, err := t.QueueDeclare(queueName)
+	amqp.RegisterTopologyCreator(func(ctx context.Context, t *pool.Topologer) error {
+		_, err := t.QueueDeclare(ctx, queueName)
 		if err != nil {
 			return err
 		}
 		return nil
 	})
 
-	amqp.RegisterTopologyDeleter(func(t *pool.Topologer) error {
-		_, err := t.QueueDelete(queueName)
+	amqp.RegisterTopologyDeleter(func(ctx context.Context, t *pool.Topologer) error {
+		_, err := t.QueueDelete(ctx, queueName)
 		if err != nil {
 			return err
 		}
 		return nil
 	})
 
-	handler := amqp.RegisterHandler(queueName, func(d pool.Delivery) error {
+	handler := amqp.RegisterHandler(queueName, func(ctx context.Context, d pool.Delivery) error {
 		log.Info("received message")
 		return nil
 	})
 
-	err = amqp.Start(connectURL,
-		amqpx.WithLogger(
-			logging.NewNoOpLogger(),
-		),
-		amqpx.WithContext(ctx),
+	err = amqp.Start(
+		ctx,
+		connectURL,
+		amqpx.WithLogger(logging.NewNoOpLogger()),
 	)
 	if err != nil {
 		assert.NoError(t, err)
@@ -427,12 +440,16 @@ func testHandlerPauseAndResume(t *testing.T) {
 
 	// step 1 - fill queue with messages
 	amqpx.RegisterTopologyDeleter(deleteTopology)
-	err = amqpxPublish.Start(connectURL, options...)
+	err = amqpxPublish.Start(
+		ctx,
+		connectURL,
+		options...,
+	)
 	require.NoError(t, err)
 
 	// fill queue with messages
 	for i := 0; i < publish; i++ {
-		err := amqpxPublish.Publish("exchange-01", "event-01", pool.Publishing{
+		err := amqpxPublish.Publish(ctx, "exchange-01", "event-01", pool.Publishing{
 			ContentType: "application/json",
 			Body:        []byte(fmt.Sprintf("%s: message number %d", eventContent, i)),
 		})
@@ -443,10 +460,10 @@ func testHandlerPauseAndResume(t *testing.T) {
 	}
 
 	// step 2 - process messages, pause, wait, resume, process rest, cancel context
-	handler01 := amqpx.RegisterHandler("queue-01", func(msg pool.Delivery) (err error) {
+	handler01 := amqpx.RegisterHandler("queue-01", func(ctx context.Context, msg pool.Delivery) (err error) {
 		cnt++
 		if cnt == publish/3 || cnt == publish/3*2 {
-			err = amqpx.Publish("exchange-02", "event-02", pool.Publishing{
+			err = amqpx.Publish(ctx, "exchange-02", "event-02", pool.Publishing{
 				ContentType: "application/json",
 				Body:        []byte(fmt.Sprintf("%s: hit %d messages, toggling processing", eventContent, cnt)),
 			})
@@ -457,7 +474,7 @@ func testHandlerPauseAndResume(t *testing.T) {
 	})
 
 	running := true
-	amqpx.RegisterHandler("queue-02", func(msg pool.Delivery) (err error) {
+	amqpx.RegisterHandler("queue-02", func(ctx context.Context, msg pool.Delivery) (err error) {
 		log.Infof("received toggle request: %s", string(msg.Body))
 		queue := handler01.Queue()
 
@@ -482,7 +499,7 @@ func testHandlerPauseAndResume(t *testing.T) {
 			assertActive(t, handler01, true)
 
 			// trigger cancelation
-			err = amqpxPublish.Publish("exchange-03", "event-03", pool.Publishing{
+			err = amqpxPublish.Publish(ctx, "exchange-03", "event-03", pool.Publishing{
 				ContentType: "application/json",
 				Body:        []byte(fmt.Sprintf("%s: delayed toggle back", eventContent)),
 			})
@@ -492,7 +509,7 @@ func testHandlerPauseAndResume(t *testing.T) {
 	})
 
 	var once sync.Once
-	amqpx.RegisterHandler("queue-03", func(msg pool.Delivery) (err error) {
+	amqpx.RegisterHandler("queue-03", func(ctx context.Context, msg pool.Delivery) (err error) {
 		once.Do(func() {
 
 			log.Info("pausing handler")
@@ -516,6 +533,7 @@ func testHandlerPauseAndResume(t *testing.T) {
 	assertActive(t, handler01, false)
 
 	err = amqpx.Start(
+		ctx,
 		connectURL,
 		amqpx.WithLogger(logging.NewNoOpLogger()),
 		amqpx.WithPublisherConnections(1),
@@ -557,7 +575,7 @@ func testBatchHandlerPauseAndResume(t *testing.T) {
 
 	amqpxPublish := amqpx.New()
 	amqpxPublish.RegisterTopologyCreator(createTopology)
-	err = amqpxPublish.Start(connectURL, options...)
+	err = amqpxPublish.Start(ctx, connectURL, options...)
 	require.NoError(t, err)
 
 	eventContent := "TestBatchHandlerPauseAndResume - event content"
@@ -572,7 +590,7 @@ func testBatchHandlerPauseAndResume(t *testing.T) {
 
 	// fill queue with messages
 	for i := 0; i < publish; i++ {
-		err := amqpxPublish.Publish("exchange-01", "event-01", pool.Publishing{
+		err := amqpxPublish.Publish(ctx, "exchange-01", "event-01", pool.Publishing{
 			ContentType: "application/json",
 			Body:        []byte(fmt.Sprintf("%s: message number %d", eventContent, i)),
 		})
@@ -583,11 +601,11 @@ func testBatchHandlerPauseAndResume(t *testing.T) {
 	}
 
 	// step 2 - process messages, pause, wait, resume, process rest, cancel context
-	handler01 := amqpx.RegisterBatchHandler("queue-01", func(msgs []pool.Delivery) (err error) {
+	handler01 := amqpx.RegisterBatchHandler("queue-01", func(ctx context.Context, msgs []pool.Delivery) (err error) {
 		for _, msg := range msgs {
 			cnt++
 			if cnt == publish/3 || cnt == publish/3*2 {
-				err = amqpx.Publish("exchange-02", "event-02", pool.Publishing{
+				err = amqpx.Publish(ctx, "exchange-02", "event-02", pool.Publishing{
 					ContentType: "application/json",
 					Body:        []byte(fmt.Sprintf("%s: hit %d messages, toggling processing: %s", eventContent, cnt, string(msg.Body))),
 				})
@@ -598,7 +616,7 @@ func testBatchHandlerPauseAndResume(t *testing.T) {
 	})
 
 	running := true
-	amqpx.RegisterBatchHandler("queue-02", func(msgs []pool.Delivery) (err error) {
+	amqpx.RegisterBatchHandler("queue-02", func(ctx context.Context, msgs []pool.Delivery) (err error) {
 		queue := handler01.Queue()
 
 		for _, msg := range msgs {
@@ -624,7 +642,7 @@ func testBatchHandlerPauseAndResume(t *testing.T) {
 				assertActive(t, handler01, true)
 
 				// trigger cancelation
-				err = amqpxPublish.Publish("exchange-03", "event-03", pool.Publishing{
+				err = amqpxPublish.Publish(ctx, "exchange-03", "event-03", pool.Publishing{
 					ContentType: "application/json",
 					Body:        []byte(fmt.Sprintf("%s: delayed toggle back", eventContent)),
 				})
@@ -635,7 +653,7 @@ func testBatchHandlerPauseAndResume(t *testing.T) {
 	})
 
 	var once sync.Once
-	amqpx.RegisterBatchHandler("queue-03", func(msgs []pool.Delivery) (err error) {
+	amqpx.RegisterBatchHandler("queue-03", func(ctx context.Context, msgs []pool.Delivery) (err error) {
 		_ = msgs[0]
 		once.Do(func() {
 
@@ -660,6 +678,7 @@ func testBatchHandlerPauseAndResume(t *testing.T) {
 	assertActive(t, handler01, false)
 
 	err = amqpx.Start(
+		ctx,
 		connectURL,
 		amqpx.WithLogger(logging.NewNoOpLogger()),
 		amqpx.WithPublisherConnections(1),
@@ -688,32 +707,33 @@ func TestQueueDeletedConsumerReconnect(t *testing.T) {
 		assert.NoError(t, amqpx.Reset())
 	}()
 
-	ts, closer := newTransientSession(t, connectURL)
+	ts, closer := newTransientSession(t, ctx, connectURL)
 	defer closer()
 
 	// step 1 - fill queue with messages
-	amqpx.RegisterTopologyCreator(func(t *pool.Topologer) error {
-		_, err := t.QueueDeclare(queueName)
+	amqpx.RegisterTopologyCreator(func(ctx context.Context, t *pool.Topologer) error {
+		_, err := t.QueueDeclare(ctx, queueName)
 		if err != nil {
 			return err
 		}
 		return nil
 	})
-	amqpx.RegisterTopologyDeleter(func(t *pool.Topologer) error {
-		_, err := t.QueueDelete(queueName)
+	amqpx.RegisterTopologyDeleter(func(ctx context.Context, t *pool.Topologer) error {
+		_, err := t.QueueDelete(ctx, queueName)
 		if err != nil {
 			return err
 		}
 		return nil
 	})
 
-	h := amqpx.RegisterHandler(queueName, func(msg pool.Delivery) (err error) {
+	h := amqpx.RegisterHandler(queueName, func(ctx context.Context, msg pool.Delivery) (err error) {
 		return nil
 	})
 
 	assertActive(t, h, false)
 
 	err = amqpx.Start(
+		ctx,
 		connectURL,
 		amqpx.WithLogger(log),
 	)
@@ -722,10 +742,10 @@ func TestQueueDeletedConsumerReconnect(t *testing.T) {
 		return
 	}
 
-	assert.NoError(t, h.Pause(context.Background()))
+	assert.NoError(t, h.Pause(ctx))
 	assertActive(t, h, false)
 
-	_, err = ts.QueueDelete(queueName)
+	_, err = ts.QueueDelete(ctx, queueName)
 	assert.NoError(t, err)
 
 	tctx, cancel := context.WithTimeout(ctx, 5*time.Second)
@@ -734,7 +754,7 @@ func TestQueueDeletedConsumerReconnect(t *testing.T) {
 	assert.Error(t, err)
 	assertActive(t, h, false)
 
-	_, err = ts.QueueDeclare(queueName)
+	_, err = ts.QueueDeclare(ctx, queueName)
 	assert.NoError(t, err)
 
 	tctx, cancel = context.WithTimeout(ctx, 5*time.Second)
@@ -755,32 +775,33 @@ func TestQueueDeletedBatchConsumerReconnect(t *testing.T) {
 		assert.NoError(t, amqpx.Reset())
 	}()
 
-	ts, closer := newTransientSession(t, connectURL)
+	ts, closer := newTransientSession(t, ctx, connectURL)
 	defer closer()
 
 	// step 1 - fill queue with messages
-	amqpx.RegisterTopologyCreator(func(t *pool.Topologer) error {
-		_, err := t.QueueDeclare(queueName)
+	amqpx.RegisterTopologyCreator(func(ctx context.Context, t *pool.Topologer) error {
+		_, err := t.QueueDeclare(ctx, queueName)
 		if err != nil {
 			return err
 		}
 		return nil
 	})
-	amqpx.RegisterTopologyDeleter(func(t *pool.Topologer) error {
-		_, err := t.QueueDelete(queueName)
+	amqpx.RegisterTopologyDeleter(func(ctx context.Context, t *pool.Topologer) error {
+		_, err := t.QueueDelete(ctx, queueName)
 		if err != nil {
 			return err
 		}
 		return nil
 	})
 
-	h := amqpx.RegisterBatchHandler(queueName, func(msg []pool.Delivery) (err error) {
+	h := amqpx.RegisterBatchHandler(queueName, func(ctx context.Context, msg []pool.Delivery) (err error) {
 		return nil
 	})
 
 	assertActive(t, h, false)
 
 	err = amqpx.Start(
+		ctx,
 		connectURL,
 		amqpx.WithLogger(log),
 	)
@@ -789,10 +810,10 @@ func TestQueueDeletedBatchConsumerReconnect(t *testing.T) {
 		return
 	}
 
-	assert.NoError(t, h.Pause(context.Background()))
+	assert.NoError(t, h.Pause(ctx))
 	assertActive(t, h, false)
 
-	_, err = ts.QueueDelete(queueName)
+	_, err = ts.QueueDelete(ctx, queueName)
 	assert.NoError(t, err)
 
 	tctx, cancel := context.WithTimeout(ctx, 5*time.Second)
@@ -801,7 +822,7 @@ func TestQueueDeletedBatchConsumerReconnect(t *testing.T) {
 	assert.Error(t, err)
 	assertActive(t, h, false)
 
-	_, err = ts.QueueDeclare(queueName)
+	_, err = ts.QueueDeclare(ctx, queueName)
 	assert.NoError(t, err)
 
 	tctx, cancel = context.WithTimeout(ctx, 5*time.Second)
@@ -811,11 +832,11 @@ func TestQueueDeletedBatchConsumerReconnect(t *testing.T) {
 	assertActive(t, h, true)
 }
 
-func newTransientSession(t *testing.T, connectUrl string) (session *pool.Session, closer func()) {
-	p, err := pool.New(connectUrl, 1, 1, pool.WithLogger(logging.NewTestLogger(t)))
+func newTransientSession(t *testing.T, ctx context.Context, connectUrl string) (session *pool.Session, closer func()) {
+	p, err := pool.New(ctx, connectUrl, 1, 1, pool.WithLogger(logging.NewTestLogger(t)))
 	require.NoError(t, err)
 
-	s, err := p.GetSession()
+	s, err := p.GetSession(ctx)
 	require.NoError(t, err)
 
 	return s, func() {
@@ -856,7 +877,7 @@ func testHandlerReset(t *testing.T) {
 
 	amqpxPublish := amqpx.New()
 	amqpxPublish.RegisterTopologyCreator(createTopology)
-	err = amqpxPublish.Start(connectURL, options...)
+	err = amqpxPublish.Start(ctx, connectURL, options...)
 	require.NoError(t, err)
 
 	eventContent := "TestBatchHandlerReset - event content"
@@ -871,7 +892,7 @@ func testHandlerReset(t *testing.T) {
 
 	// fill queue with messages
 	for i := 0; i < publish; i++ {
-		err := amqpxPublish.Publish("exchange-01", "event-01", pool.Publishing{
+		err := amqpxPublish.Publish(ctx, "exchange-01", "event-01", pool.Publishing{
 			ContentType: "application/json",
 			Body:        []byte(fmt.Sprintf("%s: message number %d", eventContent, i)),
 		})
@@ -883,7 +904,7 @@ func testHandlerReset(t *testing.T) {
 
 	done := make(chan struct{})
 	// step 2 - process messages, pause, wait, resume, process rest, cancel context
-	handler01 := amqpx.RegisterHandler("queue-01", func(msgs pool.Delivery) (err error) {
+	handler01 := amqpx.RegisterHandler("queue-01", func(ctx context.Context, msgs pool.Delivery) (err error) {
 		cnt++
 		if cnt == publish {
 			close(done)
@@ -894,6 +915,7 @@ func testHandlerReset(t *testing.T) {
 	assertActive(t, handler01, false)
 
 	err = amqpx.Start(
+		ctx,
 		connectURL,
 		amqpx.WithLogger(logging.NewNoOpLogger()),
 		amqpx.WithPublisherConnections(1),
@@ -943,7 +965,7 @@ func testBatchHandlerReset(t *testing.T) {
 
 	amqpxPublish := amqpx.New()
 	amqpxPublish.RegisterTopologyCreator(createTopology)
-	err = amqpxPublish.Start(connectURL, options...)
+	err = amqpxPublish.Start(ctx, connectURL, options...)
 	require.NoError(t, err)
 
 	eventContent := "TestBatchHandlerReset - event content"
@@ -958,7 +980,7 @@ func testBatchHandlerReset(t *testing.T) {
 
 	// fill queue with messages
 	for i := 0; i < publish; i++ {
-		err := amqpxPublish.Publish("exchange-01", "event-01", pool.Publishing{
+		err := amqpxPublish.Publish(ctx, "exchange-01", "event-01", pool.Publishing{
 			ContentType: "application/json",
 			Body:        []byte(fmt.Sprintf("%s: message number %d", eventContent, i)),
 		})
@@ -970,7 +992,7 @@ func testBatchHandlerReset(t *testing.T) {
 
 	done := make(chan struct{})
 	// step 2 - process messages, pause, wait, resume, process rest, cancel context
-	handler01 := amqpx.RegisterBatchHandler("queue-01", func(msgs []pool.Delivery) (err error) {
+	handler01 := amqpx.RegisterBatchHandler("queue-01", func(ctx context.Context, msgs []pool.Delivery) (err error) {
 		cnt += len(msgs)
 
 		if cnt == publish {
@@ -982,6 +1004,7 @@ func testBatchHandlerReset(t *testing.T) {
 	assertActive(t, handler01, false)
 
 	err = amqpx.Start(
+		ctx,
 		connectURL,
 		amqpx.WithLogger(logging.NewNoOpLogger()),
 		amqpx.WithPublisherConnections(1),

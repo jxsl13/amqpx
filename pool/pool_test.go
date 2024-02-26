@@ -1,6 +1,7 @@
 package pool_test
 
 import (
+	"context"
 	"sync"
 	"testing"
 	"time"
@@ -13,7 +14,8 @@ import (
 )
 
 var (
-	connectURL = amqpx.NewURL("localhost", 5672, "admin", "password")
+	connectURL       = amqpx.NewURL("localhost", 5672, "admin", "password")
+	brokenConnectURL = amqpx.NewURL("localhost", 5673, "admin", "password")
 )
 
 func TestMain(m *testing.M) {
@@ -26,10 +28,15 @@ func TestMain(m *testing.M) {
 }
 
 func TestNew(t *testing.T) {
+	ctx := context.TODO()
 	connections := 2
 	sessions := 10
 
-	p, err := pool.New(connectURL, connections, sessions,
+	p, err := pool.New(
+		ctx,
+		connectURL,
+		connections,
+		sessions,
 		pool.WithName("TestNew"),
 		pool.WithLogger(logging.NewTestLogger(t)),
 	)
@@ -46,14 +53,14 @@ func TestNew(t *testing.T) {
 		go func() {
 			defer wg.Done()
 
-			session, err := p.GetSession()
+			session, err := p.GetSession(ctx)
 			if err != nil {
 				assert.NoError(t, err)
 				return
 			}
 			time.Sleep(1 * time.Second)
 
-			p.ReturnSession(session, false)
+			p.ReturnSession(ctx, session, false)
 		}()
 	}
 

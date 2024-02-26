@@ -1,6 +1,7 @@
 package pool_test
 
 import (
+	"context"
 	"sync"
 	"testing"
 	"time"
@@ -11,8 +12,9 @@ import (
 )
 
 func TestNewConnectionPool(t *testing.T) {
+	ctx := context.TODO()
 	connections := 5
-	p, err := pool.NewConnectionPool(connectURL, connections,
+	p, err := pool.NewConnectionPool(ctx, connectURL, connections,
 		pool.ConnectionPoolWithName("TestNewConnectionPool"),
 		pool.ConnectionPoolWithLogger(logging.NewTestLogger(t)),
 	)
@@ -27,13 +29,13 @@ func TestNewConnectionPool(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			c, err := p.GetConnection()
+			c, err := p.GetConnection(ctx)
 			if err != nil {
 				assert.NoError(t, err)
 				return
 			}
 			time.Sleep(5 * time.Second)
-			p.ReturnConnection(c, false)
+			p.ReturnConnection(ctx, c, false)
 		}()
 	}
 
@@ -41,8 +43,9 @@ func TestNewConnectionPool(t *testing.T) {
 }
 
 func TestNewConnectionPoolDisconnect(t *testing.T) {
+	ctx := context.TODO()
 	connections := 100
-	p, err := pool.NewConnectionPool(connectURL, connections,
+	p, err := pool.NewConnectionPool(ctx, connectURL, connections,
 		pool.ConnectionPoolWithName("TestNewConnectionPoolDisconnect"),
 		pool.ConnectionPoolWithLogger(logging.NewTestLogger(t)),
 	)
@@ -64,14 +67,14 @@ func TestNewConnectionPoolDisconnect(t *testing.T) {
 			awaitStarted() // wait for connection loss
 
 			// no connection, this should retry until there is a connection
-			c, err := p.GetConnection()
+			c, err := p.GetConnection(ctx)
 			if err != nil {
 				assert.NoError(t, err)
 				return
 			}
 
 			time.Sleep(1 * time.Second)
-			p.ReturnConnection(c, false)
+			p.ReturnConnection(ctx, c, false)
 		}(i)
 	}
 

@@ -98,16 +98,6 @@ func ConnectionPoolWithConnectionTimeout(timeout time.Duration) ConnectionPoolOp
 	}
 }
 
-// ConnectionPoolWithContext allows to set a custom connection timeout, that MUST be >= 1 * time.Second
-func ConnectionPoolWithContext(ctx context.Context) ConnectionPoolOption {
-	if ctx == nil {
-		panic("nil context passed")
-	}
-	return func(po *connectionPoolOption) {
-		po.Ctx = ctx
-	}
-}
-
 // ConnectionPoolWithTLS allows to configure tls connectivity.
 func ConnectionPoolWithTLS(config *tls.Config) ConnectionPoolOption {
 	return func(po *connectionPoolOption) {

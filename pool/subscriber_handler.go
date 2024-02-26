@@ -139,9 +139,11 @@ func (h *Handler) awaitResumed(ctx context.Context) error {
 	return h.sc.AwaitResumed(ctx)
 }
 
+/*
 func (h *Handler) awaitPaused(ctx context.Context) error {
 	return h.sc.AwaitPaused(ctx)
 }
+*/
 
 func (h *Handler) Queue() string {
 	h.mu.Lock()

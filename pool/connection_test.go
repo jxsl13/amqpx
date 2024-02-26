@@ -1,6 +1,7 @@
 package pool_test
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"testing"
@@ -13,7 +14,9 @@ import (
 )
 
 func TestNewSingleConnection(t *testing.T) {
+	ctx := context.TODO()
 	c, err := pool.NewConnection(
+		ctx,
 		connectURL,
 		"TestNewSingleConnection",
 		pool.ConnectionWithLogger(logging.NewTestLogger(t)),
@@ -30,12 +33,14 @@ func TestNewSingleConnection(t *testing.T) {
 }
 
 func TestNewSingleConnectionWithDisconnect(t *testing.T) {
+	ctx := context.TODO()
 	started, stopped := DisconnectWithStartedStopped(t, 0, 0, 15*time.Second)
 	started()
 	defer stopped()
 	c, err := pool.NewConnection(
+		ctx,
 		connectURL,
-		"TestNewSingleConnection",
+		"TestNewSingleConnectionWithDisconnect",
 		pool.ConnectionWithLogger(logging.NewTestLogger(t)),
 	)
 
@@ -50,6 +55,7 @@ func TestNewSingleConnectionWithDisconnect(t *testing.T) {
 }
 
 func TestNewConnection(t *testing.T) {
+	ctx := context.TODO()
 	var wg sync.WaitGroup
 
 	connections := 5
@@ -59,6 +65,7 @@ func TestNewConnection(t *testing.T) {
 			defer wg.Done()
 
 			c, err := pool.NewConnection(
+				ctx,
 				connectURL,
 				fmt.Sprintf("TestNewConnection-%d", id),
 				pool.ConnectionWithLogger(logging.NewTestLogger(t)),
@@ -80,7 +87,7 @@ func TestNewConnection(t *testing.T) {
 }
 
 func TestNewConnectionDisconnect(t *testing.T) {
-
+	ctx := context.TODO()
 	var wg sync.WaitGroup
 
 	connections := 100
@@ -95,6 +102,7 @@ func TestNewConnectionDisconnect(t *testing.T) {
 			defer wg.Done()
 
 			c, err := pool.NewConnection(
+				ctx,
 				connectURL,
 				fmt.Sprintf("TestNewConnectionDisconnect-%d", id),
 				//pool.ConnectionWithLogger(logging.NewTestLogger(t)),
@@ -110,7 +118,7 @@ func TestNewConnectionDisconnect(t *testing.T) {
 
 			wait() // wait for connection to work again.
 
-			assert.NoError(t, c.Recover())
+			assert.NoError(t, c.Recover(ctx))
 			assert.NoError(t, c.Error())
 		}(int64(i))
 	}
