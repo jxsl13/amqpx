@@ -1,5 +1,5 @@
-github.com/Shopify/toxiproxy/v2 v2.7.0 h1:Zz2jdyqtYw1SpihfMWzLFGpOO92p9effjAkURG57ifc=
-github.com/Shopify/toxiproxy/v2 v2.7.0/go.mod h1:k0V84e/dLQmVNuI6S0G7TpXCl611OSRYdptoxm0XTzA=
+github.com/Shopify/toxiproxy/v2 v2.8.0 h1:d7OzvAc0Rco3QO8jVsDSfadQ1up0Ca42hK+EGEpnQWs=
+github.com/Shopify/toxiproxy/v2 v2.8.0/go.mod h1:k0V84e/dLQmVNuI6S0G7TpXCl611OSRYdptoxm0XTzA=
 github.com/Workiva/go-datastructures v1.1.1 h1:9G5u1UqKt6ABseAffHGNfbNQd7omRlWE5QaxNruzhE0=
 github.com/Workiva/go-datastructures v1.1.1/go.mod h1:1yZL+zfsztete+ePzZz/Zb1/t5BnDuE2Ya2MMGhzP6A=
 github.com/creack/pty v1.1.9/go.mod h1:oKZEueFk5CKHvIhNR5MUki03XCEU+Q6VDXinZuGJ33E=
