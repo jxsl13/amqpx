@@ -69,7 +69,8 @@ func NewSessionPool(pool *ConnectionPool, numSessions int, options ...SessionPoo
 
 func newSessionPoolFromOption(pool *ConnectionPool, ctx context.Context, option sessionPoolOption) (sp *SessionPool, err error) {
 	// decouple from parent context, in case we want to close this context ourselves.
-	ctx, cancel := context.WithCancel(ctx)
+	ctx, cc := context.WithCancelCause(ctx)
+	cancel := toCancelFunc(fmt.Errorf("session pool %w", ErrClosed), cc)
 
 	sp = &SessionPool{
 		pool:              pool,
@@ -122,6 +123,40 @@ func newSessionPoolFromOption(pool *ConnectionPool, ctx context.Context, option 
 	return sp, nil
 }
 
+func (sp *SessionPool) initCachedSessions() error {
+	for i := 0; i < sp.size; i++ {
+		session, err := sp.initCachedSession(i)
+		if err != nil {
+			return err
+		}
+		sp.sessions <- session
+	}
+	return nil
+}
+
+// initCachedSession allows you create a pooled Session.
+func (sp *SessionPool) initCachedSession(id int) (*Session, error) {
+
+	// retry until we get a channel
+	// or until shutdown
+	for {
+		conn, err := sp.pool.GetConnection(sp.ctx)
+		if err != nil {
+			// error is only returned upon shutdown
+			return nil, err
+		}
+
+		session, err := sp.deriveSession(sp.ctx, conn, id)
+		if err != nil {
+			sp.pool.ReturnConnection(sp.ctx, conn, err)
+			continue
+		}
+
+		sp.pool.ReturnConnection(sp.ctx, conn, nil)
+		return session, nil
+	}
+}
+
 // Size returns the size of the session pool which indicate sthe number of available cached sessions.
 func (sp *SessionPool) Size() int {
 	return sp.size
@@ -132,7 +167,7 @@ func (sp *SessionPool) Size() int {
 func (sp *SessionPool) GetSession(ctx context.Context) (*Session, error) {
 	select {
 	case <-sp.catchShutdown():
-		return nil, ErrClosed
+		return nil, sp.shutdownErr()
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	case session, ok := <-sp.sessions:
@@ -196,10 +231,9 @@ func (sp *SessionPool) deriveSession(ctx context.Context, conn *Connection, id i
 	)
 }
 
-// ReturnSession returns a Session.
+// ReturnSession returns a Session to the pool.
 // If Session is not a cached channel, it is simply closed here.
-// If Cache Session, we check if erred, new Session is created instead and then returned to the cache.
-func (sp *SessionPool) ReturnSession(ctx context.Context, session *Session, erred bool) {
+func (sp *SessionPool) ReturnSession(session *Session, err error) {
 
 	// don't ass non-managed sessions back to the channel
 	if !session.IsCached() {
@@ -207,24 +241,29 @@ func (sp *SessionPool) ReturnSession(ctx context.Context, session *Session, erre
 		return
 	}
 
-	if erred {
-		// try recovering until context closed or shutdown
-		_ = session.Recover(ctx)
-	} else {
-		// healthy sessions may contain pending confirmation messages
-		// cleanup confirmations from previous session usage
-		_ = session.FlushConfirms()
-		// flush errors
-		_ = session.Error()
-	}
+	// try recovering until context closed or shutdown
+	session.Flag(flaggable(err))
+	// healthy sessions may contain pending confirmation messages
+	// cleanup confirmations from previous session usage
+	_ = session.FlushConfirms()
+	// flush errors
+	_ = session.Error()
 
 	// always put the session back into the pool
 	// even if it is still broken
-	sp.sessions <- session
+	select {
+	case sp.sessions <- session:
+	default:
+		panic("session buffer full: not supposed to happen")
+	}
 }
 
 func (sp *SessionPool) catchShutdown() <-chan struct{} {
 	return sp.ctx.Done()
+}
+
+func (sp *SessionPool) shutdownErr() error {
+	return sp.ctx.Err()
 }
 
 // Closes the session pool with all of its sessions
@@ -252,40 +291,6 @@ func (sp *SessionPool) Close() {
 
 	if sp.autoCloseConnPool {
 		sp.pool.Close()
-	}
-}
-
-func (sp *SessionPool) initCachedSessions() error {
-	for i := 0; i < sp.size; i++ {
-		session, err := sp.initCachedSession(i)
-		if err != nil {
-			return err
-		}
-		sp.sessions <- session
-	}
-	return nil
-}
-
-// initCachedSession allows you create a pooled Session.
-func (sp *SessionPool) initCachedSession(id int) (*Session, error) {
-
-	// retry until we get a channel
-	// or until shutdown
-	for {
-		conn, err := sp.pool.GetConnection(sp.ctx)
-		if err != nil {
-			// error is only returned upon shutdown
-			return nil, err
-		}
-
-		session, err := sp.deriveSession(sp.ctx, conn, id)
-		if err != nil {
-			sp.pool.ReturnConnection(sp.ctx, conn, true)
-			continue
-		}
-
-		sp.pool.ReturnConnection(sp.ctx, conn, false)
-		return session, nil
 	}
 }
 

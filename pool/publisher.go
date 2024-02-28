@@ -3,7 +3,7 @@ package pool
 import (
 	"context"
 	"errors"
-	"sync"
+	"fmt"
 
 	"github.com/jxsl13/amqpx/logging"
 )
@@ -14,8 +14,6 @@ type Publisher struct {
 
 	ctx    context.Context
 	cancel context.CancelFunc
-
-	mu sync.Mutex
 
 	log logging.Logger
 }
@@ -48,7 +46,8 @@ func NewPublisher(p *Pool, options ...PublisherOption) *Publisher {
 		o(&option)
 	}
 
-	ctx, cancel := context.WithCancel(option.Ctx)
+	ctx, cc := context.WithCancelCause(option.Ctx)
+	cancel := toCancelFunc(fmt.Errorf("publisher %w", ErrClosed), cc)
 
 	pub := &Publisher{
 		pool:          p,
@@ -82,6 +81,9 @@ func (p *Publisher) Publish(ctx context.Context, exchange string, routingKey str
 			return err
 		case errors.Is(err, ErrDeliveryTagMismatch):
 			return err
+		case errors.Is(err, ErrFlowControl):
+			p.warn(exchange, routingKey, err, "publish failed, retrying")
+			return err
 		default:
 			p.warn(exchange, routingKey, err, "publish failed, retrying")
 		}
@@ -98,20 +100,11 @@ func (p *Publisher) publish(ctx context.Context, exchange string, routingKey str
 	}()
 
 	s, err := p.pool.GetSession(ctx)
-	if err != nil && errors.Is(err, ErrClosed) {
+	if err != nil {
 		return err
 	}
 	defer func() {
-		// return session
-		if err == nil {
-			p.pool.ReturnSession(ctx, s, false)
-		} else if errors.Is(err, ErrClosed) {
-			// TODO: potential message loss upon shutdown
-			// might try a transient session for this one
-			p.pool.ReturnSession(ctx, s, false)
-		} else {
-			p.pool.ReturnSession(ctx, s, true)
-		}
+		p.pool.ReturnSession(s, err)
 	}()
 
 	tag, err := s.Publish(ctx, exchange, routingKey, msg)
@@ -129,18 +122,11 @@ func (p *Publisher) publish(ctx context.Context, exchange string, routingKey str
 // Get is only supposed to be used for testing, do not use get for polling any broker queues.
 func (p *Publisher) Get(ctx context.Context, queue string, autoAck bool) (msg Delivery, ok bool, err error) {
 	s, err := p.pool.GetSession(ctx)
-	if err != nil && errors.Is(err, ErrClosed) {
+	if err != nil {
 		return Delivery{}, false, err
 	}
 	defer func() {
-		// return session
-		if err == nil {
-			p.pool.ReturnSession(ctx, s, false)
-		} else if errors.Is(err, ErrClosed) {
-			p.pool.ReturnSession(ctx, s, false)
-		} else {
-			p.pool.ReturnSession(ctx, s, true)
-		}
+		p.pool.ReturnSession(s, err)
 	}()
 
 	return s.Get(ctx, queue, autoAck)

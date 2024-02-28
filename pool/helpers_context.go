@@ -2,12 +2,21 @@ package pool
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 )
 
-func newCancelContext(parentCtx context.Context) *cancelContext {
-	ctx, cancel := context.WithCancel(parentCtx)
+var (
+	errPausingCancel  = errors.New("pausing")
+	errPausedCancel   = errors.New("paused")
+	errResumingCancel = errors.New("resuming")
+	errResumedCancel  = errors.New("resumed")
+)
+
+func newCancelContext(parentCtx context.Context, cancelCause error) *cancelContext {
+	ctx, cc := context.WithCancelCause(parentCtx)
+	cancel := toCancelFunc(cancelCause, cc)
 	return &cancelContext{
 		ctx:    ctx,
 		cancel: cancel,
@@ -141,10 +150,10 @@ type stateContext struct {
 func newStateContext(ctx context.Context) *stateContext {
 	sc := &stateContext{
 		parentCtx: ctx,
-		pausing:   newCancelContext(ctx),
-		resuming:  newCancelContext(ctx),
-		paused:    newCancelContext(ctx),
-		resumed:   newCancelContext(ctx),
+		pausing:   newCancelContext(ctx, errPausingCancel),
+		resuming:  newCancelContext(ctx, errResumingCancel),
+		paused:    newCancelContext(ctx, errPausedCancel),
+		resumed:   newCancelContext(ctx, errResumedCancel),
 	}
 
 	sc.pausing.Cancel()

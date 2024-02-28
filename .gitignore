@@ -2,3 +2,5 @@
 *.test
 *trace*
 coverage.txt
+DEBUG.md
+debug.md

@@ -116,7 +116,7 @@ func createQueue(ctx context.Context, name string, t *pool.Topologer) (err error
 func deleteQueue(ctx context.Context, name string, t *pool.Topologer) (err error) {
 	_, err = t.QueueDeclarePassive(ctx, name)
 	if err != nil {
-		return fmt.Errorf("%q does not exist but is supposed to be deleted", name)
+		return fmt.Errorf("%q does not exist but is supposed to be deleted: %w", name, err)
 	}
 
 	_, err = t.QueueDelete(ctx, name)

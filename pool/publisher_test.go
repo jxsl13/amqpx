@@ -47,7 +47,7 @@ func TestPublisher(t *testing.T) {
 				return
 			}
 			defer func() {
-				p.ReturnSession(ctx, s, false)
+				p.ReturnSession(s, nil)
 			}()
 
 			queueName := fmt.Sprintf("TestPublisher-Queue-%d", id)
@@ -127,7 +127,7 @@ func TestPublisher(t *testing.T) {
 	wg.Wait()
 }
 
-func TestPauseOnFlowControl(t *testing.T) {
+func TestPublishAwaitFlowControl(t *testing.T) {
 	ctx, cancel := signal.NotifyContext(context.TODO(), os.Interrupt)
 	defer cancel()
 
@@ -138,7 +138,7 @@ func TestPauseOnFlowControl(t *testing.T) {
 		brokenConnectURL, //
 		connections,
 		sessions,
-		pool.WithName("TestPauseOnFlowControl"),
+		pool.WithName("TestPublishAwaitFlowControl"),
 		pool.WithConfirms(true),
 		pool.WithLogger(logging.NewTestLogger(t)),
 	)
@@ -153,21 +153,22 @@ func TestPauseOnFlowControl(t *testing.T) {
 		assert.NoError(t, err)
 		return
 	}
+	defer p.ReturnSession(s, nil)
 
 	var (
-		exchangeName = "TestPauseOnFlowControl-Exchange"
+		exchangeName = "TestPublishAwaitFlowControl-Exchange"
 	)
 
-	cleanup := initQueueExchange(t, s, ctx, "TestPauseOnFlowControl-Queue", exchangeName)
+	cleanup := initQueueExchange(t, s, ctx, "TestPublishAwaitFlowControl-Queue", exchangeName)
 	defer cleanup()
 
 	pub := pool.NewPublisher(p)
 	defer pub.Close()
 
-	pubGen := PublishingGenerator("TestPauseOnFlowControl")
+	pubGen := PublishingGenerator("TestPublishAwaitFlowControl")
 
 	err = pub.Publish(ctx, exchangeName, "", pubGen())
-	assert.NoError(t, err)
+	assert.ErrorIs(t, err, pool.ErrFlowControl)
 
 }
 

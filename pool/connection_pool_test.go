@@ -35,7 +35,7 @@ func TestNewConnectionPool(t *testing.T) {
 				return
 			}
 			time.Sleep(5 * time.Second)
-			p.ReturnConnection(ctx, c, false)
+			p.ReturnConnection(ctx, c, nil)
 		}()
 	}
 
@@ -74,7 +74,7 @@ func TestNewConnectionPoolDisconnect(t *testing.T) {
 			}
 
 			time.Sleep(1 * time.Second)
-			p.ReturnConnection(ctx, c, false)
+			p.ReturnConnection(ctx, c, nil)
 		}(i)
 	}
 

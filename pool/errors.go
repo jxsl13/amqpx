@@ -22,9 +22,9 @@ var (
 	// the queue was not found.
 	ErrNotFound = errors.New("not found")
 
-	// errFlowControl is returned when the server is under flow control
-	// TODO: make public api after a while
-	errFlowControl = errors.New("flow control")
+	// ErrFlowControl is returned when the server is under flow control
+	// Your HTTP api may return 503 Service Unavailable or 429 Too Many Requests with a Retry-After header (https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Retry-After)
+	ErrFlowControl = errors.New("flow control")
 
 	// errFlowControlClosed is returned when the flow control channel is closed
 	// Specifically interesting when awaiting publish confirms

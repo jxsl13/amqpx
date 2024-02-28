@@ -68,11 +68,7 @@ func (t *Topologer) ExchangeDeclare(ctx context.Context, name string, kind Excha
 		return err
 	}
 	defer func() {
-		if err != nil {
-			t.pool.ReturnSession(ctx, s, true)
-		} else {
-			t.pool.ReturnSession(ctx, s, false)
-		}
+		t.pool.ReturnSession(s, err)
 	}()
 	return s.ExchangeDeclare(ctx, name, kind, option...)
 }
@@ -88,11 +84,7 @@ func (t *Topologer) ExchangeDeclarePassive(ctx context.Context, name string, kin
 		return err
 	}
 	defer func() {
-		if err != nil {
-			t.pool.ReturnSession(ctx, s, true)
-		} else {
-			t.pool.ReturnSession(ctx, s, false)
-		}
+		t.pool.ReturnSession(s, err)
 	}()
 	return s.ExchangeDeclarePassive(ctx, name, kind, option...)
 }
@@ -106,11 +98,7 @@ func (t *Topologer) ExchangeDelete(ctx context.Context, name string, option ...E
 		return err
 	}
 	defer func() {
-		if err != nil {
-			t.pool.ReturnSession(ctx, s, true)
-		} else {
-			t.pool.ReturnSession(ctx, s, false)
-		}
+		t.pool.ReturnSession(s, err)
 	}()
 
 	return s.ExchangeDelete(ctx, name, option...)
@@ -140,11 +128,7 @@ func (t *Topologer) QueueDeclare(ctx context.Context, name string, option ...Que
 		return Queue{}, err
 	}
 	defer func() {
-		if err != nil {
-			t.pool.ReturnSession(ctx, s, true)
-		} else {
-			t.pool.ReturnSession(ctx, s, false)
-		}
+		t.pool.ReturnSession(s, err)
 	}()
 	return s.QueueDeclare(ctx, name, option...)
 }
@@ -158,11 +142,7 @@ func (t *Topologer) QueueDeclarePassive(ctx context.Context, name string, option
 		return Queue{}, err
 	}
 	defer func() {
-		if err != nil {
-			t.pool.ReturnSession(ctx, s, true)
-		} else {
-			t.pool.ReturnSession(ctx, s, false)
-		}
+		t.pool.ReturnSession(s, err)
 	}()
 	return s.QueueDeclarePassive(ctx, name, option...)
 }
@@ -176,11 +156,7 @@ func (t *Topologer) QueuePurge(ctx context.Context, name string, options ...Queu
 		return 0, err
 	}
 	defer func() {
-		if err != nil {
-			t.pool.ReturnSession(ctx, s, true)
-		} else {
-			t.pool.ReturnSession(ctx, s, false)
-		}
+		t.pool.ReturnSession(s, err)
 	}()
 	return s.QueuePurge(ctx, name, options...)
 }
@@ -194,11 +170,7 @@ func (t *Topologer) QueueDelete(ctx context.Context, name string, option ...Queu
 		return 0, err
 	}
 	defer func() {
-		if err != nil {
-			t.pool.ReturnSession(ctx, s, true)
-		} else {
-			t.pool.ReturnSession(ctx, s, false)
-		}
+		t.pool.ReturnSession(s, err)
 	}()
 	return s.QueueDelete(ctx, name, option...)
 }
@@ -240,11 +212,7 @@ func (t *Topologer) QueueBind(ctx context.Context, name string, routingKey strin
 		return err
 	}
 	defer func() {
-		if err != nil {
-			t.pool.ReturnSession(ctx, s, true)
-		} else {
-			t.pool.ReturnSession(ctx, s, false)
-		}
+		t.pool.ReturnSession(s, err)
 	}()
 	return s.QueueBind(ctx, name, routingKey, exchange, option...)
 }
@@ -260,11 +228,7 @@ func (t *Topologer) QueueUnbind(ctx context.Context, name string, routingKey str
 		return err
 	}
 	defer func() {
-		if err != nil {
-			t.pool.ReturnSession(ctx, s, true)
-		} else {
-			t.pool.ReturnSession(ctx, s, false)
-		}
+		t.pool.ReturnSession(s, err)
 	}()
 	return s.QueueUnbind(ctx, name, routingKey, exchange, args...)
 }
@@ -298,11 +262,7 @@ func (t *Topologer) ExchangeBind(ctx context.Context, destination string, routin
 		return err
 	}
 	defer func() {
-		if err != nil {
-			t.pool.ReturnSession(ctx, s, true)
-		} else {
-			t.pool.ReturnSession(ctx, s, false)
-		}
+		t.pool.ReturnSession(s, err)
 	}()
 	return s.ExchangeBind(ctx, destination, routingKey, source, option...)
 }
@@ -317,11 +277,7 @@ func (t *Topologer) ExchangeUnbind(ctx context.Context, destination string, rout
 		return err
 	}
 	defer func() {
-		if err != nil {
-			t.pool.ReturnSession(ctx, s, true)
-		} else {
-			t.pool.ReturnSession(ctx, s, false)
-		}
+		t.pool.ReturnSession(s, err)
 	}()
 
 	return s.ExchangeUnbind(ctx, destination, routingKey, source, option...)

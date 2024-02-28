@@ -326,7 +326,7 @@ func TestNewSessionQueueDeclarePassive(t *testing.T) {
 		time.Sleep(10 * time.Second) // await dangling io goroutines to timeout
 	}()
 
-	c, err := pool.NewConnection(
+	conn, err := pool.NewConnection(
 		ctx,
 		connectURL,
 		"TestNewSessionQueueDeclarePassive",
@@ -337,10 +337,14 @@ func TestNewSessionQueueDeclarePassive(t *testing.T) {
 		return
 	}
 	defer func() {
-		c.Close() // can be nil or error
+		conn.Close() // can be nil or error
 	}()
 
-	session, err := pool.NewSession(c, fmt.Sprintf("TestNewSessionQueueDeclarePassive-%d", 1), pool.SessionWithConfirms(true))
+	session, err := pool.NewSession(
+		conn,
+		fmt.Sprintf("TestNewSessionQueueDeclarePassive-%d", 1),
+		pool.SessionWithConfirms(true),
+	)
 	if err != nil {
 		assert.NoError(t, err)
 		return

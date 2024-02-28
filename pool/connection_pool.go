@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/url"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/jxsl13/amqpx/logging"
@@ -25,10 +24,7 @@ type ConnectionPool struct {
 
 	size int
 
-	tls         *tls.Config
-	connections chan *Connection
-
-	transientID int64
+	tls *tls.Config
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -36,6 +32,12 @@ type ConnectionPool struct {
 	log logging.Logger
 
 	recoverCB ConnectionRecoverCallback
+
+	connections chan *Connection
+
+	mu                  sync.Mutex
+	transientID         int64
+	concurrentTransient int
 }
 
 // NewConnectionPool creates a new connection pool which has a maximum size it
@@ -80,7 +82,8 @@ func newConnectionPoolFromOption(connectUrl string, option connectionPoolOption)
 	}
 
 	// decouple from parent context, in case we want to close this context ourselves.
-	ctx, cancel := context.WithCancel(option.Ctx)
+	ctx, cc := context.WithCancelCause(option.Ctx)
+	cancel := toCancelFunc(fmt.Errorf("connection pool %w", ErrClosed), cc)
 
 	cp := &ConnectionPool{
 		name: option.Name,
@@ -119,7 +122,7 @@ func newConnectionPoolFromOption(connectUrl string, option connectionPoolOption)
 }
 
 func (cp *ConnectionPool) initCachedConns() error {
-	for id := 0; id < cp.size; id++ {
+	for id := int64(0); id < int64(cp.size); id++ {
 		conn, err := cp.deriveConnection(cp.ctx, id, true)
 		if err != nil {
 			return fmt.Errorf("%w: %v", ErrPoolInitializationFailed, err)
@@ -138,7 +141,7 @@ func (cp *ConnectionPool) initCachedConns() error {
 	return nil
 }
 
-func (cp *ConnectionPool) deriveConnection(ctx context.Context, id int, cached bool) (*Connection, error) {
+func (cp *ConnectionPool) deriveConnection(ctx context.Context, id int64, cached bool) (*Connection, error) {
 	var name string
 	if cached {
 		name = fmt.Sprintf("%s-cached-connection-%d", cp.name, id)
@@ -158,29 +161,55 @@ func (cp *ConnectionPool) deriveConnection(ctx context.Context, id int, cached b
 // GetConnection only returns an error upon shutdown
 func (cp *ConnectionPool) GetConnection(ctx context.Context) (*Connection, error) {
 	select {
-	case <-cp.catchShutdown():
-		return nil, fmt.Errorf("connection pool %w", ErrClosed)
-	case <-ctx.Done():
-		return nil, ctx.Err()
 	case conn, ok := <-cp.connections:
 		if !ok {
 			return nil, fmt.Errorf("connection pool %w", ErrClosed)
 		}
-		err := conn.Recover(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get connection: %w", err)
+		if conn.IsFlagged() {
+			err := conn.Recover(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("failed to get connection: %w", err)
+			}
 		}
 
 		return conn, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-cp.catchShutdown():
+		return nil, fmt.Errorf("connection pool %w", ErrClosed)
 	}
+}
+
+func (cp *ConnectionPool) nextTransientID() int64 {
+	cp.mu.Lock()
+	defer cp.mu.Unlock()
+	id := cp.transientID
+	cp.transientID++
+	return id
+}
+
+func (cp *ConnectionPool) incTransient() {
+	cp.mu.Lock()
+	cp.concurrentTransient++
+	cp.mu.Unlock()
+}
+
+func (cp *ConnectionPool) decTransient() {
+	cp.mu.Lock()
+	cp.concurrentTransient--
+	cp.mu.Unlock()
 }
 
 // GetTransientConnection may return an error when the context was cancelled before the connection could be obtained.
 // Transient connections may be returned to the pool. The are closed properly upon returning.
-func (cp *ConnectionPool) GetTransientConnection(ctx context.Context) (*Connection, error) {
-	tID := atomic.AddInt64(&cp.transientID, 1)
+func (cp *ConnectionPool) GetTransientConnection(ctx context.Context) (_ *Connection, err error) {
+	defer func() {
+		if err == nil {
+			cp.incTransient()
+		}
+	}()
 
-	conn, err := cp.deriveConnection(ctx, int(tID), false)
+	conn, err := cp.deriveConnection(ctx, cp.nextTransientID(), false)
 	if err == nil {
 		return conn, nil
 	}
@@ -196,21 +225,23 @@ func (cp *ConnectionPool) GetTransientConnection(ctx context.Context) (*Connecti
 
 // ReturnConnection puts the connection back in the queue and flag it for error.
 // This helps maintain a Round Robin on Connections and their resources.
-func (cp *ConnectionPool) ReturnConnection(ctx context.Context, conn *Connection, flag bool) {
+// If the connection is flagged, it will be recovered and returned to the pool.
+// If the context is canceled, the connection will be immediately returned to the pool
+// without any recovery attempt.
+func (cp *ConnectionPool) ReturnConnection(ctx context.Context, conn *Connection, err error) {
 	// close transient connections
 	if !conn.IsCached() {
+		cp.decTransient() // decrease transient cinnections
 		_ = conn.Close()
 		return
 	}
-	conn.Flag(flag)
+	conn.Flag(flaggable(err))
 
-	if conn.IsFlagged() {
-		// try to recover until context is canceled
-		// if recovery fails, we put the broken connection into the pool
-		_ = conn.Recover(ctx)
+	select {
+	case cp.connections <- conn:
+	default:
+		panic("connection pool connections buffer full: not supposed to happen")
 	}
-
-	cp.connections <- conn
 }
 
 // Close closes the connection pool.
@@ -237,6 +268,28 @@ func (cp *ConnectionPool) Close() {
 	wg.Wait()
 }
 
+// StatTransientActive returns the number of active transient connections.
+func (cp *ConnectionPool) StatTransientActive() int {
+	cp.mu.Lock()
+	defer cp.mu.Unlock()
+	return cp.concurrentTransient
+}
+
+// StatCachedIdle returns the number of idle cached connections.
+func (cp *ConnectionPool) StatCachedIdle() int {
+	return len(cp.connections)
+}
+
+// StatCachedActive returns the number of active cached connections.
+func (cp *ConnectionPool) StatCachedActive() int {
+	return cp.size - len(cp.connections)
+}
+
+// Size is the total size of the cached connection pool without any transient connections.
+func (cp *ConnectionPool) Size() int {
+	return cp.size
+}
+
 func (cp *ConnectionPool) catchShutdown() <-chan struct{} {
 	return cp.ctx.Done()
 }
@@ -255,8 +308,4 @@ func (cp *ConnectionPool) error(err error, a ...any) {
 
 func (cp *ConnectionPool) debug(a ...any) {
 	cp.log.WithField("connectionPool", cp.name).Debug(a...)
-}
-
-func (cp *ConnectionPool) Size() int {
-	return cp.size
 }

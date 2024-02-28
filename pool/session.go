@@ -19,6 +19,7 @@ const (
 type Session struct {
 	name        string
 	cached      bool
+	flagged     bool
 	confirmable bool
 	bufferSize  int
 
@@ -96,7 +97,8 @@ func NewSession(conn *Connection, name string, options ...SessionOption) (*Sessi
 		o(&option)
 	}
 
-	ctx, cancel := context.WithCancel(option.Ctx)
+	ctx, cc := context.WithCancelCause(option.Ctx)
+	cancel := toCancelFunc(fmt.Errorf("session %w", ErrClosed), cc)
 
 	session := &Session{
 		name:        name,
@@ -142,6 +144,25 @@ func NewSession(conn *Connection, name string, options ...SessionOption) (*Sessi
 		return nil, fmt.Errorf("failed to create session: %w", err)
 	}
 	return session, nil
+}
+
+// Flag marks the session as flagged.
+// This is useful in case of a connection pool, where the session is returned to the pool
+// and should be recovered by the next user.
+func (s *Session) Flag(flagged bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if !s.flagged && flagged {
+		s.flagged = flagged
+	}
+}
+
+// IsFlagged returns whether the session is flagged.
+func (s *Session) IsFlagged() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.flagged
 }
 
 // Close closes the session completely.
@@ -265,6 +286,15 @@ func (s *Session) tryRecover(ctx context.Context, err error) error {
 
 func (s *Session) recover(ctx context.Context) error {
 
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-s.catchShutdown():
+		return fmt.Errorf("failed to recover session: %w", s.shutdownErr())
+	default:
+		// check if context was closed before starting a recovery.
+	}
+
 	// tries to recover session forever
 	for try := 0; ; try++ {
 		// try closing the channel before recovering
@@ -282,6 +312,8 @@ func (s *Session) recover(ctx context.Context) error {
 		// with a backoff. Sessions should be instantly created on a healthy connection
 		err = s.connect() // Creates a new channel and flushes internal buffers automatically.
 		if err == nil {
+			// successfully recovered
+			s.flagged = false
 			return nil
 		}
 
@@ -316,20 +348,24 @@ func (s *Session) AwaitConfirm(ctx context.Context, expectedTag uint64) error {
 			return fmt.Errorf("await confirm failed: confirms channel %w", ErrClosed)
 		}
 		if !confirm.Ack {
-
 			// in case the server did not accept the message, it might be due to resource problems.
 			// TODO: do we want to pause here upon flow control messages
 			err := fmt.Errorf("await confirm failed: %w", ErrNack)
-			flowErr := s.conn.PauseOnFlowControl(ctx)
-			if flowErr != nil {
-				err = errors.Join(err, flowErr)
-			}
 			return err
 		}
 		if confirm.DeliveryTag != expectedTag {
 			return fmt.Errorf("await confirm failed: %w: expected %d, got %d", ErrDeliveryTagMismatch, expectedTag, confirm.DeliveryTag)
 		}
 		return nil
+	case blocking, ok := <-s.conn.FlowControl():
+		if !ok {
+			err := s.error()
+			if err != nil {
+				return fmt.Errorf("await confirm failed: %w", err)
+			}
+			return fmt.Errorf("await confirm failed: %w", errFlowControlClosed)
+		}
+		return fmt.Errorf("await confirm failed: %w: %s", ErrFlowControl, blocking.Reason)
 	case <-ctx.Done():
 		err := ctx.Err()
 		return fmt.Errorf("await confirm: failed context %w: %w", ErrClosed, err)
@@ -1373,6 +1409,10 @@ func (s *Session) IsConfirmable() bool {
 func (s *Session) catchShutdown() <-chan struct{} {
 	// no locking because
 	return s.ctx.Done()
+}
+
+func (s *Session) shutdownErr() error {
+	return s.ctx.Err()
 }
 
 func (s *Session) info(a ...any) {

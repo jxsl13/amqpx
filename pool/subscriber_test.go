@@ -42,7 +42,7 @@ func TestSubscriber(t *testing.T) {
 				assert.NoError(t, err)
 				return
 			}
-			defer p.ReturnSession(ctx, ts, false)
+			defer p.ReturnSession(ts, nil)
 
 			queueName := fmt.Sprintf("TestSubscriber-Queue-%d", id)
 			_, err = ts.QueueDeclare(ctx, queueName)
@@ -161,7 +161,7 @@ func TestBatchSubscriber(t *testing.T) {
 				assert.NoError(t, err)
 				return
 			}
-			defer p.ReturnSession(ctx, ts, false)
+			defer p.ReturnSession(ts, nil)
 
 			queueName := fmt.Sprintf("TestBatchSubscriber-Queue-%d", id)
 			_, err = ts.QueueDeclare(ctx, queueName)
@@ -302,7 +302,7 @@ func testBatchSubscriberMaxBytes(t *testing.T, maxBatchBytes int) {
 				assert.NoError(t, err)
 				return
 			}
-			defer p.ReturnSession(ctx, ts, false)
+			defer p.ReturnSession(ts, nil)
 
 			queueName := fmt.Sprintf("TestBatchSubscriberMaxBytes-Queue-%d", id)
 			_, err = ts.QueueDeclare(ctx, queueName)

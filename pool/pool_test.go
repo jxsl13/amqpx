@@ -60,7 +60,7 @@ func TestNew(t *testing.T) {
 			}
 			time.Sleep(1 * time.Second)
 
-			p.ReturnSession(ctx, session, false)
+			p.ReturnSession(session, nil)
 		}()
 	}
 

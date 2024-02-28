@@ -21,7 +21,7 @@ var (
 	connectURL = amqpx.NewURL("localhost", 5672, "admin", "password")
 )
 
-// WARNING: Do not assert consumer counts, as those values are too flaky and break tests all over th eplace
+// WARNING: Do not assert consumer counts, as those values are too flaky and break tests all over the place
 func TestMain(m *testing.M) {
 	goleak.VerifyTestMain(
 		m,

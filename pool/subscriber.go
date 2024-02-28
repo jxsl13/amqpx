@@ -64,7 +64,8 @@ func NewSubscriber(p *Pool, options ...SubscriberOption) *Subscriber {
 	}
 
 	// decouple from parent in order to individually close the context
-	ctx, cancel := context.WithCancel(option.Ctx)
+	ctx, cc := context.WithCancelCause(option.Ctx)
+	cancel := toCancelFunc(fmt.Errorf("subscriber %w", ErrClosed), cc)
 
 	sub := &Subscriber{
 		pool:          p,
@@ -234,7 +235,7 @@ func (s *Subscriber) retry(consumerType string, h handler, f func() (err error))
 			return
 		}
 		// consume was canceled due to context being closed (paused)
-		if errors.Is(err, context.Canceled) {
+		if errors.Is(err, errPausingCancel) {
 			s.infoConsumer(opts.ConsumerTag, fmt.Sprintf("%s paused: pausing %v", consumerType, err))
 			continue
 		}
@@ -281,7 +282,7 @@ func (s *Subscriber) consumer(h *Handler, wg *sync.WaitGroup) {
 	s.retry("consumer", h, func() error {
 		select {
 		case <-s.catchShutdown():
-			return ErrClosed
+			return s.shutdownErr()
 		case <-h.resuming().Done():
 			return s.consume(h)
 		}
@@ -321,7 +322,7 @@ func (s *Subscriber) consume(h *Handler) (err error) {
 	for {
 		select {
 		case <-s.catchShutdown():
-			return ErrClosed
+			return s.shutdownErr()
 		case msg, ok := <-delivery:
 			if !ok {
 				return ErrDeliveryClosed
@@ -400,7 +401,7 @@ func (s *Subscriber) batchConsumer(h *BatchHandler, wg *sync.WaitGroup) {
 	s.retry("batch consumer", h, func() error {
 		select {
 		case <-s.catchShutdown():
-			return ErrClosed
+			return s.shutdownErr()
 		case <-h.resuming().Done():
 			return s.batchConsume(h)
 		}
@@ -482,7 +483,7 @@ func (s *Subscriber) batchConsume(h *BatchHandler) (err error) {
 
 			select {
 			case <-s.catchShutdown():
-				return ErrClosed
+				return s.shutdownErr()
 			case msg, ok := <-delivery:
 				if !ok {
 					return ErrDeliveryClosed
@@ -640,7 +641,7 @@ func (s *Subscriber) returnSession(h handler, session *Session, err error) {
 
 	if errors.Is(err, ErrClosed) {
 		// graceful shutdown
-		s.pool.ReturnSession(s.ctx, session, false)
+		s.pool.ReturnSession(session, err)
 		s.infoConsumer(opts.ConsumerTag, "closed")
 		return
 	}
@@ -650,17 +651,21 @@ func (s *Subscriber) returnSession(h handler, session *Session, err error) {
 		// expected closing due to context cancelation
 		// cancel errors the underlying channel
 		// A canceled session is an erred session.
-		s.pool.ReturnSession(s.ctx, session, true)
+		s.pool.ReturnSession(session, h.pausing().Err())
 		s.infoConsumer(opts.ConsumerTag, "paused")
 	default:
 		// actual error
-		s.pool.ReturnSession(s.ctx, session, true)
+		s.pool.ReturnSession(session, err)
 		s.warnConsumer(opts.ConsumerTag, err, "closed unexpectedly")
 	}
 }
 
 func (s *Subscriber) catchShutdown() <-chan struct{} {
 	return s.ctx.Done()
+}
+
+func (s *Subscriber) shutdownErr() error {
+	return s.ctx.Err()
 }
 
 func (s *Subscriber) infoBatchHandler(consumer, queue string, batchSize, batchBytes int, a ...any) {

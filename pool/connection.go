@@ -84,7 +84,8 @@ func NewConnection(ctx context.Context, connectUrl, name string, options ...Conn
 
 	// we derive a new context from the parent one in order to
 	// be able to close it without affecting the parent
-	cCtx, cancel := context.WithCancel(option.Ctx)
+	cCtx, cc := context.WithCancelCause(option.Ctx)
+	cancel := toCancelFunc(fmt.Errorf("connection %w", ErrClosed), cc)
 
 	conn := &Connection{
 		url:     u.String(),
@@ -213,78 +214,11 @@ func (ch *Connection) connect(ctx context.Context) error {
 	return nil
 }
 
-// PauseOnFlowControl allows you to wait and sleep while receiving flow control messages.
-// Sleeps for one second, repeatedly until the blocking has stopped.
-// Such messages will most likely be received when the broker hits its memory or disk limits.
-// Returns an error in case that flow control was detected and is resolved or in case that the connection is closed.
-func (ch *Connection) PauseOnFlowControl(ctx context.Context) error {
+func (ch *Connection) FlowControl() <-chan amqp.Blocking {
 	ch.mu.Lock()
 	defer ch.mu.Unlock()
 
-	return ch.pauseOnFlowControl(ctx)
-}
-
-// not threadsafe
-func (ch *Connection) pauseOnFlowControl(ctx context.Context) error {
-
-	if ch.isClosed() {
-		return ErrClosed
-	}
-
-	var (
-		duration = time.Second
-		timer    = time.NewTimer(duration)
-		drained  = false
-	)
-	defer closeTimer(timer, &drained)
-
-	var (
-		flowControl       = false
-		start             = time.Now()
-		reason            = ""
-		err         error = nil
-	)
-
-	for !ch.isClosed() {
-		select {
-		case <-ch.catchShutdown():
-			return ErrClosed
-		case <-ctx.Done():
-			return fmt.Errorf("pause on flow control failed: %w", ctx.Err())
-		case blocker, ok := <-ch.blocking: // Check for flow control issues.
-			if !ok {
-				return errFlowControlClosed
-			}
-			if !blocker.Active {
-				return nil
-			}
-
-			if !flowControl || reason != blocker.Reason {
-				reason = blocker.Reason
-				flowControl = true
-				err = fmt.Errorf("%w: reason: %s", errFlowControl, reason)
-				ch.warn(err)
-			}
-
-			resetTimer(timer, duration, &drained)
-
-			select {
-			case <-ch.catchShutdown():
-				return ErrClosed
-			case <-timer.C:
-				drained = true
-				continue
-			}
-
-		default:
-			if flowControl {
-				ch.warnf("flow control with last reason: %s: ended after %s", reason, time.Since(start))
-			}
-			return err
-		}
-	}
-
-	return nil
+	return ch.blocking
 }
 
 func (ch *Connection) IsClosed() bool {
@@ -321,7 +255,7 @@ func (ch *Connection) error() error {
 	for {
 		select {
 		case <-ch.catchShutdown():
-			return fmt.Errorf("connection %w", ErrClosed)
+			return ch.shutdownErr()
 		case e, ok := <-ch.errors:
 			if !ok {
 				// because the amqp library might close this
@@ -347,10 +281,20 @@ func (ch *Connection) Recover(ctx context.Context) error {
 }
 
 func (ch *Connection) recover(ctx context.Context) error {
-	healthy := !ch.flagged && ch.error() == nil
 
-	if healthy && !ch.isClosed() {
-		return ch.pauseOnFlowControl(ctx)
+	select {
+	case <-ctx.Done():
+		return fmt.Errorf("connection recovery failed: %w", ctx.Err())
+	case <-ch.catchShutdown():
+		return fmt.Errorf("connection recovery failed: %w", ch.shutdownErr())
+	default:
+		// try recovering after checking if contexts are still valid
+	}
+
+	healthy := !ch.flagged && ch.error() == nil && !ch.isClosed()
+
+	if healthy {
+		return nil
 	}
 
 	var (
@@ -384,7 +328,7 @@ func (ch *Connection) recover(ctx context.Context) error {
 		select {
 		case <-ch.catchShutdown():
 			// catch shutdown signal
-			return fmt.Errorf("connection recovery failed: connection %w", ErrClosed)
+			return fmt.Errorf("connection recovery failed: %w", ch.shutdownErr())
 		case <-ctx.Done():
 			// catch context cancelation
 			return fmt.Errorf("connection recovery failed: %w", ctx.Err())
@@ -421,6 +365,10 @@ func (c *Connection) Name() string {
 
 func (ch *Connection) catchShutdown() <-chan struct{} {
 	return ch.ctx.Done()
+}
+
+func (ch *Connection) shutdownErr() error {
+	return ch.ctx.Err()
 }
 
 func (ch *Connection) info(a ...any) {

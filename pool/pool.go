@@ -93,8 +93,8 @@ func (p *Pool) GetTransientSession(ctx context.Context) (*Session, error) {
 // ReturnSession returns a Session back to the pool.
 // If the session was returned due to an error, erred should be set to true, otherwise
 // erred should be set to false.
-func (p *Pool) ReturnSession(ctx context.Context, session *Session, erred bool) {
-	p.sp.ReturnSession(ctx, session, erred)
+func (p *Pool) ReturnSession(session *Session, err error) {
+	p.sp.ReturnSession(session, err)
 }
 
 func (p *Pool) Context() context.Context {

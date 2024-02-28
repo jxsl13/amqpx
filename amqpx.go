@@ -202,7 +202,6 @@ func (a *AMQPX) Start(ctx context.Context, connectUrl string, options ...Option)
 					return
 				}
 			}
-
 		}
 
 		// publisher must before subscribers, as subscriber handlers might be using the publisher.
