@@ -2,142 +2,142 @@ package pool_test
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/jxsl13/amqpx/internal/testutils"
 	"github.com/jxsl13/amqpx/logging"
 	"github.com/jxsl13/amqpx/pool"
 	"github.com/stretchr/testify/assert"
 )
 
-func TestNewSession(t *testing.T) {
-	ctx := context.TODO()
+func TestNewSingleSession(t *testing.T) {
+	var (
+		ctx                     = context.TODO()
+		wg                      sync.WaitGroup
+		nextConnName            = testutils.ConnectionNameGenerator()
+		connName                = nextConnName()
+		nextSessionName         = testutils.SessionNameGenerator(connName)
+		sessionName             = nextSessionName()
+		nextQueueName           = testutils.QueueNameGenerator(sessionName)
+		queueName               = nextQueueName()
+		nextExchangeName        = testutils.ExchangeNameGenerator(sessionName)
+		exchangeName            = nextExchangeName()
+		nextConsumerName        = testutils.ConsumerNameGenerator(queueName)
+		consumerName            = nextConsumerName()
+		consumeMessageGenerator = testutils.MessageGenerator(queueName)
+		publishMessageGenerator = testutils.MessageGenerator(queueName)
+	)
+
 	c, err := pool.NewConnection(
 		ctx,
 		connectURL,
-		"TestNewSession",
+		connName,
 		pool.ConnectionWithLogger(logging.NewTestLogger(t)),
 	)
 	if err != nil {
 		assert.NoError(t, err)
 		return
 	}
-	defer c.Close()
+	defer func() {
+		assert.NoError(t, c.Close())
+	}()
 
-	var wg sync.WaitGroup
+	s, err := pool.NewSession(
+		c,
+		sessionName,
+		pool.SessionWithConfirms(true),
+	)
+	if err != nil {
+		assert.NoError(t, err)
+		return
+	}
+	defer func() {
+		assert.NoError(t, s.Close())
+	}()
 
-	sessions := 5
-	wg.Add(sessions)
+	cleanup := DeclareExchangeQueue(t, ctx, s, exchangeName, queueName)
+	defer cleanup()
+
+	ConsumeAsyncN(t, ctx, &wg, s, queueName, consumerName, consumeMessageGenerator, 1)
+	PublishAsyncN(t, ctx, &wg, s, exchangeName, publishMessageGenerator, 1)
+
+	wg.Wait()
+}
+
+func TestManyNewSessions(t *testing.T) {
+	var (
+		ctx             = context.TODO()
+		wg              sync.WaitGroup
+		nextConnName    = testutils.ConnectionNameGenerator()
+		connName        = nextConnName()
+		nextSessionName = testutils.SessionNameGenerator(connName)
+		sessions        = 5
+	)
+
+	c, err := pool.NewConnection(
+		ctx,
+		connectURL,
+		connName,
+		pool.ConnectionWithLogger(logging.NewTestLogger(t)),
+	)
+	if err != nil {
+		assert.NoError(t, err)
+		return
+	}
+	defer func() {
+		assert.NoError(t, c.Close())
+	}()
+
 	for id := 0; id < sessions; id++ {
-		go func(id int64) {
-			defer wg.Done()
-			s, err := pool.NewSession(c, fmt.Sprintf("TestNewSession-%d", id), pool.SessionWithConfirms(true))
-			if err != nil {
-				assert.NoError(t, err)
-				return
-			}
-			defer func() {
-				assert.NoError(t, s.Close())
-			}()
+		var (
+			sessionName      = nextSessionName()
+			nextQueueName    = testutils.QueueNameGenerator(sessionName)
+			queueName        = nextQueueName()
+			nextExchangeName = testutils.ExchangeNameGenerator(sessionName)
+			exchangeName     = nextExchangeName()
+			nextConsumerName = testutils.ConsumerNameGenerator(queueName)
+			consumerName     = nextConsumerName()
+			// generate equal consume & publish messages for comparison
+			consumeNextMessage = testutils.MessageGenerator(queueName)
+			publishNextMessage = testutils.MessageGenerator(queueName)
+		)
 
-			queueName := fmt.Sprintf("TestNewSession-Queue-%d", id)
-			_, err = s.QueueDeclare(ctx, queueName)
-			if err != nil {
-				assert.NoError(t, err)
-				return
-			}
-			defer func() {
-				i, err := s.QueueDelete(ctx, queueName)
-				assert.NoError(t, err)
-				assert.Equal(t, 0, i)
-			}()
+		s, err := pool.NewSession(
+			c,
+			sessionName,
+			pool.SessionWithConfirms(true),
+		)
+		if err != nil {
+			assert.NoError(t, err)
+			return
+		}
+		defer func() {
+			assert.NoError(t, s.Close())
+		}()
 
-			exchangeName := fmt.Sprintf("TestNewSession-Exchange-%d", id)
-			err = s.ExchangeDeclare(ctx, exchangeName, "topic")
-			if err != nil {
-				assert.NoError(t, err)
-				return
-			}
-			defer func() {
-				err := s.ExchangeDelete(ctx, exchangeName)
-				assert.NoError(t, err)
-			}()
+		cleanup := DeclareExchangeQueue(t, ctx, s, exchangeName, queueName)
+		defer cleanup()
 
-			err = s.QueueBind(ctx, queueName, "#", exchangeName)
-			if err != nil {
-				assert.NoError(t, err)
-				return
-			}
-			defer func() {
-				err := s.QueueUnbind(ctx, queueName, "#", exchangeName, nil)
-				assert.NoError(t, err)
-			}()
-
-			delivery, err := s.Consume(
-				queueName,
-				pool.ConsumeOptions{
-					ConsumerTag: fmt.Sprintf("Consumer-%s", queueName),
-					Exclusive:   true,
-				},
-			)
-			if err != nil {
-				assert.NoError(t, err)
-				return
-			}
-
-			message := fmt.Sprintf("Message-%s", queueName)
-
-			wg.Add(1)
-			go func(msg string) {
-				defer wg.Done()
-
-				msgsReceived := 0
-				for val := range delivery {
-					receivedMsg := string(val.Body)
-					assert.Equal(t, message, receivedMsg)
-					msgsReceived++
-				}
-				assert.Equal(t, 1, msgsReceived)
-				// this routine must be closed upon session closure
-			}(message)
-
-			time.Sleep(5 * time.Second)
-
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-
-			tag, err := s.Publish(ctx, exchangeName, "", pool.Publishing{
-				Mandatory:   true,
-				ContentType: "application/json",
-				Body:        []byte(message),
-			})
-			if err != nil {
-				assert.NoError(t, err)
-				return
-			}
-
-			err = s.AwaitConfirm(ctx, tag)
-			if err != nil {
-				assert.NoError(t, err)
-				return
-			}
-
-			time.Sleep(5 * time.Second)
-
-		}(int64(id))
+		ConsumeAsyncN(t, ctx, &wg, s, queueName, consumerName, consumeNextMessage, 1)
+		PublishAsyncN(t, ctx, &wg, s, exchangeName, publishNextMessage, 1)
 	}
 
 	wg.Wait()
 }
 
 func TestNewSessionDisconnect(t *testing.T) {
-	ctx := context.TODO()
+	var (
+		ctx             = context.TODO()
+		nextConnName    = testutils.ConnectionNameGenerator()
+		connName        = nextConnName()
+		nextSessionName = testutils.SessionNameGenerator(connName)
+	)
 	c, err := pool.NewConnection(
 		ctx,
 		connectURL,
-		"TestNewSessionDisconnect",
+		connName,
 		pool.ConnectionWithLogger(logging.NewTestLogger(t)),
 	)
 	if err != nil {
@@ -167,9 +167,20 @@ func TestNewSessionDisconnect(t *testing.T) {
 	start10, started10, stopped10 := DisconnectWithStartStartedStopped(t, time.Second)
 
 	for id := 0; id < sessions; id++ {
-		go func(id int64) {
+		go func() {
 			defer wg.Done()
-			s, err := pool.NewSession(c, fmt.Sprintf("TestNewSession-%d", id), pool.SessionWithConfirms(true))
+
+			var (
+				sessionName      = nextSessionName()
+				nextQueueName    = testutils.QueueNameGenerator(sessionName)
+				queueName        = nextQueueName()
+				nextExchangeName = testutils.ExchangeNameGenerator(sessionName)
+				exchangeName     = nextExchangeName()
+				nextConsumerName = testutils.ConsumerNameGenerator(queueName)
+				consumerName     = nextConsumerName()
+				nextMessage      = testutils.MessageGenerator(queueName)
+			)
+			s, err := pool.NewSession(c, sessionName, pool.SessionWithConfirms(true))
 			if err != nil {
 				assert.NoError(t, err)
 				return
@@ -185,7 +196,6 @@ func TestNewSessionDisconnect(t *testing.T) {
 			start() // await connection loss start
 			started()
 
-			exchangeName := fmt.Sprintf("TestNewSession-Exchange-%d", id)
 			err = s.ExchangeDeclare(ctx, exchangeName, "topic")
 			if err != nil {
 				assert.NoError(t, err)
@@ -207,7 +217,6 @@ func TestNewSessionDisconnect(t *testing.T) {
 			start2()
 			started2()
 
-			queueName := fmt.Sprintf("TestNewSession-Queue-%d", id)
 			_, err = s.QueueDeclare(ctx, queueName)
 			if err != nil {
 				assert.NoError(t, err)
@@ -250,7 +259,7 @@ func TestNewSessionDisconnect(t *testing.T) {
 			delivery, err := s.Consume(
 				queueName,
 				pool.ConsumeOptions{
-					ConsumerTag: fmt.Sprintf("Consumer-%s", queueName),
+					ConsumerTag: consumerName,
 					Exclusive:   true,
 				},
 			)
@@ -260,7 +269,7 @@ func TestNewSessionDisconnect(t *testing.T) {
 			}
 			stopped4()
 
-			message := fmt.Sprintf("Message-%s", queueName)
+			message := nextMessage()
 
 			wg.Add(1)
 			go func(msg string) {
@@ -310,26 +319,29 @@ func TestNewSessionDisconnect(t *testing.T) {
 				break
 			}
 
-		}(int64(id))
+		}()
 	}
 
 	wg.Wait()
-	time.Sleep(10 * time.Second) // await dangling io goroutines to timeout
 }
 
 func TestNewSessionQueueDeclarePassive(t *testing.T) {
-	ctx := context.TODO()
-	var wg sync.WaitGroup
+	t.Parallel()
 
-	defer func() {
-		wg.Wait()
-		time.Sleep(10 * time.Second) // await dangling io goroutines to timeout
-	}()
+	var (
+		ctx             = context.TODO()
+		wg              sync.WaitGroup
+		nextConnName    = testutils.ConnectionNameGenerator()
+		connName        = nextConnName()
+		nextSessionName = testutils.SessionNameGenerator(connName)
+		sessionName     = nextSessionName()
+		nextQueueName   = testutils.QueueNameGenerator(sessionName)
+	)
 
 	conn, err := pool.NewConnection(
 		ctx,
 		connectURL,
-		"TestNewSessionQueueDeclarePassive",
+		connName,
 		pool.ConnectionWithLogger(logging.NewTestLogger(t)),
 	)
 	if err != nil {
@@ -342,7 +354,7 @@ func TestNewSessionQueueDeclarePassive(t *testing.T) {
 
 	session, err := pool.NewSession(
 		conn,
-		fmt.Sprintf("TestNewSessionQueueDeclarePassive-%d", 1),
+		sessionName,
 		pool.SessionWithConfirms(true),
 	)
 	if err != nil {
@@ -354,7 +366,7 @@ func TestNewSessionQueueDeclarePassive(t *testing.T) {
 	}()
 
 	for i := 0; i < 100; i++ {
-		qname := fmt.Sprintf("TestNewSessionQueueDeclarePassive-queue-%d", i)
+		qname := nextQueueName()
 		q, err := session.QueueDeclare(ctx, qname)
 		if err != nil {
 			assert.NoError(t, err)
@@ -377,4 +389,5 @@ func TestNewSessionQueueDeclarePassive(t *testing.T) {
 		assert.Equalf(t, 0, q.Consumers, "queue should not have any consumers: %s", qname)
 	}
 
+	wg.Wait()
 }

@@ -2,11 +2,11 @@ package pool_test
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/jxsl13/amqpx/internal/testutils"
 	"github.com/jxsl13/amqpx/logging"
 	"github.com/jxsl13/amqpx/pool"
 	"github.com/stretchr/testify/assert"
@@ -14,11 +14,15 @@ import (
 )
 
 func TestNewSingleConnection(t *testing.T) {
-	ctx := context.TODO()
+	var (
+		ctx      = context.TODO()
+		nextName = testutils.ConnectionNameGenerator()
+	)
+
 	c, err := pool.NewConnection(
 		ctx,
 		connectURL,
-		"TestNewSingleConnection",
+		nextName(),
 		pool.ConnectionWithLogger(logging.NewTestLogger(t)),
 	)
 
@@ -33,14 +37,19 @@ func TestNewSingleConnection(t *testing.T) {
 }
 
 func TestNewSingleConnectionWithDisconnect(t *testing.T) {
-	ctx := context.TODO()
-	started, stopped := DisconnectWithStartedStopped(t, 0, 0, 15*time.Second)
+	var (
+		ctx      = context.TODO()
+		nextName = testutils.ConnectionNameGenerator()
+	)
+
+	started, stopped := DisconnectWithStartedStopped(t, 0, 0, 10*time.Second)
 	started()
 	defer stopped()
+
 	c, err := pool.NewConnection(
 		ctx,
 		connectURL,
-		"TestNewSingleConnectionWithDisconnect",
+		nextName(),
 		pool.ConnectionWithLogger(logging.NewTestLogger(t)),
 	)
 
@@ -49,25 +58,27 @@ func TestNewSingleConnectionWithDisconnect(t *testing.T) {
 		return
 	}
 	defer func() {
-		err := c.Close()
-		require.NoError(t, err)
+		require.NoError(t, c.Close())
 	}()
 }
 
-func TestNewConnection(t *testing.T) {
-	ctx := context.TODO()
-	var wg sync.WaitGroup
+func TestManyNewConnection(t *testing.T) {
+	var (
+		ctx         = context.TODO()
+		wg          sync.WaitGroup
+		connections = 5
+		nextName    = testutils.ConnectionNameGenerator()
+	)
 
-	connections := 5
 	wg.Add(connections)
 	for i := 0; i < connections; i++ {
-		go func(id int64) {
+		go func() {
 			defer wg.Done()
 
 			c, err := pool.NewConnection(
 				ctx,
 				connectURL,
-				fmt.Sprintf("TestNewConnection-%d", id),
+				nextName(),
 				pool.ConnectionWithLogger(logging.NewTestLogger(t)),
 			)
 			if err != nil {
@@ -75,36 +86,37 @@ func TestNewConnection(t *testing.T) {
 				return
 			}
 			defer func() {
+				// error closed
 				assert.Error(t, c.Error())
 			}()
 			defer c.Close()
 			time.Sleep(2 * time.Second)
 			assert.NoError(t, c.Error())
-		}(int64(i))
+		}()
 	}
 
 	wg.Wait()
 }
 
-func TestNewConnectionDisconnect(t *testing.T) {
-	ctx := context.TODO()
-	var wg sync.WaitGroup
-
-	connections := 100
-	wg.Add(connections)
-
-	// disconnect directly for 10 seconds
+func TestManyNewConnectionWithDisconnect(t *testing.T) {
+	var (
+		ctx         = context.TODO()
+		wg          sync.WaitGroup
+		connections = 100
+		nextName    = testutils.ConnectionNameGenerator()
+	)
 	wait := DisconnectWithStopped(t, 0, 0, time.Second)
 	defer wait() // wait for goroutine to properly close & unblock the proxy
 
+	wg.Add(connections)
 	for i := 0; i < connections; i++ {
-		go func(id int64) {
+		go func() {
 			defer wg.Done()
 
 			c, err := pool.NewConnection(
 				ctx,
 				connectURL,
-				fmt.Sprintf("TestNewConnectionDisconnect-%d", id),
+				nextName(),
 				//pool.ConnectionWithLogger(logging.NewTestLogger(t)),
 			)
 			if err != nil {
@@ -112,15 +124,18 @@ func TestNewConnectionDisconnect(t *testing.T) {
 				return
 			}
 			defer func() {
+				// err closed
 				assert.Error(t, c.Error())
 			}()
 			defer c.Close()
 
 			wait() // wait for connection to work again.
 
-			assert.NoError(t, c.Recover(ctx))
+			tctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			defer cancel()
+			assert.NoError(t, c.Recover(tctx))
 			assert.NoError(t, c.Error())
-		}(int64(i))
+		}()
 	}
 
 	wg.Wait()
