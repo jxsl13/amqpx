@@ -273,7 +273,7 @@ func (ch *Connection) error() error {
 }
 
 // Recover tries to recover the connection until
-// a shutdown occurs via context cancelation.
+// a shutdown occurs via context cancelation or until the passed context is closed.
 func (ch *Connection) Recover(ctx context.Context) error {
 	ch.mu.Lock()
 	defer ch.mu.Unlock()

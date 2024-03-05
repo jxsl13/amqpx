@@ -14,6 +14,8 @@ import (
 )
 
 func TestNewSingleConnection(t *testing.T) {
+	t.Parallel() // can be run in parallel because the connection to the rabbitmq is never broken
+
 	var (
 		ctx      = context.TODO()
 		nextName = testutils.ConnectionNameGenerator()
@@ -63,6 +65,8 @@ func TestNewSingleConnectionWithDisconnect(t *testing.T) {
 }
 
 func TestManyNewConnection(t *testing.T) {
+	t.Parallel() // can be run in parallel because the connection to the rabbitmq is never broken
+
 	var (
 		ctx         = context.TODO()
 		wg          sync.WaitGroup
@@ -90,7 +94,7 @@ func TestManyNewConnection(t *testing.T) {
 				assert.Error(t, c.Error())
 			}()
 			defer c.Close()
-			time.Sleep(2 * time.Second)
+			time.Sleep(testutils.Jitter(time.Second, 3*time.Second))
 			assert.NoError(t, c.Error())
 		}()
 	}
