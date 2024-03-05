@@ -107,9 +107,9 @@ func NewSession(conn *Connection, name string, options ...SessionOption) (*Sessi
 		bufferSize:  option.BufferSize,
 
 		consumers: map[string]bool{},
-		channel:   nil, // will be created below
-		confirms:  nil, // will be created below
-		errors:    nil, // will be created below
+		channel:   nil, // will be created on connect
+		errors:    nil, // will be created on connect
+		confirms:  nil, // will be created on connect
 
 		conn:          conn,
 		autoCloseConn: option.AutoCloseConn,
@@ -182,7 +182,25 @@ func (s *Session) Close() (err error) {
 		}
 	}()
 
+	if s.autoCloseConn {
+		defer func() {
+			err = errors.Join(err, s.conn.Close())
+		}()
+	}
+
 	s.cancel()
+	return s.close()
+}
+
+func (s *Session) close() (err error) {
+	defer func() {
+		flush(s.errors)
+		flush(s.confirms)
+		if s.channel != nil {
+			s.channel = nil
+		}
+	}()
+
 	if s.channel == nil || s.channel.IsClosed() {
 		return nil
 	}
@@ -190,12 +208,8 @@ func (s *Session) Close() (err error) {
 	for consumer := range s.consumers {
 		// ignore error, as at this point we cannot do anything about the error
 		// tell server to cancel consumer deliveries.
-		_ = s.channel.Cancel(consumer, false)
-	}
-
-	if s.autoCloseConn {
-		_ = s.channel.Close()
-		return s.conn.Close()
+		cerr := s.channel.Cancel(consumer, false)
+		err = errors.Join(err, cerr)
 	}
 
 	return s.channel.Close()
@@ -213,51 +227,40 @@ func (s *Session) Connect() (err error) {
 }
 
 func (s *Session) connect() (err error) {
+	s.debug("opening session...")
 	defer func() {
 		// reset state in case of an error
 		if err != nil {
-			s.channel = nil
-			s.errors = make(chan *amqp091.Error)
-			s.confirms = make(chan amqp091.Confirmation)
-
-			close(s.errors)
-			close(s.confirms)
-
+			s.close()
 			s.warn(err, "failed to open session")
 		} else {
 			s.info("opened session")
 		}
 	}()
-	s.debug("opening session...")
 
 	if s.conn.IsClosed() {
 		// do not reconnect connection explicitly
 		return ErrClosed
 	}
 
+	s.close() // close any open rabbitmq channel & cleanup Go channels
+
 	channel, err := s.conn.channel()
 	if err != nil {
 		return fmt.Errorf("%v: %w", ErrConnectionFailed, err)
 	}
-	defer func() {
-		if err != nil {
-			// close channel upon error
-			_ = channel.Close()
-		}
-	}()
+
+	s.errors = make(chan *amqp091.Error, s.bufferSize)
+	channel.NotifyClose(s.errors)
 
 	if s.confirmable {
 		s.confirms = make(chan amqp091.Confirmation, s.bufferSize)
 		channel.NotifyPublish(s.confirms)
-
 		err = channel.Confirm(false)
 		if err != nil {
 			return err
 		}
 	}
-
-	s.errors = make(chan *amqp091.Error, s.bufferSize)
-	channel.NotifyClose(s.errors)
 
 	// reset consumer tracking upon reconnect
 	s.consumers = map[string]bool{}
@@ -295,14 +298,28 @@ func (s *Session) recover(ctx context.Context) error {
 		// check if context was closed before starting a recovery.
 	}
 
+	// check if session/channel needs to be recovered
+	err := s.error()
+	if err == nil {
+		return nil
+	}
+	s.warnf(err, "recovering session due to error: %v", err)
+
+	// necessary for cleanup and to cleanup potentially dangling open sessions
+	// already ran into a bug, where recovery spawned infinitely many channels.
+	_ = s.close()
+
 	// tries to recover session forever
 	for try := 0; ; try++ {
-		// try closing the channel before recovering
-		// in case of a bug in this library we do not want to flood the rabbitmq with
-		// open channels (which already happened)
-		_ = s.channel.Close()
 
-		err := s.conn.Recover(ctx) // recovers connection with a backoff mechanism
+		if s.recoverCB != nil {
+			// allow a user to hook into the recovery process of a session
+			// this is expected to not be called often, as the connection should be the main cause
+			// of errors and not necessarily the session.
+			s.recoverCB(s.conn.Name(), s.name, try, err)
+		}
+
+		err = s.conn.Recover(ctx) // recovers connection with a backoff mechanism
 		if err != nil {
 			// upon shutdown this will fail
 			return fmt.Errorf("failed to recover session: %w", err)
@@ -315,13 +332,6 @@ func (s *Session) recover(ctx context.Context) error {
 			// successfully recovered
 			s.flagged = false
 			return nil
-		}
-
-		if s.conn.recoverCB != nil {
-			// allow a user to hook into the recovery process of a session
-			// this is expected to not be called often, as the connection should be the main cause
-			// of errors and not necessarily the session.
-			s.recoverCB(s.conn.Name(), s.name, try, err)
 		}
 	}
 }
@@ -1339,33 +1349,6 @@ func (s *Session) Flow(ctx context.Context, active bool) error {
 	})
 }
 
-// FlushConfirms removes all previous confirmations pending processing.
-// You can use the returned value
-func (s *Session) FlushConfirms() []amqp091.Confirmation {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	confirms := make([]amqp091.Confirmation, 0, len(s.confirms))
-flush:
-	for {
-		// Some weird use case where the Channel is being flooded with confirms after connection disruption
-		// It lead to an infinite loop when this method was called.
-		select {
-		case c, ok := <-s.confirms:
-			if !ok {
-				break flush
-			}
-			// flush confirmations in channel
-			confirms = append(confirms, c)
-		case <-s.catchShutdown():
-			break flush
-		default:
-			break flush
-		}
-	}
-	return confirms
-}
-
 // Error returns all errors from the errors channel
 // and flushes all other pending errors from the channel
 // In case that there are no errors, nil is returned.
@@ -1423,6 +1406,28 @@ func (s *Session) warn(err error, a ...any) {
 	s.log.WithField("connection", s.conn.Name()).WithField("session", s.Name()).WithField("error", err.Error()).Warn(a...)
 }
 
+func (s *Session) warnf(err error, format string, a ...any) {
+	s.log.WithField("connection", s.conn.Name()).WithField("session", s.Name()).WithField("error", err.Error()).Warnf(format, a...)
+}
+
 func (s *Session) debug(a ...any) {
 	s.log.WithField("connection", s.conn.Name()).WithField("session", s.Name()).Debug(a...)
+}
+
+// flush is a helper function to flush a channel
+func flush[T any](c <-chan T) []T {
+	var (
+		slice []T
+	)
+	for {
+		select {
+		case e, ok := <-c:
+			if !ok {
+				return slice
+			}
+			slice = append(slice, e)
+		default:
+			return slice
+		}
+	}
 }
