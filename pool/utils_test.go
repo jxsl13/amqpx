@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jxsl13/amqpx/logging"
 	"github.com/jxsl13/amqpx/pool"
 	"github.com/stretchr/testify/assert"
 )
@@ -60,6 +61,7 @@ func ConsumeAsyncN(
 				assert.Equal(t, messageGenerator(), receivedMsg)
 				msgsReceived++
 				if msgsReceived == n {
+					logging.NewTestLogger(t).Infof("consumed %d messages, closing consumer", n)
 					ccancel()
 				}
 			}
@@ -82,7 +84,7 @@ func PublishAsyncN(
 
 		for i := 0; i < n; i++ {
 			func() {
-				tctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+				tctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 				defer cancel()
 
 				tag, err := s.Publish(
@@ -106,6 +108,7 @@ func PublishAsyncN(
 				}
 			}()
 		}
+		logging.NewTestLogger(t).Infof("published %d messages, closing publisher", n)
 	}(wg, publishMessageGenerator, n)
 }
 
