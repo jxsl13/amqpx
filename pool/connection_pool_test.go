@@ -6,16 +6,57 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jxsl13/amqpx/internal/testutils"
 	"github.com/jxsl13/amqpx/logging"
 	"github.com/jxsl13/amqpx/pool"
 	"github.com/stretchr/testify/assert"
 )
 
+func TestNewSingleConnectionPool(t *testing.T) {
+	t.Parallel() // can be run in parallel because the connection to the rabbitmq is never broken
+
+	poolName := testutils.FuncName()
+
+	ctx := context.TODO()
+	connections := 1
+	p, err := pool.NewConnectionPool(
+		ctx,
+		connectURL,
+		connections,
+		pool.ConnectionPoolWithName(poolName),
+		pool.ConnectionPoolWithLogger(logging.NewTestLogger(t)),
+	)
+	if err != nil {
+		assert.NoError(t, err)
+		return
+	}
+	defer p.Close()
+
+	cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	c, err := p.GetConnection(cctx)
+	if err != nil {
+		assert.NoError(t, err)
+		return
+	}
+
+	assert.NoError(t, c.Recover(ctx)) // should not need to recover
+
+	time.Sleep(testutils.Jitter(1*time.Second, 5*time.Second))
+	p.ReturnConnection(c, nil)
+
+}
+
 func TestNewConnectionPool(t *testing.T) {
+	t.Parallel() // can be run in parallel because the connection to the rabbitmq is never broken
+
+	poolName := testutils.FuncName()
+
 	ctx := context.TODO()
 	connections := 5
 	p, err := pool.NewConnectionPool(ctx, connectURL, connections,
-		pool.ConnectionPoolWithName("TestNewConnectionPool"),
+		pool.ConnectionPoolWithName(poolName),
 		pool.ConnectionPoolWithLogger(logging.NewTestLogger(t)),
 	)
 	if err != nil {
@@ -25,28 +66,38 @@ func TestNewConnectionPool(t *testing.T) {
 	defer p.Close()
 	var wg sync.WaitGroup
 
+	wg.Add(connections)
 	for i := 0; i < connections; i++ {
-		wg.Add(1)
-		go func() {
+		go func(i int) {
 			defer wg.Done()
-			c, err := p.GetConnection(ctx)
+
+			cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			defer cancel()
+
+			c, err := p.GetConnection(cctx)
 			if err != nil {
 				assert.NoError(t, err)
 				return
 			}
-			time.Sleep(5 * time.Second)
-			p.ReturnConnection(ctx, c, nil)
-		}()
+
+			// should not need to recover
+			assert.NoError(t, c.Recover(ctx))
+
+			time.Sleep(testutils.Jitter(1*time.Second, 5*time.Second))
+			p.ReturnConnection(c, nil)
+		}(i)
 	}
 
 	wg.Wait()
 }
 
-func TestNewConnectionPoolDisconnect(t *testing.T) {
+func TestNewConnectionPoolWithDisconnect(t *testing.T) {
+	poolName := testutils.FuncName()
+
 	ctx := context.TODO()
 	connections := 100
 	p, err := pool.NewConnectionPool(ctx, connectURL, connections,
-		pool.ConnectionPoolWithName("TestNewConnectionPoolDisconnect"),
+		pool.ConnectionPoolWithName(poolName),
 		pool.ConnectionPoolWithLogger(logging.NewTestLogger(t)),
 	)
 	if err != nil {
@@ -56,7 +107,9 @@ func TestNewConnectionPoolDisconnect(t *testing.T) {
 	defer p.Close()
 	var wg sync.WaitGroup
 
-	awaitStarted, awaitStopped := DisconnectWithStartedStopped(t, 0, 10*time.Second, 2*time.Second)
+	disconnectDuration := 5 * time.Second
+
+	awaitStarted, awaitStopped := DisconnectWithStartedStopped(t, 0, 5*time.Second, disconnectDuration)
 	defer awaitStopped()
 
 	for i := 0; i < connections; i++ {
@@ -72,9 +125,15 @@ func TestNewConnectionPoolDisconnect(t *testing.T) {
 				assert.NoError(t, err)
 				return
 			}
+			maxSleep := disconnectDuration - time.Second
+			sleep := testutils.Jitter(maxSleep/2, maxSleep)
 
-			time.Sleep(1 * time.Second)
-			p.ReturnConnection(ctx, c, nil)
+			time.Sleep(sleep)
+			cctx, cancel := context.WithTimeout(ctx, disconnectDuration)
+			defer cancel()
+			assert.NoError(t, c.Recover(cctx))
+
+			p.ReturnConnection(c, nil)
 		}(i)
 	}
 
