@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jxsl13/amqpx"
+	"github.com/jxsl13/amqpx/internal/testutils"
 	"github.com/jxsl13/amqpx/logging"
 	"github.com/jxsl13/amqpx/pool"
 	"github.com/stretchr/testify/assert"
@@ -27,17 +28,22 @@ func TestMain(m *testing.M) {
 	)
 }
 
-func TestNew(t *testing.T) {
-	ctx := context.TODO()
-	connections := 2
-	sessions := 10
+func TestNewPool(t *testing.T) {
+	t.Parallel() // can be run in parallel because the connection to the rabbitmq is never broken
+
+	var (
+		ctx         = context.TODO()
+		poolName    = testutils.FuncName()
+		connections = 2
+		sessions    = 10
+	)
 
 	p, err := pool.New(
 		ctx,
 		connectURL,
 		connections,
 		sessions,
-		pool.WithName("TestNew"),
+		pool.WithName(poolName),
 		pool.WithLogger(logging.NewTestLogger(t)),
 	)
 	if err != nil {
@@ -58,7 +64,10 @@ func TestNew(t *testing.T) {
 				assert.NoError(t, err)
 				return
 			}
-			time.Sleep(1 * time.Second)
+			time.Sleep(testutils.Jitter(1*time.Second, 3*time.Second))
+
+			// recovering should not be neccessary
+			assert.NoError(t, session.Recover(ctx))
 
 			p.ReturnSession(session, nil)
 		}()
