@@ -148,11 +148,11 @@ func (sp *SessionPool) initCachedSession(id int) (*Session, error) {
 
 		session, err := sp.deriveSession(sp.ctx, conn, id)
 		if err != nil {
-			sp.pool.ReturnConnection(sp.ctx, conn, err)
+			sp.pool.ReturnConnection(conn, err)
 			continue
 		}
 
-		sp.pool.ReturnConnection(sp.ctx, conn, nil)
+		sp.pool.ReturnConnection(conn, nil)
 		return session, nil
 	}
 }
@@ -175,6 +175,10 @@ func (sp *SessionPool) GetSession(ctx context.Context) (*Session, error) {
 			return nil, fmt.Errorf("failed to get session: %w", ErrClosed)
 		}
 
+		err := session.Recover(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get session: %w", err)
+		}
 		return session, nil
 	}
 }
@@ -235,7 +239,7 @@ func (sp *SessionPool) deriveSession(ctx context.Context, conn *Connection, id i
 // If Session is not a cached channel, it is simply closed here.
 func (sp *SessionPool) ReturnSession(session *Session, err error) {
 
-	// don't ass non-managed sessions back to the channel
+	// don't put non-managed sessions back into the channel
 	if !session.IsCached() {
 		_ = session.Close()
 		return
@@ -243,14 +247,12 @@ func (sp *SessionPool) ReturnSession(session *Session, err error) {
 
 	// try recovering until context closed or shutdown
 	session.Flag(flaggable(err))
-	// healthy sessions may contain pending confirmation messages
-	// cleanup confirmations from previous session usage
-	_ = session.FlushConfirms()
-	// flush errors
-	_ = session.Error()
+
+	// flush confirms channel
+	session.flush()
 
 	// always put the session back into the pool
-	// even if it is still broken
+	// even if the session is still broken
 	select {
 	case sp.sessions <- session:
 	default:

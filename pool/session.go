@@ -1414,6 +1414,17 @@ func (s *Session) debug(a ...any) {
 	s.log.WithField("connection", s.conn.Name()).WithField("session", s.Name()).Debug(a...)
 }
 
+// flush should be called when you return the session back to the pool
+// TODO: improve the name of this function and decide whether it should be exported or not
+func (s *Session) flush() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	// do not flush the errors channel
+	// as it i sneeded for checking whether a session recovery is needed
+
+	flush(s.confirms)
+}
+
 // flush is a helper function to flush a channel
 func flush[T any](c <-chan T) []T {
 	var (

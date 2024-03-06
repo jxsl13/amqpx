@@ -228,7 +228,7 @@ func (cp *ConnectionPool) GetTransientConnection(ctx context.Context) (_ *Connec
 // If the connection is flagged, it will be recovered and returned to the pool.
 // If the context is canceled, the connection will be immediately returned to the pool
 // without any recovery attempt.
-func (cp *ConnectionPool) ReturnConnection(ctx context.Context, conn *Connection, err error) {
+func (cp *ConnectionPool) ReturnConnection(conn *Connection, err error) {
 	// close transient connections
 	if !conn.IsCached() {
 		cp.decTransient() // decrease transient cinnections
