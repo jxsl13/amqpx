@@ -3,6 +3,7 @@ package pool_test
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -13,6 +14,8 @@ import (
 )
 
 func TestNewSingleSession(t *testing.T) {
+	t.Parallel() // can be run in parallel because the connection to the rabbitmq is never broken
+
 	var (
 		ctx                     = context.TODO()
 		wg                      sync.WaitGroup
@@ -35,6 +38,9 @@ func TestNewSingleSession(t *testing.T) {
 		connectURL,
 		connName,
 		pool.ConnectionWithLogger(logging.NewTestLogger(t)),
+		pool.ConnectionWithRecoverCallback(func(name string, retry int, err error) {
+			assert.NoErrorf(t, err, "name=%s retry=%d", name, retry)
+		}),
 	)
 	if err != nil {
 		assert.NoError(t, err)
@@ -48,6 +54,11 @@ func TestNewSingleSession(t *testing.T) {
 		c,
 		sessionName,
 		pool.SessionWithConfirms(true),
+		pool.SessionWithRetryCallback(
+			func(operation, connName, sessionName string, retry int, err error) {
+				assert.NoErrorf(t, err, "operation=%s connName=%s sessionName=%s retry=%d", operation, connName, sessionName, retry)
+			},
+		),
 	)
 	if err != nil {
 		assert.NoError(t, err)
@@ -67,6 +78,8 @@ func TestNewSingleSession(t *testing.T) {
 }
 
 func TestManyNewSessions(t *testing.T) {
+	t.Parallel() // can be run in parallel because the connection to the rabbitmq is never broken
+
 	var (
 		ctx             = context.TODO()
 		wg              sync.WaitGroup
@@ -81,6 +94,9 @@ func TestManyNewSessions(t *testing.T) {
 		connectURL,
 		connName,
 		pool.ConnectionWithLogger(logging.NewTestLogger(t)),
+		pool.ConnectionWithRecoverCallback(func(name string, retry int, err error) {
+			assert.NoErrorf(t, err, "unextected connection recovery: name=%s retry=%d", name, retry)
+		}),
 	)
 	if err != nil {
 		assert.NoError(t, err)
@@ -127,18 +143,365 @@ func TestManyNewSessions(t *testing.T) {
 	wg.Wait()
 }
 
-func TestNewSessionDisconnect(t *testing.T) {
+func TestNewSessionQueueDeclarePassive(t *testing.T) {
+	t.Parallel() // can be run in parallel because the connection to the rabbitmq is never broken
+
+	var (
+		ctx             = context.TODO()
+		wg              sync.WaitGroup
+		nextConnName    = testutils.ConnectionNameGenerator()
+		connName        = nextConnName()
+		nextSessionName = testutils.SessionNameGenerator(connName)
+		sessionName     = nextSessionName()
+		nextQueueName   = testutils.QueueNameGenerator(sessionName)
+	)
+
+	conn, err := pool.NewConnection(
+		ctx,
+		connectURL,
+		connName,
+		pool.ConnectionWithLogger(logging.NewTestLogger(t)),
+		pool.ConnectionWithRecoverCallback(func(name string, retry int, err error) {
+			assert.NoErrorf(t, err, "unextected connection recovery: name=%s retry=%d", name, retry)
+		}),
+	)
+	if err != nil {
+		assert.NoError(t, err)
+		return
+	}
+	defer func() {
+		assert.NoError(t, conn.Close()) // can be nil or error
+	}()
+
+	session, err := pool.NewSession(
+		conn,
+		sessionName,
+		pool.SessionWithConfirms(true),
+		pool.SessionWithRetryCallback(
+			func(operation, connName, sessionName string, retry int, err error) {
+				assert.NoErrorf(t, err, "unexpected session recovery: operation=%s connName=%s sessionName=%s retry=%d", operation, connName, sessionName, retry)
+			},
+		),
+	)
+	if err != nil {
+		assert.NoError(t, err)
+		return
+	}
+	defer func() {
+		assert.NoError(t, session.Close())
+	}()
+
+	for i := 0; i < 100; i++ {
+		func() {
+			qname := nextQueueName()
+			q, err := session.QueueDeclare(ctx, qname)
+			if err != nil {
+				assert.NoError(t, err)
+				return
+			}
+			assert.Equalf(t, 0, q.Consumers, "expected 0 consumers when declaring a queue: %s", qname)
+
+			// executed upon return
+			defer func() {
+				_, err := session.QueueDelete(ctx, qname)
+				assert.NoErrorf(t, err, "failed to delete queue: %s", qname)
+			}()
+
+			q, err = session.QueueDeclarePassive(ctx, qname)
+			if err != nil {
+				assert.NoErrorf(t, err, "QueueDeclarePassive failed for queue: %s", qname)
+				return
+			}
+
+			assert.Equalf(t, 0, q.Consumers, "queue should not have any consumers: %s", qname)
+		}()
+	}
+
+	wg.Wait()
+}
+
+func TestNewSessionExchangeDeclareWithDisconnect(t *testing.T) {
 	var (
 		ctx             = context.TODO()
 		nextConnName    = testutils.ConnectionNameGenerator()
 		connName        = nextConnName()
 		nextSessionName = testutils.SessionNameGenerator(connName)
 	)
+
+	var (
+		reconnectCounter   int64 = 0
+		expectedReconnects int64 = 1
+	)
+
+	defer func() {
+		assert.Equal(t, expectedReconnects, reconnectCounter, "number of reconnection attempts")
+	}()
 	c, err := pool.NewConnection(
 		ctx,
 		connectURL,
 		connName,
 		pool.ConnectionWithLogger(logging.NewTestLogger(t)),
+		pool.ConnectionWithRecoverCallback(func(name string, retry int, err error) {
+			if retry == 0 {
+				atomic.AddInt64(&reconnectCounter, 1)
+			}
+		}),
+	)
+	if err != nil {
+		assert.NoError(t, err)
+		return
+	}
+	defer func() {
+		c.Close() // can be nil or error
+	}()
+
+	var (
+		sessionName      = nextSessionName()
+		nextExchangeName = testutils.ExchangeNameGenerator(sessionName)
+		exchangeName     = nextExchangeName()
+
+		start, started, stopped = DisconnectWithStartStartedStopped(t, time.Second)
+	)
+	s, err := pool.NewSession(c, sessionName)
+	if err != nil {
+		assert.NoError(t, err)
+		return
+	}
+	defer s.Close() // can be nil or error
+
+	start() // await connection loss start
+	started()
+
+	err = s.ExchangeDeclare(ctx, exchangeName, pool.ExchangeKindTopic)
+	if err != nil {
+		assert.NoError(t, err)
+		return
+	}
+
+	stopped()
+
+	defer func() {
+		err := s.ExchangeDelete(ctx, exchangeName)
+		assert.NoError(t, err)
+	}()
+}
+
+func TestNewSessionExchangeDeleteWithDisconnect(t *testing.T) {
+	var (
+		ctx             = context.TODO()
+		nextConnName    = testutils.ConnectionNameGenerator()
+		connName        = nextConnName()
+		nextSessionName = testutils.SessionNameGenerator(connName)
+	)
+
+	var (
+		reconnectCounter   int64 = 0
+		expectedReconnects int64 = 1
+	)
+
+	defer func() {
+		assert.Equal(t, expectedReconnects, reconnectCounter, "number of reconnection attempts")
+	}()
+	c, err := pool.NewConnection(
+		ctx,
+		connectURL,
+		connName,
+		pool.ConnectionWithLogger(logging.NewTestLogger(t)),
+		pool.ConnectionWithRecoverCallback(func(name string, retry int, err error) {
+			if retry == 0 {
+				atomic.AddInt64(&reconnectCounter, 1)
+			}
+		}),
+	)
+	if err != nil {
+		assert.NoError(t, err)
+		return
+	}
+	defer func() {
+		c.Close() // can be nil or error
+	}()
+
+	var (
+		sessionName      = nextSessionName()
+		nextExchangeName = testutils.ExchangeNameGenerator(sessionName)
+		exchangeName     = nextExchangeName()
+
+		start, started, stopped = DisconnectWithStartStartedStopped(t, time.Second)
+	)
+	s, err := pool.NewSession(c, sessionName)
+	if err != nil {
+		assert.NoError(t, err)
+		return
+	}
+	defer s.Close() // can be nil or error
+
+	err = s.ExchangeDeclare(ctx, exchangeName, pool.ExchangeKindTopic)
+	if err != nil {
+		assert.NoError(t, err)
+		return
+	}
+
+	start() // await connection loss start
+	started()
+
+	err = s.ExchangeDelete(ctx, exchangeName)
+	assert.NoError(t, err)
+	stopped()
+}
+
+func TestNewSessionQueueDeclareWithDisconnect(t *testing.T) {
+	var (
+		ctx             = context.TODO()
+		nextConnName    = testutils.ConnectionNameGenerator()
+		connName        = nextConnName()
+		nextSessionName = testutils.SessionNameGenerator(connName)
+	)
+
+	var (
+		reconnectCounter   int64 = 0
+		expectedReconnects int64 = 1
+	)
+
+	defer func() {
+		assert.Equal(t, expectedReconnects, reconnectCounter, "number of reconnection attempts")
+	}()
+	c, err := pool.NewConnection(
+		ctx,
+		connectURL,
+		connName,
+		pool.ConnectionWithLogger(logging.NewTestLogger(t)),
+		pool.ConnectionWithRecoverCallback(func(name string, retry int, err error) {
+			if retry == 0 {
+				atomic.AddInt64(&reconnectCounter, 1)
+			}
+		}),
+	)
+	if err != nil {
+		assert.NoError(t, err)
+		return
+	}
+	defer func() {
+		c.Close() // can be nil or error
+	}()
+
+	var (
+		sessionName   = nextSessionName()
+		nextQueueName = testutils.QueueNameGenerator(sessionName)
+		queueName     = nextQueueName()
+
+		start, started, stopped = DisconnectWithStartStartedStopped(t, time.Second)
+	)
+	s, err := pool.NewSession(c, sessionName)
+	if err != nil {
+		assert.NoError(t, err)
+		return
+	}
+	defer s.Close() // can be nil or error
+
+	start() // await connection loss start
+	started()
+
+	_, err = s.QueueDeclare(ctx, queueName)
+	if err != nil {
+		assert.NoError(t, err)
+		return
+	}
+
+	stopped()
+
+	defer func() {
+		delMsgs, err := s.QueueDelete(ctx, queueName)
+		assert.NoError(t, err)
+		assert.Equal(t, 0, delMsgs, "expected 0 messages to be deleted")
+	}()
+}
+
+func TestNewSessionQueueDeleteWithDisconnect(t *testing.T) {
+	var (
+		ctx             = context.TODO()
+		nextConnName    = testutils.ConnectionNameGenerator()
+		connName        = nextConnName()
+		nextSessionName = testutils.SessionNameGenerator(connName)
+	)
+
+	var (
+		reconnectCounter   int64 = 0
+		expectedReconnects int64 = 1
+	)
+
+	defer func() {
+		assert.Equal(t, expectedReconnects, reconnectCounter, "number of reconnection attempts")
+	}()
+	c, err := pool.NewConnection(
+		ctx,
+		connectURL,
+		connName,
+		pool.ConnectionWithLogger(logging.NewTestLogger(t)),
+		pool.ConnectionWithRecoverCallback(func(name string, retry int, err error) {
+			if retry == 0 {
+				atomic.AddInt64(&reconnectCounter, 1)
+			}
+		}),
+	)
+	if err != nil {
+		assert.NoError(t, err)
+		return
+	}
+	defer func() {
+		c.Close() // can be nil or error
+	}()
+
+	var (
+		sessionName   = nextSessionName()
+		nextQueueName = testutils.QueueNameGenerator(sessionName)
+		queueName     = nextQueueName()
+
+		start, started, stopped = DisconnectWithStartStartedStopped(t, time.Second)
+	)
+	s, err := pool.NewSession(c, sessionName)
+	if err != nil {
+		assert.NoError(t, err)
+		return
+	}
+	defer s.Close() // can be nil or error
+
+	_, err = s.QueueDeclare(ctx, queueName)
+	if err != nil {
+		assert.NoError(t, err)
+		return
+	}
+
+	start() // await connection loss start
+	started()
+
+	delMsgs, err := s.QueueDelete(ctx, queueName)
+	assert.NoError(t, err)
+	assert.Equal(t, 0, delMsgs, "expected 0 messages to be deleted")
+	stopped()
+}
+
+func TestNewSessionWithDisconnect(t *testing.T) {
+	var (
+		ctx             = context.TODO()
+		nextConnName    = testutils.ConnectionNameGenerator()
+		connName        = nextConnName()
+		nextSessionName = testutils.SessionNameGenerator(connName)
+	)
+
+	var reconnectCounter int64 = 0
+	defer func() {
+		assert.Equal(t, 10, reconnectCounter-1)
+	}()
+	c, err := pool.NewConnection(
+		ctx,
+		connectURL,
+		connName,
+		pool.ConnectionWithLogger(logging.NewTestLogger(t)),
+		pool.ConnectionWithRecoverCallback(func(name string, retry int, err error) {
+			if retry == 0 {
+				atomic.AddInt64(&reconnectCounter, 1)
+			}
+		}),
 	)
 	if err != nil {
 		assert.NoError(t, err)
@@ -186,6 +549,7 @@ func TestNewSessionDisconnect(t *testing.T) {
 				return
 			}
 			defer func() {
+				// INFO: does not lead to a recovery
 				start10()
 				started10()
 
@@ -196,7 +560,7 @@ func TestNewSessionDisconnect(t *testing.T) {
 			start() // await connection loss start
 			started()
 
-			err = s.ExchangeDeclare(ctx, exchangeName, "topic")
+			err = s.ExchangeDeclare(ctx, exchangeName, pool.ExchangeKindTopic)
 			if err != nil {
 				assert.NoError(t, err)
 				return
@@ -320,73 +684,6 @@ func TestNewSessionDisconnect(t *testing.T) {
 			}
 
 		}()
-	}
-
-	wg.Wait()
-}
-
-func TestNewSessionQueueDeclarePassive(t *testing.T) {
-	t.Parallel()
-
-	var (
-		ctx             = context.TODO()
-		wg              sync.WaitGroup
-		nextConnName    = testutils.ConnectionNameGenerator()
-		connName        = nextConnName()
-		nextSessionName = testutils.SessionNameGenerator(connName)
-		sessionName     = nextSessionName()
-		nextQueueName   = testutils.QueueNameGenerator(sessionName)
-	)
-
-	conn, err := pool.NewConnection(
-		ctx,
-		connectURL,
-		connName,
-		pool.ConnectionWithLogger(logging.NewTestLogger(t)),
-	)
-	if err != nil {
-		assert.NoError(t, err)
-		return
-	}
-	defer func() {
-		conn.Close() // can be nil or error
-	}()
-
-	session, err := pool.NewSession(
-		conn,
-		sessionName,
-		pool.SessionWithConfirms(true),
-	)
-	if err != nil {
-		assert.NoError(t, err)
-		return
-	}
-	defer func() {
-		assert.NoError(t, session.Close())
-	}()
-
-	for i := 0; i < 100; i++ {
-		qname := nextQueueName()
-		q, err := session.QueueDeclare(ctx, qname)
-		if err != nil {
-			assert.NoError(t, err)
-			return
-		}
-		assert.Equalf(t, 0, q.Consumers, "expected 0 consumers when declaring a queue: %s", qname)
-
-		// executed upon return
-		defer func() {
-			_, err := session.QueueDelete(ctx, qname)
-			assert.NoErrorf(t, err, "failed to delete queue: %s", qname)
-		}()
-
-		q, err = session.QueueDeclarePassive(ctx, qname)
-		if err != nil {
-			assert.NoErrorf(t, err, "QueueDeclarePassive failed for queue: %s", qname)
-			return
-		}
-
-		assert.Equalf(t, 0, q.Consumers, "queue should not have any consumers: %s", qname)
 	}
 
 	wg.Wait()
