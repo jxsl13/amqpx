@@ -183,6 +183,23 @@ func DisconnectWithStartedStopped(t *testing.T, block, startIn, duration time.Du
 		}
 }
 
+func Disconnect(t *testing.T, duration time.Duration) (started, stopped func()) {
+	var (
+		disconnectOnce sync.Once
+		reconnectOnce  sync.Once
+	)
+
+	disconnect, awaitStarted, awaitStopped := DisconnectWithStartStartedStopped(t, duration)
+	return func() {
+			disconnectOnce.Do(func() {
+				disconnect()
+				awaitStarted()
+			})
+		}, func() {
+			reconnectOnce.Do(awaitStopped)
+		}
+}
+
 // block current thread
 // timeout: how long the asynchronous goroutine needs to wait until it disables the connection
 // duration: how long the asynchronous goroutine wait suntil it reenables the connection
