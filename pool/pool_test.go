@@ -15,8 +15,9 @@ import (
 )
 
 var (
-	connectURL       = amqpx.NewURL("localhost", 5672, "admin", "password")
-	brokenConnectURL = amqpx.NewURL("localhost", 5673, "admin", "password")
+	healthyConnectURL = amqpx.NewURL("localhost", 5671, "admin", "password")
+	connectURL        = amqpx.NewURL("localhost", 5672, "admin", "password")
+	brokenConnectURL  = amqpx.NewURL("localhost", 5673, "admin", "password")
 )
 
 func TestMain(m *testing.M) {
