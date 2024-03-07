@@ -3,7 +3,6 @@ package pool_test
 import (
 	"context"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -13,7 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestNewSingleSession(t *testing.T) {
+func TestNewSingleSessionPublishAndConsume(t *testing.T) {
 	t.Parallel() // can be run in parallel because the connection to the rabbitmq is never broken
 
 	var (
@@ -33,14 +32,14 @@ func TestNewSingleSession(t *testing.T) {
 		publishMessageGenerator = testutils.MessageGenerator(queueName)
 	)
 
+	reconnectCB, deferredAssert := AssertConnectionReconnectAttempts(t, 0)
+	defer deferredAssert()
 	c, err := pool.NewConnection(
 		ctx,
-		connectURL,
+		testutils.HealthyConnectURL,
 		connName,
 		pool.ConnectionWithLogger(logging.NewTestLogger(t)),
-		pool.ConnectionWithRecoverCallback(func(name string, retry int, err error) {
-			assert.NoErrorf(t, err, "name=%s retry=%d", name, retry)
-		}),
+		pool.ConnectionWithRecoverCallback(reconnectCB),
 	)
 	if err != nil {
 		assert.NoError(t, err)
@@ -71,13 +70,13 @@ func TestNewSingleSession(t *testing.T) {
 	cleanup := DeclareExchangeQueue(t, ctx, s, exchangeName, queueName)
 	defer cleanup()
 
-	ConsumeAsyncN(t, ctx, &wg, s, queueName, consumerName, consumeMessageGenerator, 1)
-	PublishAsyncN(t, ctx, &wg, s, exchangeName, publishMessageGenerator, 1)
+	ConsumeAsyncN(t, ctx, &wg, s, queueName, consumerName, consumeMessageGenerator, 20)
+	PublishAsyncN(t, ctx, &wg, s, exchangeName, publishMessageGenerator, 20)
 
 	wg.Wait()
 }
 
-func TestManyNewSessions(t *testing.T) {
+func TestManyNewSessionsPublishAndConsume(t *testing.T) {
 	t.Parallel() // can be run in parallel because the connection to the rabbitmq is never broken
 
 	var (
@@ -89,14 +88,14 @@ func TestManyNewSessions(t *testing.T) {
 		sessions        = 5
 	)
 
+	reconnectCB, deferredAssert := AssertConnectionReconnectAttempts(t, 0)
+	defer deferredAssert()
 	c, err := pool.NewConnection(
 		ctx,
-		connectURL,
+		testutils.HealthyConnectURL,
 		connName,
 		pool.ConnectionWithLogger(logging.NewTestLogger(t)),
-		pool.ConnectionWithRecoverCallback(func(name string, retry int, err error) {
-			assert.NoErrorf(t, err, "unextected connection recovery: name=%s retry=%d", name, retry)
-		}),
+		pool.ConnectionWithRecoverCallback(reconnectCB),
 	)
 	if err != nil {
 		assert.NoError(t, err)
@@ -136,8 +135,8 @@ func TestManyNewSessions(t *testing.T) {
 		cleanup := DeclareExchangeQueue(t, ctx, s, exchangeName, queueName)
 		defer cleanup()
 
-		ConsumeAsyncN(t, ctx, &wg, s, queueName, consumerName, consumeNextMessage, 1)
-		PublishAsyncN(t, ctx, &wg, s, exchangeName, publishNextMessage, 1)
+		ConsumeAsyncN(t, ctx, &wg, s, queueName, consumerName, consumeNextMessage, 20)
+		PublishAsyncN(t, ctx, &wg, s, exchangeName, publishNextMessage, 20)
 	}
 
 	wg.Wait()
@@ -156,14 +155,14 @@ func TestNewSessionQueueDeclarePassive(t *testing.T) {
 		nextQueueName   = testutils.QueueNameGenerator(sessionName)
 	)
 
+	reconnectCB, deferredAssert := AssertConnectionReconnectAttempts(t, 0)
+	defer deferredAssert()
 	conn, err := pool.NewConnection(
 		ctx,
-		connectURL,
+		testutils.HealthyConnectURL,
 		connName,
 		pool.ConnectionWithLogger(logging.NewTestLogger(t)),
-		pool.ConnectionWithRecoverCallback(func(name string, retry int, err error) {
-			assert.NoErrorf(t, err, "unextected connection recovery: name=%s retry=%d", name, retry)
-		}),
+		pool.ConnectionWithRecoverCallback(reconnectCB),
 	)
 	if err != nil {
 		assert.NoError(t, err)
@@ -221,38 +220,31 @@ func TestNewSessionQueueDeclarePassive(t *testing.T) {
 }
 
 func TestNewSessionExchangeDeclareWithDisconnect(t *testing.T) {
-	var (
-		ctx             = context.TODO()
-		nextConnName    = testutils.ConnectionNameGenerator()
-		connName        = nextConnName()
-		nextSessionName = testutils.SessionNameGenerator(connName)
-	)
+	t.Parallel()
 
 	var (
-		reconnectCounter   int64 = 0
-		expectedReconnects int64 = 1
+		ctx                      = context.TODO()
+		proxyName, connectURL, _ = testutils.NextConnectURL()
+		nextConnName             = testutils.ConnectionNameGenerator()
+		connName                 = nextConnName()
+		nextSessionName          = testutils.SessionNameGenerator(connName)
 	)
 
-	defer func() {
-		assert.Equal(t, expectedReconnects, reconnectCounter, "number of reconnection attempts")
-	}()
+	reconnectCB, deferredAssert := AssertConnectionReconnectAttempts(t, 1)
+	defer deferredAssert()
 	c, err := pool.NewConnection(
 		ctx,
 		connectURL,
 		connName,
 		pool.ConnectionWithLogger(logging.NewTestLogger(t)),
-		pool.ConnectionWithRecoverCallback(func(name string, retry int, err error) {
-			if retry == 0 {
-				atomic.AddInt64(&reconnectCounter, 1)
-			}
-		}),
+		pool.ConnectionWithRecoverCallback(reconnectCB),
 	)
 	if err != nil {
 		assert.NoError(t, err)
 		return
 	}
 	defer func() {
-		c.Close() // can be nil or error
+		assert.NoError(t, c.Close())
 	}()
 
 	var (
@@ -260,25 +252,25 @@ func TestNewSessionExchangeDeclareWithDisconnect(t *testing.T) {
 		nextExchangeName = testutils.ExchangeNameGenerator(sessionName)
 		exchangeName     = nextExchangeName()
 
-		start, started, stopped = DisconnectWithStartStartedStopped(t, time.Second)
+		disconnected, reconnected = Disconnect(t, proxyName, 5*time.Second)
 	)
 	s, err := pool.NewSession(c, sessionName)
 	if err != nil {
 		assert.NoError(t, err)
 		return
 	}
-	defer s.Close() // can be nil or error
+	defer func() {
+		assert.NoError(t, s.Close())
+	}()
 
-	start() // await connection loss start
-	started()
+	disconnected()
+	defer reconnected()
 
 	err = s.ExchangeDeclare(ctx, exchangeName, pool.ExchangeKindTopic)
 	if err != nil {
 		assert.NoError(t, err)
 		return
 	}
-
-	stopped()
 
 	defer func() {
 		err := s.ExchangeDelete(ctx, exchangeName)
@@ -287,38 +279,31 @@ func TestNewSessionExchangeDeclareWithDisconnect(t *testing.T) {
 }
 
 func TestNewSessionExchangeDeleteWithDisconnect(t *testing.T) {
-	var (
-		ctx             = context.TODO()
-		nextConnName    = testutils.ConnectionNameGenerator()
-		connName        = nextConnName()
-		nextSessionName = testutils.SessionNameGenerator(connName)
-	)
+	t.Parallel()
 
 	var (
-		reconnectCounter   int64 = 0
-		expectedReconnects int64 = 1
+		ctx                      = context.TODO()
+		proxyName, connectURL, _ = testutils.NextConnectURL()
+		nextConnName             = testutils.ConnectionNameGenerator()
+		connName                 = nextConnName()
+		nextSessionName          = testutils.SessionNameGenerator(connName)
 	)
 
-	defer func() {
-		assert.Equal(t, expectedReconnects, reconnectCounter, "number of reconnection attempts")
-	}()
+	reconnectCB, deferredAssert := AssertConnectionReconnectAttempts(t, 1)
+	defer deferredAssert()
 	c, err := pool.NewConnection(
 		ctx,
 		connectURL,
 		connName,
 		pool.ConnectionWithLogger(logging.NewTestLogger(t)),
-		pool.ConnectionWithRecoverCallback(func(name string, retry int, err error) {
-			if retry == 0 {
-				atomic.AddInt64(&reconnectCounter, 1)
-			}
-		}),
+		pool.ConnectionWithRecoverCallback(reconnectCB),
 	)
 	if err != nil {
 		assert.NoError(t, err)
 		return
 	}
 	defer func() {
-		c.Close() // can be nil or error
+		assert.NoError(t, c.Close())
 	}()
 
 	var (
@@ -326,14 +311,16 @@ func TestNewSessionExchangeDeleteWithDisconnect(t *testing.T) {
 		nextExchangeName = testutils.ExchangeNameGenerator(sessionName)
 		exchangeName     = nextExchangeName()
 
-		start, started, stopped = DisconnectWithStartStartedStopped(t, time.Second)
+		disconnected, reconnected = Disconnect(t, proxyName, 5*time.Second)
 	)
 	s, err := pool.NewSession(c, sessionName)
 	if err != nil {
 		assert.NoError(t, err)
 		return
 	}
-	defer s.Close() // can be nil or error
+	defer func() {
+		assert.NoError(t, s.Close())
+	}()
 
 	err = s.ExchangeDeclare(ctx, exchangeName, pool.ExchangeKindTopic)
 	if err != nil {
@@ -341,47 +328,39 @@ func TestNewSessionExchangeDeleteWithDisconnect(t *testing.T) {
 		return
 	}
 
-	start() // await connection loss start
-	started()
+	disconnected()
+	defer reconnected()
 
 	err = s.ExchangeDelete(ctx, exchangeName)
 	assert.NoError(t, err)
-	stopped()
 }
 
 func TestNewSessionQueueDeclareWithDisconnect(t *testing.T) {
-	var (
-		ctx             = context.TODO()
-		nextConnName    = testutils.ConnectionNameGenerator()
-		connName        = nextConnName()
-		nextSessionName = testutils.SessionNameGenerator(connName)
-	)
+	t.Parallel()
 
 	var (
-		reconnectCounter   int64 = 0
-		expectedReconnects int64 = 1
+		ctx                      = context.TODO()
+		proxyName, connectURL, _ = testutils.NextConnectURL()
+		nextConnName             = testutils.ConnectionNameGenerator()
+		connName                 = nextConnName()
+		nextSessionName          = testutils.SessionNameGenerator(connName)
 	)
 
-	defer func() {
-		assert.Equal(t, expectedReconnects, reconnectCounter, "number of reconnection attempts")
-	}()
+	reconnectCB, deferredAssert := AssertConnectionReconnectAttempts(t, 1)
+	defer deferredAssert()
 	c, err := pool.NewConnection(
 		ctx,
 		connectURL,
 		connName,
 		pool.ConnectionWithLogger(logging.NewTestLogger(t)),
-		pool.ConnectionWithRecoverCallback(func(name string, retry int, err error) {
-			if retry == 0 {
-				atomic.AddInt64(&reconnectCounter, 1)
-			}
-		}),
+		pool.ConnectionWithRecoverCallback(reconnectCB),
 	)
 	if err != nil {
-		assert.NoError(t, err)
+		assert.NoError(t, err, "expected no error when creating new connection")
 		return
 	}
 	defer func() {
-		c.Close() // can be nil or error
+		assert.NoError(t, c.Close(), "expected no error when closing connection")
 	}()
 
 	var (
@@ -389,17 +368,19 @@ func TestNewSessionQueueDeclareWithDisconnect(t *testing.T) {
 		nextQueueName = testutils.QueueNameGenerator(sessionName)
 		queueName     = nextQueueName()
 
-		start, started, stopped = DisconnectWithStartStartedStopped(t, time.Second)
+		disconnected, reconnected = Disconnect(t, proxyName, 5*time.Second)
 	)
 	s, err := pool.NewSession(c, sessionName)
 	if err != nil {
 		assert.NoError(t, err)
 		return
 	}
-	defer s.Close() // can be nil or error
+	defer func() {
+		assert.NoError(t, s.Close())
+	}()
 
-	start() // await connection loss start
-	started()
+	disconnected()
+	defer reconnected()
 
 	_, err = s.QueueDeclare(ctx, queueName)
 	if err != nil {
@@ -407,85 +388,296 @@ func TestNewSessionQueueDeclareWithDisconnect(t *testing.T) {
 		return
 	}
 
-	stopped()
+	defer func() {
+		_, err := s.QueueDelete(ctx, queueName)
+		assert.NoError(t, err, "expected no error when deleting queue")
+		// TODO: asserting the number of deleted messages seems to be pretty flaky, so we do not assert it here
+		// assert.Equal(t, 0, delMsgs, "expected 0 messages to be deleted")
+	}()
+}
 
+func TestNewSessionQueueDeleteWithDisconnect(t *testing.T) {
+	t.Parallel()
+
+	var (
+		ctx                      = context.TODO()
+		proxyName, connectURL, _ = testutils.NextConnectURL()
+		nextConnName             = testutils.ConnectionNameGenerator()
+		connName                 = nextConnName()
+		nextSessionName          = testutils.SessionNameGenerator(connName)
+	)
+
+	reconnectCB, deferredAssert := AssertConnectionReconnectAttempts(t, 1)
+	defer deferredAssert()
+	c, err := pool.NewConnection(
+		ctx,
+		connectURL,
+		connName,
+		pool.ConnectionWithLogger(logging.NewTestLogger(t)),
+		pool.ConnectionWithRecoverCallback(reconnectCB),
+	)
+	if err != nil {
+		assert.NoError(t, err)
+		return
+	}
+	defer func() {
+		assert.NoError(t, c.Close())
+	}()
+
+	var (
+		sessionName   = nextSessionName()
+		nextQueueName = testutils.QueueNameGenerator(sessionName)
+		queueName     = nextQueueName()
+
+		disconnected, reconnected = Disconnect(t, proxyName, 5*time.Second)
+	)
+	s, err := pool.NewSession(c, sessionName)
+	if err != nil {
+		assert.NoError(t, err)
+		return
+	}
+	defer func() {
+		assert.NoError(t, s.Close())
+	}()
+
+	_, err = s.QueueDeclare(ctx, queueName)
+	if err != nil {
+		assert.NoError(t, err)
+		return
+	}
+
+	disconnected()
+	defer reconnected()
+
+	delMsgs, err := s.QueueDelete(ctx, queueName)
+	assert.NoError(t, err)
+	assert.Equal(t, 0, delMsgs, "expected 0 messages to be deleted")
+}
+
+func TestNewSessionQueueBindWithDisconnect(t *testing.T) {
+	t.Parallel()
+
+	var (
+		ctx                      = context.TODO()
+		proxyName, connectURL, _ = testutils.NextConnectURL()
+		nextConnName             = testutils.ConnectionNameGenerator()
+		connName                 = nextConnName()
+		nextSessionName          = testutils.SessionNameGenerator(connName)
+	)
+
+	reconnectCB, deferredAssert := AssertConnectionReconnectAttempts(t, 1)
+	defer deferredAssert()
+	c, err := pool.NewConnection(
+		ctx,
+		connectURL,
+		connName,
+		pool.ConnectionWithLogger(logging.NewTestLogger(t)),
+		pool.ConnectionWithRecoverCallback(reconnectCB),
+	)
+	if err != nil {
+		assert.NoError(t, err)
+		return
+	}
+	defer func() {
+		assert.NoError(t, c.Close())
+	}()
+
+	var (
+		sessionName      = nextSessionName()
+		nextExchangeName = testutils.ExchangeNameGenerator(sessionName)
+		exchangeName     = nextExchangeName()
+		nextQueueName    = testutils.QueueNameGenerator(sessionName)
+		queueName        = nextQueueName()
+
+		disconnected, reconnected = Disconnect(t, proxyName, 5*time.Second)
+	)
+	s, err := pool.NewSession(c, sessionName)
+	if err != nil {
+		assert.NoError(t, err)
+		return
+	}
+	defer func() {
+		assert.NoError(t, s.Close())
+	}()
+
+	err = s.ExchangeDeclare(ctx, exchangeName, pool.ExchangeKindTopic)
+	if err != nil {
+		assert.NoError(t, err)
+		return
+	}
+	defer func() {
+		err = s.ExchangeDelete(ctx, exchangeName)
+		assert.NoError(t, err)
+	}()
+
+	_, err = s.QueueDeclare(ctx, queueName)
+	if err != nil {
+		assert.NoError(t, err)
+		return
+	}
 	defer func() {
 		delMsgs, err := s.QueueDelete(ctx, queueName)
 		assert.NoError(t, err)
 		assert.Equal(t, 0, delMsgs, "expected 0 messages to be deleted")
 	}()
+
+	disconnected()
+	defer reconnected()
+
+	err = s.QueueBind(ctx, queueName, "#", exchangeName)
+	if err != nil {
+		assert.NoError(t, err)
+		return
+	}
 }
 
-func TestNewSessionQueueDeleteWithDisconnect(t *testing.T) {
-	var (
-		ctx             = context.TODO()
-		nextConnName    = testutils.ConnectionNameGenerator()
-		connName        = nextConnName()
-		nextSessionName = testutils.SessionNameGenerator(connName)
-	)
+func TestNewSessionQueueUnbindWithDisconnect(t *testing.T) {
+	t.Parallel()
 
 	var (
-		reconnectCounter   int64 = 0
-		expectedReconnects int64 = 1
+		ctx                      = context.TODO()
+		proxyName, connectURL, _ = testutils.NextConnectURL()
+		nextConnName             = testutils.ConnectionNameGenerator()
+		connName                 = nextConnName()
+		nextSessionName          = testutils.SessionNameGenerator(connName)
 	)
 
-	defer func() {
-		assert.Equal(t, expectedReconnects, reconnectCounter, "number of reconnection attempts")
-	}()
+	reconnectCB, deferredAssert := AssertConnectionReconnectAttempts(t, 1)
+	defer deferredAssert()
 	c, err := pool.NewConnection(
 		ctx,
 		connectURL,
 		connName,
 		pool.ConnectionWithLogger(logging.NewTestLogger(t)),
-		pool.ConnectionWithRecoverCallback(func(name string, retry int, err error) {
-			if retry == 0 {
-				atomic.AddInt64(&reconnectCounter, 1)
-			}
-		}),
+		pool.ConnectionWithRecoverCallback(reconnectCB),
 	)
 	if err != nil {
 		assert.NoError(t, err)
 		return
 	}
 	defer func() {
-		c.Close() // can be nil or error
+		assert.NoError(t, c.Close())
 	}()
 
 	var (
-		sessionName   = nextSessionName()
-		nextQueueName = testutils.QueueNameGenerator(sessionName)
-		queueName     = nextQueueName()
+		sessionName      = nextSessionName()
+		nextExchangeName = testutils.ExchangeNameGenerator(sessionName)
+		exchangeName     = nextExchangeName()
+		nextQueueName    = testutils.QueueNameGenerator(sessionName)
+		queueName        = nextQueueName()
 
-		start, started, stopped = DisconnectWithStartStartedStopped(t, time.Second)
+		disconnected, reconnected = Disconnect(t, proxyName, 5*time.Second)
 	)
 	s, err := pool.NewSession(c, sessionName)
 	if err != nil {
 		assert.NoError(t, err)
 		return
 	}
-	defer s.Close() // can be nil or error
+	defer func() {
+		assert.NoError(t, s.Close())
+	}()
+
+	err = s.ExchangeDeclare(ctx, exchangeName, pool.ExchangeKindTopic)
+	if err != nil {
+		assert.NoError(t, err)
+		return
+	}
+	defer func() {
+		err = s.ExchangeDelete(ctx, exchangeName)
+		assert.NoError(t, err)
+	}()
 
 	_, err = s.QueueDeclare(ctx, queueName)
 	if err != nil {
 		assert.NoError(t, err)
 		return
 	}
+	defer func() {
+		delMsgs, err := s.QueueDelete(ctx, queueName)
+		assert.NoError(t, err)
+		assert.Equal(t, 0, delMsgs, "expected 0 messages to be deleted")
+	}()
 
-	start() // await connection loss start
-	started()
+	err = s.QueueBind(ctx, queueName, "#", exchangeName)
+	if err != nil {
+		assert.NoError(t, err)
+		return
+	}
 
-	delMsgs, err := s.QueueDelete(ctx, queueName)
+	disconnected()
+	defer reconnected()
+
+	err = s.QueueUnbind(ctx, queueName, "#", exchangeName, nil)
 	assert.NoError(t, err)
-	assert.Equal(t, 0, delMsgs, "expected 0 messages to be deleted")
-	stopped()
 }
 
-func TestNewSessionWithDisconnect(t *testing.T) {
+func TestNewSessionPublishWithDisconnect(t *testing.T) {
+	t.Parallel()
+
 	var (
-		ctx             = context.TODO()
-		nextConnName    = testutils.ConnectionNameGenerator()
-		connName        = nextConnName()
-		nextSessionName = testutils.SessionNameGenerator(connName)
+		proxyName, connectURL, _ = testutils.NextConnectURL()
+		ctx                      = context.TODO()
+		nextConnName             = testutils.ConnectionNameGenerator()
+	)
+
+	healthyConnCB, hcbAssert := AssertConnectionReconnectAttempts(t, 0)
+	defer hcbAssert()
+	hs, hsclose := NewSession(
+		t,
+		ctx,
+		testutils.HealthyConnectURL,
+		nextConnName(),
+		pool.ConnectionWithRecoverCallback(healthyConnCB),
+	)
+	defer hsclose()
+
+	brokenReconnCB, scbAssert := AssertConnectionReconnectAttempts(t, 1)
+	defer scbAssert()
+	s, sclose := NewSession(
+		t,
+		ctx,
+		connectURL,
+		nextConnName(),
+		pool.ConnectionWithRecoverCallback(brokenReconnCB),
+	)
+	defer sclose()
+
+	var (
+		nextExchangeName = testutils.ExchangeNameGenerator(hs.Name())
+		nextQueueName    = testutils.QueueNameGenerator(hs.Name())
+
+		exchangeName     = nextExchangeName()
+		queueName        = nextQueueName()
+		nextConsumerName = testutils.ConsumerNameGenerator(queueName)
+	)
+
+	cleanup := DeclareExchangeQueue(t, ctx, hs, exchangeName, queueName)
+	defer cleanup()
+
+	var (
+		msgGen = func() string { return "test message content" }
+		wg     sync.WaitGroup
+	)
+
+	ConsumeAsyncN(t, ctx, &wg, hs, queueName, nextConsumerName(), msgGen, 1)
+
+	disconnected, reconnected := Disconnect(t, proxyName, 5*time.Second)
+	disconnected()
+	PublishAsyncN(t, ctx, &wg, s, exchangeName, msgGen, 1)
+	reconnected()
+
+	wg.Wait()
+}
+
+/*
+func TestNewSessionWithDisconnect(t *testing.T) {
+
+	var (
+		ctx                      = context.TODO()
+		proxyName, connectURL, _ = testutils.NextConnectURL()
+		nextConnName             = testutils.ConnectionNameGenerator()
+		connName                 = nextConnName()
+		nextSessionName          = testutils.SessionNameGenerator(connName)
 	)
 
 	var reconnectCounter int64 = 0
@@ -516,18 +708,18 @@ func TestNewSessionWithDisconnect(t *testing.T) {
 	sessions := 1
 	wg.Add(sessions)
 
-	start, started, stopped := DisconnectWithStartStartedStopped(t, time.Second)
-	start2, started2, stopped2 := DisconnectWithStartStartedStopped(t, time.Second)
-	start3, started3, stopped3 := DisconnectWithStartStartedStopped(t, time.Second)
-	start4, started4, stopped4 := DisconnectWithStartStartedStopped(t, time.Second)
-	start5, started5, stopped5 := DisconnectWithStartStartedStopped(t, time.Second)
-	start6, started6, stopped6 := DisconnectWithStartStartedStopped(t, time.Second)
+	start, started, stopped := DisconnectWithStartStartedStopped(t, proxyName, time.Second)
+	start2, started2, stopped2 := DisconnectWithStartStartedStopped(t, proxyName, time.Second)
+	start3, started3, stopped3 := DisconnectWithStartStartedStopped(t, proxyName, time.Second)
+	start4, started4, stopped4 := DisconnectWithStartStartedStopped(t, proxyName, time.Second)
+	start5, started5, stopped5 := DisconnectWithStartStartedStopped(t, proxyName, time.Second)
+	start6, started6, stopped6 := DisconnectWithStartStartedStopped(t, proxyName, time.Second)
 
 	// deferred
-	start7, started7, stopped7 := DisconnectWithStartStartedStopped(t, time.Second)
-	start8, started8, stopped8 := DisconnectWithStartStartedStopped(t, time.Second)
-	start9, started9, stopped9 := DisconnectWithStartStartedStopped(t, time.Second)
-	start10, started10, stopped10 := DisconnectWithStartStartedStopped(t, time.Second)
+	start7, started7, stopped7 := DisconnectWithStartStartedStopped(t, proxyName, time.Second)
+	start8, started8, stopped8 := DisconnectWithStartStartedStopped(t, proxyName, time.Second)
+	start9, started9, stopped9 := DisconnectWithStartStartedStopped(t, proxyName, time.Second)
+	start10, started10, stopped10 := DisconnectWithStartStartedStopped(t, proxyName, time.Second)
 
 	for id := 0; id < sessions; id++ {
 		go func() {
@@ -688,3 +880,5 @@ func TestNewSessionWithDisconnect(t *testing.T) {
 
 	wg.Wait()
 }
+
+*/

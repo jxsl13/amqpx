@@ -17,7 +17,7 @@ type Proxy struct {
 	mu              sync.Mutex
 }
 
-func NewProxy(t *testing.T) *Proxy {
+func NewProxy(t *testing.T, proxyName string) *Proxy {
 	log := logging.NewTestLogger(t)
 	toxi := toxiproxy.NewClient("localhost:8474")
 
@@ -27,13 +27,17 @@ func NewProxy(t *testing.T) *Proxy {
 	}
 
 	var proxy *toxiproxy.Proxy
+	proxy, found := m[proxyName]
+	if !found {
+		log.Fatalf("no proxy with name %s found", proxyName)
+	}
 	for k, p := range m {
 		if k == "rabbitmq" {
 			proxy = p
 		}
 	}
 	if proxy == nil {
-		log.Fatal("no rabbitmq proxy found")
+		log.Fatalf("proxy with name %s is nil", proxyName)
 	}
 
 	return &Proxy{
@@ -94,12 +98,12 @@ func (p *Proxy) Close() error {
 // block current thread
 // timeout: how long the asynchronous goroutine needs to wait until it disables the connection
 // duration: how long the asynchronous goroutine wait suntil it reenables the connection
-func DisconnectWithStopped(t *testing.T, block, timeout, duration time.Duration) (wait func()) {
+func DisconnectWithStopped(t *testing.T, proxyName string, block, timeout, duration time.Duration) (wait func()) {
 	start := time.Now().Add(timeout)
 
 	var (
 		wg    sync.WaitGroup
-		proxy = NewProxy(t)
+		proxy = NewProxy(t, proxyName)
 	)
 	wg.Add(1)
 	go func(start time.Time) {
@@ -138,12 +142,12 @@ func DisconnectWithStopped(t *testing.T, block, timeout, duration time.Duration)
 // block current thread
 // timeout: how long the asynchronous goroutine needs to wait until it disables the connection
 // duration: how long the asynchronous goroutine wait suntil it reenables the connection
-func DisconnectWithStartedStopped(t *testing.T, block, startIn, duration time.Duration) (awaitStarted, awaitStopped func()) {
+func DisconnectWithStartedStopped(t *testing.T, proxyName string, block, startIn, duration time.Duration) (awaitStarted, awaitStopped func()) {
 	start := time.Now().Add(startIn)
 	var (
 		wgStart sync.WaitGroup
 		wgStop  sync.WaitGroup
-		proxy   = NewProxy(t)
+		proxy   = NewProxy(t, proxyName)
 	)
 
 	wgStart.Add(1)
@@ -183,13 +187,13 @@ func DisconnectWithStartedStopped(t *testing.T, block, startIn, duration time.Du
 		}
 }
 
-func Disconnect(t *testing.T, duration time.Duration) (started, stopped func()) {
+func Disconnect(t *testing.T, proxyName string, duration time.Duration) (started, stopped func()) {
 	var (
 		disconnectOnce sync.Once
 		reconnectOnce  sync.Once
 	)
 
-	disconnect, awaitStarted, awaitStopped := DisconnectWithStartStartedStopped(t, duration)
+	disconnect, awaitStarted, awaitStopped := DisconnectWithStartStartedStopped(t, proxyName, duration)
 	return func() {
 			disconnectOnce.Do(func() {
 				disconnect()
@@ -203,11 +207,11 @@ func Disconnect(t *testing.T, duration time.Duration) (started, stopped func()) 
 // block current thread
 // timeout: how long the asynchronous goroutine needs to wait until it disables the connection
 // duration: how long the asynchronous goroutine wait suntil it reenables the connection
-func DisconnectWithStartStartedStopped(t *testing.T, duration time.Duration) (disconnect, awaitStarted, awaitStopped func()) {
+func DisconnectWithStartStartedStopped(t *testing.T, proxyName string, duration time.Duration) (disconnect, awaitStarted, awaitStopped func()) {
 	var (
 		wgStart sync.WaitGroup
 		wgStop  sync.WaitGroup
-		proxy   = NewProxy(t)
+		proxy   = NewProxy(t, proxyName)
 	)
 	disconnect = func() {
 		wgStart.Add(1)

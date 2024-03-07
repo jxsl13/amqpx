@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jxsl13/amqpx/internal/testutils"
 	"github.com/jxsl13/amqpx/logging"
 	"github.com/jxsl13/amqpx/pool"
 	"github.com/stretchr/testify/assert"
@@ -20,7 +21,7 @@ func TestPublisher(t *testing.T) {
 	sessions := 10 // publisher sessions + consumer sessions
 	p, err := pool.New(
 		ctx,
-		connectURL,
+		testutils.HealthyConnectURL,
 		connections,
 		sessions,
 		pool.WithName("TestPublisher"),
@@ -135,7 +136,7 @@ func TestPublishAwaitFlowControl(t *testing.T) {
 	sessions := 2 // publisher sessions + consumer sessions
 	p, err := pool.New(
 		ctx,
-		brokenConnectURL, //
+		testutils.BrokenConnectURL, // memory limit or disk limit reached
 		connections,
 		sessions,
 		pool.WithName("TestPublishAwaitFlowControl"),

@@ -6,18 +6,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jxsl13/amqpx"
 	"github.com/jxsl13/amqpx/internal/testutils"
 	"github.com/jxsl13/amqpx/logging"
 	"github.com/jxsl13/amqpx/pool"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/goleak"
-)
-
-var (
-	healthyConnectURL = amqpx.NewURL("localhost", 5671, "admin", "password")
-	connectURL        = amqpx.NewURL("localhost", 5672, "admin", "password")
-	brokenConnectURL  = amqpx.NewURL("localhost", 5673, "admin", "password")
 )
 
 func TestMain(m *testing.M) {
@@ -41,7 +34,7 @@ func TestNewPool(t *testing.T) {
 
 	p, err := pool.New(
 		ctx,
-		connectURL,
+		testutils.HealthyConnectURL,
 		connections,
 		sessions,
 		pool.WithName(poolName),

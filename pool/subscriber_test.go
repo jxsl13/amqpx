@@ -7,17 +7,19 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jxsl13/amqpx/internal/testutils"
 	"github.com/jxsl13/amqpx/logging"
 	"github.com/jxsl13/amqpx/pool"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestSubscriber(t *testing.T) {
+
 	ctx := context.TODO()
 	sessions := 2 // publisher sessions + consumer sessions
 	p, err := pool.New(
 		ctx,
-		connectURL,
+		testutils.HealthyConnectURL,
 		1,
 		sessions,
 		pool.WithConfirms(true),
@@ -136,7 +138,7 @@ func TestBatchSubscriber(t *testing.T) {
 	)
 	p, err := pool.New(
 		ctx,
-		connectURL,
+		testutils.HealthyConnectURL,
 		1,
 		sessions,
 		pool.WithConfirms(true),
@@ -277,7 +279,7 @@ func testBatchSubscriberMaxBytes(t *testing.T, maxBatchBytes int) {
 	)
 	p, err := pool.New(
 		ctx,
-		connectURL,
+		testutils.HealthyConnectURL,
 		1,
 		sessions,
 		pool.WithConfirms(true),

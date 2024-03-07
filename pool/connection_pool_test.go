@@ -16,12 +16,12 @@ func TestNewSingleConnectionPool(t *testing.T) {
 	t.Parallel() // can be run in parallel because the connection to the rabbitmq is never broken
 
 	poolName := testutils.FuncName()
-
 	ctx := context.TODO()
+
 	connections := 1
 	p, err := pool.NewConnectionPool(
 		ctx,
-		connectURL,
+		testutils.HealthyConnectURL,
 		connections,
 		pool.ConnectionPoolWithName(poolName),
 		pool.ConnectionPoolWithLogger(logging.NewTestLogger(t)),
@@ -55,7 +55,9 @@ func TestNewConnectionPool(t *testing.T) {
 
 	ctx := context.TODO()
 	connections := 5
-	p, err := pool.NewConnectionPool(ctx, connectURL, connections,
+	p, err := pool.NewConnectionPool(ctx,
+		testutils.HealthyConnectURL,
+		connections,
 		pool.ConnectionPoolWithName(poolName),
 		pool.ConnectionPoolWithLogger(logging.NewTestLogger(t)),
 	)
@@ -92,11 +94,17 @@ func TestNewConnectionPool(t *testing.T) {
 }
 
 func TestNewConnectionPoolWithDisconnect(t *testing.T) {
-	poolName := testutils.FuncName()
+	var (
+		ctx                      = context.TODO()
+		poolName                 = testutils.FuncName()
+		proxyName, connectURL, _ = testutils.NextConnectURL()
+	)
 
-	ctx := context.TODO()
 	connections := 100
-	p, err := pool.NewConnectionPool(ctx, connectURL, connections,
+	p, err := pool.NewConnectionPool(
+		ctx,
+		connectURL,
+		connections,
 		pool.ConnectionPoolWithName(poolName),
 		pool.ConnectionPoolWithLogger(logging.NewTestLogger(t)),
 	)
@@ -109,7 +117,13 @@ func TestNewConnectionPoolWithDisconnect(t *testing.T) {
 
 	disconnectDuration := 5 * time.Second
 
-	awaitStarted, awaitStopped := DisconnectWithStartedStopped(t, 0, 5*time.Second, disconnectDuration)
+	awaitStarted, awaitStopped := DisconnectWithStartedStopped(
+		t,
+		proxyName,
+		0,
+		5*time.Second,
+		disconnectDuration,
+	)
 	defer awaitStopped()
 
 	for i := 0; i < connections; i++ {

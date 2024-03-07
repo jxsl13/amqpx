@@ -22,7 +22,7 @@ func TestSingleSessionPool(t *testing.T) {
 		sessions    = 1
 	)
 	p, err := pool.NewConnectionPool(ctx,
-		connectURL,
+		testutils.HealthyConnectURL,
 		connections,
 		pool.ConnectionPoolWithName(poolName),
 		pool.ConnectionPoolWithLogger(logging.NewTestLogger(t)),
@@ -65,7 +65,7 @@ func TestNewSessionPool(t *testing.T) {
 		sessions    = 10
 	)
 	p, err := pool.NewConnectionPool(ctx,
-		connectURL,
+		testutils.HealthyConnectURL,
 		connections,
 		pool.ConnectionPoolWithName(poolName),
 		pool.ConnectionPoolWithLogger(logging.NewTestLogger(t)),
