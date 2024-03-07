@@ -180,6 +180,6 @@ func MessageGenerator(queueOrExchangeName string, options ...GeneratorOption) (n
 		cnt := counter
 		counter++
 		mu.Unlock()
-		return fmt.Sprintf("%s-message-%d-%s", queueOrExchangeName, cnt, opts.ToSuffix())
+		return fmt.Sprintf("%s-message-%d%s", queueOrExchangeName, cnt, opts.ToSuffix())
 	}
 }
