@@ -50,7 +50,8 @@ services:
       - -config=/toxiproxy.json
     ports:
       - 8474:8474
-      - 5672:5672 # normal rabbitmq
+      - 5671:5671 # healthy rabbitmq
+      - 5672:5672 # normal toggleable rabbitmq
       - 5673:5673 # broken rabbitmq
     networks:
       - rabbitnet

@@ -1,5 +1,11 @@
 [
   {
+    "name": "rabbitmq-healthy",
+    "listen": "[::]:5671",
+    "upstream": "rabbitmq:5672",
+    "enabled": true
+  },
+  {
     "name": "rabbitmq",
     "listen": "[::]:5672",
     "upstream": "rabbitmq:5672",
