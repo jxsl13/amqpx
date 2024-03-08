@@ -184,16 +184,18 @@ func (s *Session) Close() (err error) {
 
 	if s.autoCloseConn {
 		defer func() {
+			s.debug("closing session connection...")
 			err = errors.Join(err, s.conn.Close())
 		}()
 	}
-
+	s.debug("closing session context...")
 	s.cancel()
 	return s.close()
 }
 
 func (s *Session) close() (err error) {
 	defer func() {
+		s.debug("flushing channels...")
 		flush(s.errors)
 		flush(s.confirms)
 		if s.channel != nil {
@@ -205,6 +207,7 @@ func (s *Session) close() (err error) {
 		return nil
 	}
 
+	s.debug("canceling consumers...")
 	for consumer := range s.consumers {
 		// ignore error, as at this point we cannot do anything about the error
 		// tell server to cancel consumer deliveries.
@@ -212,6 +215,13 @@ func (s *Session) close() (err error) {
 		err = errors.Join(err, cerr)
 	}
 
+	if s.error() != nil {
+		// cannot close erred channel
+		s.debug("not closing erred amqp channel")
+		return nil
+	}
+
+	s.debug("closing amqp channel...")
 	return s.channel.Close()
 }
 
@@ -338,7 +348,7 @@ func (s *Session) recover(ctx context.Context) error {
 
 // AwaitConfirm tries to await a confirmation from the broker for a published message
 // You may check for ErrNack in order to see whether the broker rejected the message temporatily.
-// AwaitConfirm cannot be retried in case the channel dies.
+// WARNING: AwaitConfirm cannot be retried in case the channel dies or errors.
 // You must resend your message and attempt to await it again.
 func (s *Session) AwaitConfirm(ctx context.Context, expectedTag uint64) error {
 	s.mu.Lock()
@@ -353,7 +363,7 @@ func (s *Session) AwaitConfirm(ctx context.Context, expectedTag uint64) error {
 		if !ok {
 			err := s.error()
 			if err != nil {
-				return fmt.Errorf("await confirm failed: %w", err)
+				return fmt.Errorf("await confirm failed: confirms channel closed: %w", err)
 			}
 			return fmt.Errorf("await confirm failed: confirms channel %w", ErrClosed)
 		}
@@ -371,7 +381,7 @@ func (s *Session) AwaitConfirm(ctx context.Context, expectedTag uint64) error {
 		if !ok {
 			err := s.error()
 			if err != nil {
-				return fmt.Errorf("await confirm failed: %w", err)
+				return fmt.Errorf("await confirm failed: blocking channel closed: %w", err)
 			}
 			return fmt.Errorf("await confirm failed: %w", errFlowControlClosed)
 		}
@@ -1346,6 +1356,64 @@ func (s *Session) Flow(ctx context.Context, active bool) error {
 
 	return s.retry(ctx, s.flowRetryCB, func() error {
 		return s.channel.Flow(active)
+	})
+}
+
+// Tx puts the channel into transaction mode on the server. All publishings and acknowledgments following this method
+// will be atomically committed or rolled back for a single queue. Call either Channel.TxCommit or Channel.TxRollback
+// to leave this transaction and immediately start a new transaction.
+//
+// The atomicity across multiple queues is not defined as queue declarations and bindings are not included in the transaction.
+//
+// The behavior of publishings that are delivered as mandatory or immediate while the channel is in a transaction is not defined.
+//
+// Once a channel has been put into transaction mode, it cannot be taken out of transaction mode.
+// Use a different channel for non-transactional semantics.
+func (s *Session) Tx() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.channel.Tx()
+}
+
+// TxCommit atomically commits all publishings and acknowledgments for a single queue and immediately start a new transaction.
+//
+// Calling this method without having called Channel.Tx is an error.
+func (s *Session) TxCommit() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.channel.TxCommit()
+}
+
+// TxRollback atomically rolls back all publishings and acknowledgments for a single queue and immediately start a new transaction.
+//
+// Calling this method without having called Channel.Tx is an error.
+func (s *Session) TxRollback() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.channel.TxRollback()
+}
+
+func (s *Session) Do(ctx context.Context, f func() error) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.retry(ctx, nil, func() (err error) {
+		err = s.channel.Tx()
+		if err != nil {
+			return err
+		}
+		defer func() {
+			if err != nil {
+				err = errors.Join(err, s.channel.TxRollback())
+			} else {
+				err = s.channel.TxCommit()
+			}
+		}()
+
+		return f()
 	})
 }
 
