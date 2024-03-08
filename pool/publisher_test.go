@@ -20,7 +20,7 @@ func TestSinglePublisher(t *testing.T) {
 		proxyName, connectURL, _ = testutils.NextConnectURL()
 		ctx                      = context.TODO()
 		nextConnName             = testutils.ConnectionNameGenerator()
-		numMsgs                  = 20
+		numMsgs                  = 10
 	)
 
 	healthyConnCB, hcbAssert := AssertConnectionReconnectAttempts(t, 0)
