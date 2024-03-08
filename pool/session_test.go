@@ -9,6 +9,7 @@ import (
 	"github.com/jxsl13/amqpx/internal/testutils"
 	"github.com/jxsl13/amqpx/logging"
 	"github.com/jxsl13/amqpx/pool"
+	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -71,7 +72,7 @@ func TestNewSingleSessionPublishAndConsume(t *testing.T) {
 	cleanup := DeclareExchangeQueue(t, ctx, s, exchangeName, queueName)
 	defer cleanup()
 
-	ConsumeAsyncN(t, ctx, &wg, s, queueName, consumerName, consumeMessageGenerator, numMsgs, false)
+	ConsumeAsyncN(t, ctx, &wg, s, queueName, consumerName, consumeMessageGenerator, numMsgs, true)
 	PublishAsyncN(t, ctx, &wg, s, exchangeName, publishMessageGenerator, numMsgs)
 
 	wg.Wait()
@@ -137,7 +138,7 @@ func TestManyNewSessionsPublishAndConsume(t *testing.T) {
 		cleanup := DeclareExchangeQueue(t, ctx, s, exchangeName, queueName)
 		defer cleanup()
 
-		ConsumeAsyncN(t, ctx, &wg, s, queueName, consumerName, consumeNextMessage, numMsgs, false)
+		ConsumeAsyncN(t, ctx, &wg, s, queueName, consumerName, consumeNextMessage, numMsgs, true)
 		PublishAsyncN(t, ctx, &wg, s, exchangeName, publishNextMessage, numMsgs)
 	}
 
@@ -266,18 +267,15 @@ func TestNewSessionExchangeDeclareWithDisconnect(t *testing.T) {
 	}()
 
 	disconnected()
-	defer reconnected()
-
 	err = s.ExchangeDeclare(ctx, exchangeName, pool.ExchangeKindTopic)
 	if err != nil {
 		assert.NoError(t, err)
 		return
 	}
+	reconnected()
 
-	defer func() {
-		err := s.ExchangeDelete(ctx, exchangeName)
-		assert.NoError(t, err)
-	}()
+	err = s.ExchangeDelete(ctx, exchangeName)
+	assert.NoError(t, err)
 }
 
 func TestNewSessionExchangeDeleteWithDisconnect(t *testing.T) {
@@ -382,20 +380,18 @@ func TestNewSessionQueueDeclareWithDisconnect(t *testing.T) {
 	}()
 
 	disconnected()
-	defer reconnected()
 
 	_, err = s.QueueDeclare(ctx, queueName)
 	if err != nil {
 		assert.NoError(t, err)
 		return
 	}
+	reconnected()
 
-	defer func() {
-		_, err := s.QueueDelete(ctx, queueName)
-		assert.NoError(t, err, "expected no error when deleting queue")
-		// TODO: asserting the number of deleted messages seems to be pretty flaky, so we do not assert it here
-		// assert.Equal(t, 0, delMsgs, "expected 0 messages to be deleted")
-	}()
+	_, err = s.QueueDelete(ctx, queueName)
+	assert.NoError(t, err, "expected no error when deleting queue")
+	// TODO: asserting the number of deleted messages seems to be pretty flaky, so we do not assert it here
+	// assert.Equal(t, 0, delMsgs, "expected 0 messages to be deleted")
 }
 
 func TestNewSessionQueueDeleteWithDisconnect(t *testing.T) {
@@ -449,11 +445,10 @@ func TestNewSessionQueueDeleteWithDisconnect(t *testing.T) {
 	}
 
 	disconnected()
-	defer reconnected()
-
 	delMsgs, err := s.QueueDelete(ctx, queueName)
 	assert.NoError(t, err)
 	assert.Equal(t, 0, delMsgs, "expected 0 messages to be deleted")
+	reconnected()
 }
 
 func TestNewSessionQueueBindWithDisconnect(t *testing.T) {
@@ -664,7 +659,7 @@ func TestNewSessionPublishWithDisconnect(t *testing.T) {
 		disconnected, reconnected = Disconnect(t, proxyName, 5*time.Second)
 	)
 
-	ConsumeAsyncN(t, ctx, &wg, hs, queueName, nextConsumerName(), consumeMsgGen, numMsgs, false)
+	ConsumeAsyncN(t, ctx, &wg, hs, queueName, nextConsumerName(), consumeMsgGen, numMsgs, true)
 
 	disconnected()
 	PublishN(t, ctx, s, exchangeName, publishMsgGen, numMsgs)
@@ -731,4 +726,26 @@ func TestNewSessionConsumeWithDisconnect(t *testing.T) {
 	reconnected()
 
 	wg.Wait()
+}
+
+func TestChannelCloseOnOutOfMemoryRabbitMQ(t *testing.T) {
+	t.Parallel()
+
+	amqpConn, err := amqp.Dial(testutils.BrokenConnectURL)
+	if err != nil {
+		assert.NoError(t, err)
+		return
+	}
+	defer func() {
+		assert.NoError(t, amqpConn.Close(), "expected no error when closing connection")
+	}()
+
+	amqpChan, err := amqpConn.Channel()
+	if err != nil {
+		assert.NoError(t, err, "expected no error when creating channel")
+		return
+	}
+
+	err = amqpChan.Close()
+	assert.NoError(t, err, "expected no error when closing channel")
 }
