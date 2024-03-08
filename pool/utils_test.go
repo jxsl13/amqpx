@@ -26,6 +26,7 @@ func ConsumeN(
 	consumerName string,
 	messageGenerator func() string,
 	n int,
+	allowDuplicates bool,
 ) {
 	cctx, ccancel := context.WithCancel(ctx)
 	defer ccancel()
@@ -35,7 +36,7 @@ func ConsumeN(
 	defer func() {
 		assert.Equal(t, n, msgsReceived, "expected to consume %d messages, got %d", n, msgsReceived)
 	}()
-outer:
+
 	for {
 		delivery, err := c.Consume(
 			queueName,
@@ -56,8 +57,9 @@ outer:
 			case <-cctx.Done():
 				return
 			case val, ok := <-delivery:
+				require.True(t, ok, "expected delivery channel to be open of consumer %s in ConsumeN", consumerName)
 				if !ok {
-					continue outer
+					return
 				}
 				err := val.Ack(false)
 				if err != nil {
@@ -65,10 +67,15 @@ outer:
 					return
 				}
 
-				var (
-					expectedMsg = messageGenerator()
-					receivedMsg = string(val.Body)
-				)
+				var receivedMsg = string(val.Body)
+				if allowDuplicates && receivedMsg == previouslyReceivedMsg {
+					// TODO: it is possible that messages are duplicated, but this is not a problem
+					// due to network issues. We should not fail the test in this case.
+					log.Warnf("received duplicate message: %s", receivedMsg)
+					continue
+				}
+
+				var expectedMsg = messageGenerator()
 				assert.Equalf(
 					t,
 					expectedMsg,
@@ -101,12 +108,13 @@ func ConsumeAsyncN(
 	consumerName string,
 	messageGenerator func() string,
 	n int,
+	alllowDuplicates bool,
 ) {
 
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		ConsumeN(t, ctx, c, queueName, consumerName, messageGenerator, n)
+		ConsumeN(t, ctx, c, queueName, consumerName, messageGenerator, n, alllowDuplicates)
 	}()
 }
 

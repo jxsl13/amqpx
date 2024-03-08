@@ -82,10 +82,14 @@ func (p *Publisher) Publish(ctx context.Context, exchange string, routingKey str
 		case errors.Is(err, ErrDeliveryTagMismatch):
 			return err
 		case errors.Is(err, ErrFlowControl):
-			p.warn(exchange, routingKey, err, "publish failed, retrying")
 			return err
 		default:
-			p.warn(exchange, routingKey, err, "publish failed, retrying")
+			if recoverable(err) {
+				p.warn(exchange, routingKey, err, "publish failed due to recoverable error, retrying")
+				// retry
+			} else {
+				return err
+			}
 		}
 	}
 }

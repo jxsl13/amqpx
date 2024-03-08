@@ -30,6 +30,7 @@ func TestNewSingleSessionPublishAndConsume(t *testing.T) {
 		consumerName            = nextConsumerName()
 		consumeMessageGenerator = testutils.MessageGenerator(queueName)
 		publishMessageGenerator = testutils.MessageGenerator(queueName)
+		numMsgs                 = 20
 	)
 
 	reconnectCB, deferredAssert := AssertConnectionReconnectAttempts(t, 0)
@@ -70,8 +71,8 @@ func TestNewSingleSessionPublishAndConsume(t *testing.T) {
 	cleanup := DeclareExchangeQueue(t, ctx, s, exchangeName, queueName)
 	defer cleanup()
 
-	ConsumeAsyncN(t, ctx, &wg, s, queueName, consumerName, consumeMessageGenerator, 20)
-	PublishAsyncN(t, ctx, &wg, s, exchangeName, publishMessageGenerator, 20)
+	ConsumeAsyncN(t, ctx, &wg, s, queueName, consumerName, consumeMessageGenerator, numMsgs, false)
+	PublishAsyncN(t, ctx, &wg, s, exchangeName, publishMessageGenerator, numMsgs)
 
 	wg.Wait()
 }
@@ -86,6 +87,7 @@ func TestManyNewSessionsPublishAndConsume(t *testing.T) {
 		connName        = nextConnName()
 		nextSessionName = testutils.SessionNameGenerator(connName)
 		sessions        = 5
+		numMsgs         = 20
 	)
 
 	reconnectCB, deferredAssert := AssertConnectionReconnectAttempts(t, 0)
@@ -135,8 +137,8 @@ func TestManyNewSessionsPublishAndConsume(t *testing.T) {
 		cleanup := DeclareExchangeQueue(t, ctx, s, exchangeName, queueName)
 		defer cleanup()
 
-		ConsumeAsyncN(t, ctx, &wg, s, queueName, consumerName, consumeNextMessage, 20)
-		PublishAsyncN(t, ctx, &wg, s, exchangeName, publishNextMessage, 20)
+		ConsumeAsyncN(t, ctx, &wg, s, queueName, consumerName, consumeNextMessage, numMsgs, false)
+		PublishAsyncN(t, ctx, &wg, s, exchangeName, publishNextMessage, numMsgs)
 	}
 
 	wg.Wait()
@@ -662,7 +664,7 @@ func TestNewSessionPublishWithDisconnect(t *testing.T) {
 		disconnected, reconnected = Disconnect(t, proxyName, 5*time.Second)
 	)
 
-	ConsumeAsyncN(t, ctx, &wg, hs, queueName, nextConsumerName(), consumeMsgGen, numMsgs)
+	ConsumeAsyncN(t, ctx, &wg, hs, queueName, nextConsumerName(), consumeMsgGen, numMsgs, false)
 
 	disconnected()
 	PublishN(t, ctx, s, exchangeName, publishMsgGen, numMsgs)
@@ -725,7 +727,7 @@ func TestNewSessionConsumeWithDisconnect(t *testing.T) {
 	PublishAsyncN(t, ctx, &wg, hs, exchangeName, publisherMsgGen, numMsgs)
 
 	disconnected()
-	ConsumeN(t, ctx, s, queueName, nextConsumerName(), consumerMsgGen, numMsgs)
+	ConsumeN(t, ctx, s, queueName, nextConsumerName(), consumerMsgGen, numMsgs, false)
 	reconnected()
 
 	wg.Wait()

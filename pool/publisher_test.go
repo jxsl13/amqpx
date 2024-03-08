@@ -3,8 +3,6 @@ package pool_test
 import (
 	"context"
 	"fmt"
-	"os"
-	"os/signal"
 	"sync"
 	"testing"
 	"time"
@@ -15,217 +13,152 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestPublisher(t *testing.T) {
-	ctx := context.TODO()
-	connections := 1
-	sessions := 10 // publisher sessions + consumer sessions
-	p, err := pool.New(
-		ctx,
-		testutils.HealthyConnectURL,
-		connections,
-		sessions,
-		pool.WithName("TestPublisher"),
-		pool.WithConfirms(true),
-		pool.WithLogger(logging.NewTestLogger(t)),
-	)
-	if err != nil {
-		assert.NoError(t, err)
-		return
-	}
-	defer p.Close()
-
-	var wg sync.WaitGroup
-
-	channels := sessions / 2 // one sessions for consumer and one for publisher
-	wg.Add(channels)
-	for id := 0; id < channels; id++ {
-		go func(id int64) {
-			defer wg.Done()
-
-			s, err := p.GetSession(ctx)
-			if err != nil {
-				assert.NoError(t, err)
-				return
-			}
-			defer func() {
-				p.ReturnSession(s, nil)
-			}()
-
-			queueName := fmt.Sprintf("TestPublisher-Queue-%d", id)
-			_, err = s.QueueDeclare(ctx, queueName)
-			if err != nil {
-				assert.NoError(t, err)
-				return
-			}
-			defer func() {
-				i, err := s.QueueDelete(ctx, queueName)
-				assert.NoError(t, err)
-				assert.Equal(t, 0, i)
-			}()
-
-			exchangeName := fmt.Sprintf("TestPublisher-Exchange-%d", id)
-			err = s.ExchangeDeclare(ctx, exchangeName, "topic")
-			if err != nil {
-				assert.NoError(t, err)
-				return
-			}
-			defer func() {
-				err := s.ExchangeDelete(ctx, exchangeName)
-				assert.NoError(t, err)
-			}()
-
-			err = s.QueueBind(ctx, queueName, "#", exchangeName)
-			if err != nil {
-				assert.NoError(t, err)
-				return
-			}
-			defer func() {
-				err := s.QueueUnbind(ctx, queueName, "#", exchangeName, nil)
-				assert.NoError(t, err)
-			}()
-
-			delivery, err := s.Consume(
-				queueName,
-				pool.ConsumeOptions{
-					ConsumerTag: fmt.Sprintf("Consumer-%s", queueName),
-					Exclusive:   true,
-				},
-			)
-			if err != nil {
-				assert.NoError(t, err)
-				return
-			}
-
-			message := fmt.Sprintf("Message-%s", queueName)
-
-			wg.Add(1)
-			go func(msg string) {
-				defer wg.Done()
-
-				for val := range delivery {
-					receivedMsg := string(val.Body)
-					assert.Equal(t, message, receivedMsg)
-				}
-				// this routine must be closed upon session closure
-			}(message)
-
-			time.Sleep(5 * time.Second)
-
-			pub := pool.NewPublisher(p)
-			defer pub.Close()
-
-			pub.Publish(ctx, exchangeName, "", pool.Publishing{
-				Mandatory:   true,
-				ContentType: "application/json",
-				Body:        []byte(message),
-			})
-
-			time.Sleep(5 * time.Second)
-
-		}(int64(id))
-	}
-
-	wg.Wait()
-}
-
-func TestPublishAwaitFlowControl(t *testing.T) {
-	ctx, cancel := signal.NotifyContext(context.TODO(), os.Interrupt)
-	defer cancel()
-
-	connections := 1
-	sessions := 2 // publisher sessions + consumer sessions
-	p, err := pool.New(
-		ctx,
-		testutils.BrokenConnectURL, // memory limit or disk limit reached
-		connections,
-		sessions,
-		pool.WithName("TestPublishAwaitFlowControl"),
-		pool.WithConfirms(true),
-		pool.WithLogger(logging.NewTestLogger(t)),
-	)
-	if err != nil {
-		assert.NoError(t, err)
-		return
-	}
-	defer p.Close()
-
-	s, err := p.GetSession(ctx)
-	if err != nil {
-		assert.NoError(t, err)
-		return
-	}
-	defer p.ReturnSession(s, nil)
+func TestSinglePublisher(t *testing.T) {
+	t.Parallel()
 
 	var (
-		exchangeName = "TestPublishAwaitFlowControl-Exchange"
+		proxyName, connectURL, _ = testutils.NextConnectURL()
+		ctx                      = context.TODO()
+		nextConnName             = testutils.ConnectionNameGenerator()
+		numMsgs                  = 20
 	)
 
-	cleanup := initQueueExchange(t, s, ctx, "TestPublishAwaitFlowControl-Queue", exchangeName)
+	healthyConnCB, hcbAssert := AssertConnectionReconnectAttempts(t, 0)
+	defer hcbAssert()
+	hs, hsclose := NewSession(
+		t,
+		ctx,
+		testutils.HealthyConnectURL,
+		nextConnName(),
+		pool.ConnectionWithRecoverCallback(healthyConnCB),
+	)
+	defer hsclose()
+
+	p, err := pool.New(
+		ctx,
+		connectURL,
+		1,
+		1,
+		pool.WithLogger(logging.NewTestLogger(t)),
+		pool.WithConfirms(true),
+	)
+	if err != nil {
+		assert.NoError(t, err)
+		return
+	}
+	defer p.Close()
+
+	var (
+		nextExchangeName = testutils.ExchangeNameGenerator(hs.Name())
+		nextQueueName    = testutils.QueueNameGenerator(hs.Name())
+		exchangeName     = nextExchangeName()
+		queueName        = nextQueueName()
+	)
+	cleanup := DeclareExchangeQueue(t, ctx, hs, exchangeName, queueName)
 	defer cleanup()
+
+	var (
+		nextConsumerName = testutils.ConsumerNameGenerator(queueName)
+		publisherMsgGen  = testutils.MessageGenerator(queueName)
+		consumerMsgGen   = testutils.MessageGenerator(queueName)
+		wg               sync.WaitGroup
+	)
 
 	pub := pool.NewPublisher(p)
 	defer pub.Close()
 
-	pubGen := PublishingGenerator("TestPublishAwaitFlowControl")
+	// TODO: currently this test allows duplication of messages
+	ConsumeAsyncN(t, ctx, &wg, hs, queueName, nextConsumerName(), consumerMsgGen, numMsgs, true)
 
-	err = pub.Publish(ctx, exchangeName, "", pubGen())
+	for i := 0; i < numMsgs; i++ {
+		msg := publisherMsgGen()
+		err = func(msg string) error {
+			disconnected, reconnected := DisconnectWithStartedStopped(
+				t,
+				proxyName,
+				0,
+				testutils.Jitter(time.Millisecond, 20*time.Millisecond),
+				testutils.Jitter(100*time.Millisecond, 150*time.Millisecond),
+			)
+			defer func() {
+				disconnected()
+				reconnected()
+			}()
+
+			return pub.Publish(ctx, exchangeName, "", pool.Publishing{
+				Mandatory:   true,
+				ContentType: "text/plain",
+				Body:        []byte(msg),
+			})
+		}(msg)
+		if err != nil {
+			assert.NoError(t, err, fmt.Sprintf("when publishing message %s", msg))
+			return
+		}
+	}
+	wg.Wait()
+}
+
+func TestPublishAwaitFlowControl(t *testing.T) {
+	t.Parallel()
+
+	var (
+		ctx          = context.TODO()
+		nextConnName = testutils.ConnectionNameGenerator()
+	)
+
+	healthyConnCB, hcbAssert := AssertConnectionReconnectAttempts(t, 0)
+	defer hcbAssert()
+	hs, hsclose := NewSession(
+		t,
+		ctx,
+		testutils.HealthyConnectURL,
+		nextConnName(),
+		pool.ConnectionWithRecoverCallback(healthyConnCB),
+	)
+	defer hsclose()
+
+	p, err := pool.New(
+		ctx,
+		testutils.BrokenConnectURL,
+		1,
+		1,
+		pool.WithLogger(logging.NewTestLogger(t)),
+		pool.WithConfirms(true),
+	)
+	if err != nil {
+		assert.NoError(t, err)
+		return
+	}
+	defer func() {
+		p.Close()
+	}()
+	var (
+		nextExchangeName = testutils.ExchangeNameGenerator(hs.Name())
+		nextQueueName    = testutils.QueueNameGenerator(hs.Name())
+		exchangeName     = nextExchangeName()
+		queueName        = nextQueueName()
+	)
+	ts, err := p.GetTransientSession(ctx)
+	if err != nil {
+		assert.NoError(t, err)
+		return
+	}
+	defer func() {
+		p.ReturnSession(ts, nil)
+	}()
+	cleanup := DeclareExchangeQueue(t, ctx, ts, exchangeName, queueName)
+	defer cleanup()
+
+	var (
+		publisherMsgGen = testutils.MessageGenerator(queueName)
+	)
+	pub := pool.NewPublisher(p)
+	defer pub.Close()
+
+	err = pub.Publish(ctx, exchangeName, "", pool.Publishing{
+		ContentType: "text/plain",
+		Body:        []byte(publisherMsgGen()),
+	})
 	assert.ErrorIs(t, err, pool.ErrFlowControl)
-
-}
-
-func initQueueExchange(t *testing.T, s *pool.Session, ctx context.Context, queueName, exchangeName string) (cleanup func()) {
-	_, err := s.QueueDeclare(ctx, queueName)
-	if err != nil {
-		assert.NoError(t, err)
-		return
-	}
-	cleanupList := []func(){}
-
-	cleanupQueue := func() {
-		i, err := s.QueueDelete(ctx, queueName)
-		assert.NoError(t, err)
-		assert.Equal(t, 0, i)
-	}
-	cleanupList = append(cleanupList, cleanupQueue)
-
-	err = s.ExchangeDeclare(ctx, exchangeName, "topic")
-	if err != nil {
-		assert.NoError(t, err)
-		return
-	}
-	cleanupExchange := func() {
-		err := s.ExchangeDelete(ctx, exchangeName)
-		assert.NoError(t, err)
-	}
-	cleanupList = append(cleanupList, cleanupExchange)
-
-	err = s.QueueBind(ctx, queueName, "#", exchangeName)
-	if err != nil {
-		assert.NoError(t, err)
-		return
-	}
-	cleanupBind := func() {
-		err := s.QueueUnbind(ctx, queueName, "#", exchangeName, nil)
-		assert.NoError(t, err)
-	}
-	cleanupList = append(cleanupList, cleanupBind)
-
-	return func() {
-		for i := len(cleanupList) - 1; i >= 0; i-- {
-			cleanupList[i]()
-		}
-	}
-}
-
-func PublishingGenerator(MessagePrefix string) func() pool.Publishing {
-	i := 0
-	return func() pool.Publishing {
-		defer func() {
-			i++
-		}()
-		return pool.Publishing{
-			ContentType: "application/json",
-			Body:        []byte(fmt.Sprintf("%s-%d", MessagePrefix, i)),
-		}
-	}
 }
