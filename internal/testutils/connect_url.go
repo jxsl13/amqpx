@@ -1,10 +1,8 @@
 package testutils
 
 import (
-	"encoding/json"
 	"fmt"
 	"sync"
-	"testing"
 )
 
 var (
@@ -13,13 +11,14 @@ var (
 	Username          = "admin"
 	Password          = "password"
 	Hostname          = "localhost"
-	BrokenConnectURL  = fmt.Sprintf("amqp://%s:%s@%s:%d/", Username, Password, Hostname, 5670)
-	HealthyConnectURL = fmt.Sprintf("amqp://%s:%s@%s:%d/", Username, Password, Hostname, 5671)
-)
+	ToxiProxyPort     = 8474
+	BrokenPort        = 5670
+	HealthyPort       = 5671
+	ExcludedPorts     = []int{BrokenPort, HealthyPort, ToxiProxyPort}
+	BrokenConnectURL  = fmt.Sprintf("amqp://%s:%s@%s:%d/", Username, Password, Hostname, BrokenPort)
+	HealthyConnectURL = fmt.Sprintf("amqp://%s:%s@%s:%d/", Username, Password, Hostname, HealthyPort)
 
-var (
-	port int = 5672
-	mu   sync.Mutex
+	nextPort = NewPortGenerator(ExcludedPorts...)
 )
 
 func NextConnectURL() (proxyName, connectURL string, port int) {
@@ -30,67 +29,44 @@ func NextConnectURL() (proxyName, connectURL string, port int) {
 }
 
 func NextPort() int {
-	mu.Lock()
-	defer mu.Unlock()
-	defer func() {
-	loop:
-		for {
-			port++
-			switch port {
-			case 5670, 5671, 8474:
-			default:
+	return nextPort()
+}
+
+func NewConnectURLGenerator(excludePorts ...int) func() (proxyName, connectURL string, port int) {
+	portGen := NewPortGenerator(excludePorts...)
+	return func() (proxyName, connectURL string, port int) {
+		proxyPort := portGen()
+		return fmt.Sprintf("rabbitmq-%d", proxyPort),
+			fmt.Sprintf("amqp://%s:%s@%s:%d/", Username, Password, Hostname, proxyPort),
+			proxyPort
+	}
+}
+
+func NewPortGenerator(excludePorts ...int) func() int {
+	var (
+		port int = 5672
+		mu   sync.Mutex
+	)
+	excludeMap := make(map[int]struct{}, len(excludePorts))
+	for _, p := range excludePorts {
+		excludeMap[p] = struct{}{}
+	}
+	return func() int {
+		mu.Lock()
+		defer mu.Unlock()
+		defer func() {
+		loop:
+			for {
+				port++
+
+				if _, ok := excludeMap[port]; ok {
+					continue loop
+				}
 				break loop
+
 			}
-
-		}
-	}()
-	return port
-}
-
-/*
-[
-
-	{
-	  "name": "rabbitmq",
-	  "listen": "[::]:5672",
-	  "upstream": "rabbitmq:5672",
-	  "enabled": true
+		}()
+		return port
 	}
 
-]
-*/
-func TestGenerateProxyConfig(_ *testing.T) {
-	list := []struct {
-		Name     string `json:"name"`
-		Listen   string `json:"listen"`
-		Upstream string `json:"upstream"`
-		Enabled  bool   `json:"enabled"`
-	}{}
-
-	for i := 0; i < NumTests; i++ {
-		_, proxyName, proxyPort := NextConnectURL()
-		list = append(list, struct {
-			Name     string `json:"name"`
-			Listen   string `json:"listen"`
-			Upstream string `json:"upstream"`
-			Enabled  bool   `json:"enabled"`
-		}{
-			Name:     proxyName,
-			Listen:   fmt.Sprintf("[::]:%d", proxyPort),
-			Upstream: Upstream,
-			Enabled:  true,
-		})
-	}
-
-	data, _ := json.MarshalIndent(list, "", "  ")
-	fmt.Println(string(data))
-}
-
-func TestGenerateDockerPortForwards(_ *testing.T) {
-	str := ""
-	for i := 0; i < NumTests; i++ {
-		proxyName, _, proxyPort := NextConnectURL()
-		str += fmt.Sprintf("      - %[1]d:%[1]d # %s\n", proxyPort, proxyName)
-	}
-	fmt.Println(str)
 }
