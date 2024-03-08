@@ -194,18 +194,43 @@ A `Subscriber` must be `Start()`ed in order for it to create consumer goroutines
 
 Test flags you might want to add:
 ```shell
--v -race -count=1
+go test -v -race -count=1 ./...
 ```
 - see test logs
 - detect data races
 - do not cache test results
 
-Starting the test environment:
-```shell
-docker-compose up -d
-```
-
 Starting the tests:
 ```shell
 go test -v -race -count=1 ./...
+```
+
+### Test environment
+
+- Requires docker (and docker compose subcommand)
+
+Starting the test environment:
+```shell
+make environment
+#or
+docker compose up -d
+```
+
+The test environment looks like this:
+
+Web interfaces:
+ - [rabbitmq management interface: http://127.0.0.1:15672 -> rabbitmq:15672](http://127.0.0.1:15672)
+ - [out of memory rabbitmq management interface: http://127.0.0.1:25672 -> rabbitmq-broken:15672](http://127.0.0.1:25672)
+
+```
+127.0.0.1:5670 	-> rabbitmq-broken:5672 	# out of memory rabbitmq
+127.0.0.1:5671 	-> rabbitmq:5672 			# healthy rabbitmq connection which is never disconnected
+
+
+127.0.0.1:5672	-> toxiproxy:5672	-> rabbitmq:5672	# connection which is disconnected by toxiproxy
+127.0.0.1:5673	-> toxiproxy:5673	-> rabbitmq:5672	# connection which is disconnected by toxiproxy
+127.0.0.1:5674	-> toxiproxy:5674	-> rabbitmq:5672	# connection which is disconnected by toxiproxy
+...
+127.0.0.1:5771	-> toxiproxy:5771	-> rabbitmq:5672	# connection which is disconnected by toxiproxy
+
 ```
