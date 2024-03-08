@@ -7,6 +7,7 @@ import (
 
 	toxiproxy "github.com/Shopify/toxiproxy/v2/client"
 	"github.com/jxsl13/amqpx/logging"
+	"github.com/stretchr/testify/require"
 )
 
 type Proxy struct {
@@ -23,22 +24,13 @@ func NewProxy(t *testing.T, proxyName string) *Proxy {
 
 	m, err := toxi.Proxies()
 	if err != nil {
-		log.Fatal(err)
+		require.NoError(t, err)
 	}
 
 	var proxy *toxiproxy.Proxy
 	proxy, found := m[proxyName]
-	if !found {
-		log.Fatalf("no proxy with name %s found", proxyName)
-	}
-	for k, p := range m {
-		if k == "rabbitmq" {
-			proxy = p
-		}
-	}
-	if proxy == nil {
-		log.Fatalf("proxy with name %s is nil", proxyName)
-	}
+	require.Truef(t, found, "no proxy with name %s found", proxyName)
+	require.NotNil(t, proxy, "proxy with name %s is nil", proxyName)
 
 	return &Proxy{
 		proxy:           proxy,
@@ -86,6 +78,7 @@ func (p *Proxy) Close() error {
 		return nil
 	}
 
+	// TODO: this can be removed
 	waitTime := time.Until(p.lastHttpRequest.Add(10 * time.Second))
 	if waitTime > 0 {
 		time.Sleep(waitTime)
@@ -105,6 +98,8 @@ func DisconnectWithStopped(t *testing.T, proxyName string, block, timeout, durat
 		wg    sync.WaitGroup
 		proxy = NewProxy(t, proxyName)
 	)
+	require.NoError(t, proxy.Enable())
+
 	wg.Add(1)
 	go func(start time.Time) {
 		defer wg.Done()
@@ -116,7 +111,7 @@ func DisconnectWithStopped(t *testing.T, proxyName string, block, timeout, durat
 		log.Debug("disabled rabbitmq connection")
 		err := proxy.Disable()
 		if err != nil {
-			log.Fatal(err)
+			require.NoError(t, err)
 		}
 
 		if duration > 0 {
@@ -125,7 +120,7 @@ func DisconnectWithStopped(t *testing.T, proxyName string, block, timeout, durat
 		log.Debug("enabled rabbitmq connection")
 		err = proxy.Enable()
 		if err != nil {
-			log.Fatal(err)
+			require.NoError(t, err)
 		}
 	}(start)
 	if block > 0 {
@@ -149,6 +144,7 @@ func DisconnectWithStartedStopped(t *testing.T, proxyName string, block, startIn
 		wgStop  sync.WaitGroup
 		proxy   = NewProxy(t, proxyName)
 	)
+	require.NoError(t, proxy.Enable())
 
 	wgStart.Add(1)
 	wgStop.Add(1)
@@ -162,7 +158,7 @@ func DisconnectWithStartedStopped(t *testing.T, proxyName string, block, startIn
 		log.Debug("disabled rabbitmq connection")
 		err := proxy.Disable()
 		if err != nil {
-			log.Fatal(err)
+			require.NoError(t, err)
 		}
 		wgStart.Done()
 
@@ -172,7 +168,7 @@ func DisconnectWithStartedStopped(t *testing.T, proxyName string, block, startIn
 		log.Debug("enabled rabbitmq connection")
 		err = proxy.Enable()
 		if err != nil {
-			log.Fatal(err)
+			require.NoError(t, err)
 		}
 	}(start)
 	if block > 0 {
@@ -213,6 +209,8 @@ func DisconnectWithStartStartedStopped(t *testing.T, proxyName string, duration 
 		wgStop  sync.WaitGroup
 		proxy   = NewProxy(t, proxyName)
 	)
+	require.NoError(t, proxy.Enable())
+
 	disconnect = func() {
 		wgStart.Add(1)
 		wgStop.Add(1)
@@ -223,7 +221,7 @@ func DisconnectWithStartStartedStopped(t *testing.T, proxyName string, duration 
 			log.Debug("disabled rabbitmq connection")
 			err := proxy.Disable()
 			if err != nil {
-				log.Fatal(err)
+				require.NoError(t, err)
 			}
 			wgStart.Done()
 
@@ -233,7 +231,7 @@ func DisconnectWithStartStartedStopped(t *testing.T, proxyName string, duration 
 			log.Debug("enabled rabbitmq connection")
 			err = proxy.Enable()
 			if err != nil {
-				log.Fatal(err)
+				require.NoError(t, err)
 			}
 		}()
 	}
