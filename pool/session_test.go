@@ -655,15 +655,15 @@ func TestNewSessionPublishWithDisconnect(t *testing.T) {
 	defer cleanup()
 
 	var (
-		consumeMsgGen = testutils.MessageGenerator(queueName)
-		publishMsgGen = testutils.MessageGenerator(queueName)
-		numMsgs       = 20
-		wg            sync.WaitGroup
+		wg                        sync.WaitGroup
+		consumeMsgGen             = testutils.MessageGenerator(queueName)
+		publishMsgGen             = testutils.MessageGenerator(queueName)
+		numMsgs                   = 20
+		disconnected, reconnected = Disconnect(t, proxyName, 5*time.Second)
 	)
 
 	ConsumeAsyncN(t, ctx, &wg, hs, queueName, nextConsumerName(), consumeMsgGen, numMsgs)
 
-	disconnected, reconnected := Disconnect(t, proxyName, 5*time.Second)
 	disconnected()
 	PublishN(t, ctx, s, exchangeName, publishMsgGen, numMsgs)
 	reconnected()
@@ -715,15 +715,15 @@ func TestNewSessionConsumeWithDisconnect(t *testing.T) {
 	defer cleanup()
 
 	var (
-		publisherMsgGen = testutils.MessageGenerator(queueName)
-		consumerMsgGen  = testutils.MessageGenerator(queueName)
-		numMsgs         = 20
-		wg              sync.WaitGroup
+		publisherMsgGen           = testutils.MessageGenerator(queueName)
+		consumerMsgGen            = testutils.MessageGenerator(queueName)
+		numMsgs                   = 20
+		wg                        sync.WaitGroup
+		disconnected, reconnected = Disconnect(t, proxyName, 5*time.Second)
 	)
 
 	PublishAsyncN(t, ctx, &wg, hs, exchangeName, publisherMsgGen, numMsgs)
 
-	disconnected, reconnected := Disconnect(t, proxyName, 5*time.Second)
 	disconnected()
 	ConsumeN(t, ctx, s, queueName, nextConsumerName(), consumerMsgGen, numMsgs)
 	reconnected()

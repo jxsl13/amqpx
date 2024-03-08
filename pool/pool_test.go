@@ -68,5 +68,4 @@ func TestNewPool(t *testing.T) {
 	}
 
 	wg.Wait()
-
 }

@@ -49,6 +49,8 @@ outer:
 			return
 		}
 
+		var previouslyReceivedMsg string
+
 		for {
 			select {
 			case <-cctx.Done():
@@ -63,14 +65,28 @@ outer:
 					return
 				}
 
-				receivedMsg := string(val.Body)
-				assert.Equal(t, messageGenerator(), receivedMsg)
+				var (
+					expectedMsg = messageGenerator()
+					receivedMsg = string(val.Body)
+				)
+				assert.Equalf(
+					t,
+					expectedMsg,
+					receivedMsg,
+					"expected message %s, got %s, previously received message: %s",
+					expectedMsg,
+					receivedMsg,
+					previouslyReceivedMsg,
+				)
+
 				log.Infof("consumed message: %s", receivedMsg)
 				msgsReceived++
 				if msgsReceived == n {
 					logging.NewTestLogger(t).Infof("consumed %d messages, closing consumer", n)
 					ccancel()
 				}
+				// update last received message
+				previouslyReceivedMsg = receivedMsg
 			}
 		}
 	}
@@ -110,13 +126,13 @@ func PublishN(
 ) {
 	for i := 0; i < n; i++ {
 		message := publishMessageGenerator()
-		err := publish(t, ctx, p, exchangeName, message)
+		err := publish(ctx, p, exchangeName, message)
 		assert.NoError(t, err)
 	}
 	logging.NewTestLogger(t).Infof("published %d messages, closing publisher", n)
 }
 
-func publish(t *testing.T, ctx context.Context, p Producer, exchangeName string, message string) error {
+func publish(ctx context.Context, p Producer, exchangeName string, message string) error {
 	tag, err := p.Publish(
 		ctx,
 		exchangeName, "",
