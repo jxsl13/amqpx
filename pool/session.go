@@ -211,12 +211,14 @@ func (s *Session) close() (err error) {
 		return nil
 	}
 
-	s.debug("canceling consumers...")
-	for consumer := range s.consumers {
-		// ignore error, as at this point we cannot do anything about the error
-		// tell server to cancel consumer deliveries.
-		cerr := s.channel.Cancel(consumer, false)
-		err = errors.Join(err, cerr)
+	if len(s.consumers) > 0 {
+		s.debug("canceling consumers...")
+		for consumer := range s.consumers {
+			// ignore error, as at this point we cannot do anything about the error
+			// tell server to cancel consumer deliveries.
+			cerr := s.channel.Cancel(consumer, false)
+			err = errors.Join(err, cerr)
+		}
 	}
 
 	if s.error() != nil {
@@ -1482,20 +1484,27 @@ func (s *Session) shutdownErr() error {
 	return s.ctx.Err()
 }
 
+func (s *Session) slog() logging.Logger {
+	return s.log.WithFields(logging.Fields{
+		"connection": s.conn.Name(),
+		"session":    s.name,
+	})
+}
+
 func (s *Session) info(a ...any) {
-	s.log.WithField("connection", s.conn.Name()).WithField("session", s.Name()).Info(a...)
+	s.slog().Info(a...)
 }
 
 func (s *Session) warn(err error, a ...any) {
-	s.log.WithField("connection", s.conn.Name()).WithField("session", s.Name()).WithField("error", err.Error()).Warn(a...)
+	s.slog().WithError(err).Warn(a...)
 }
 
 func (s *Session) warnf(err error, format string, a ...any) {
-	s.log.WithField("connection", s.conn.Name()).WithField("session", s.Name()).WithField("error", err.Error()).Warnf(format, a...)
+	s.slog().WithError(err).Warnf(format, a...)
 }
 
 func (s *Session) debug(a ...any) {
-	s.log.WithField("connection", s.conn.Name()).WithField("session", s.Name()).Debug(a...)
+	s.slog().Debug(a...)
 }
 
 // flush should be called when you return the session back to the pool

@@ -374,7 +374,7 @@ func (ch *Connection) shutdownErr() error {
 	return ch.ctx.Err()
 }
 
-func (ch *Connection) cLog() logging.Logger {
+func (ch *Connection) clog() logging.Logger {
 	return ch.log.WithFields(map[string]any{
 		"connection": ch.name,
 		"address":    ch.addr,
@@ -382,13 +382,13 @@ func (ch *Connection) cLog() logging.Logger {
 }
 
 func (ch *Connection) info(a ...any) {
-	ch.cLog().Info(a...)
+	ch.clog().Info(a...)
 }
 
 func (ch *Connection) warn(err error, a ...any) {
-	ch.cLog().WithField("error", err.Error()).Warn(a...)
+	ch.clog().WithError(err).Warn(a...)
 }
 
 func (ch *Connection) debug(a ...any) {
-	ch.cLog().Debug(a...)
+	ch.clog().Debug(a...)
 }
