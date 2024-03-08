@@ -2,9 +2,9 @@ package pool_test
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/jxsl13/amqpx/internal/testutils"
 	"github.com/jxsl13/amqpx/logging"
@@ -21,7 +21,6 @@ type Consumer interface {
 func ConsumeN(
 	t *testing.T,
 	ctx context.Context,
-	wg *sync.WaitGroup,
 	c Consumer,
 	queueName string,
 	consumerName string,
@@ -91,7 +90,7 @@ func ConsumeAsyncN(
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		ConsumeN(t, ctx, wg, c, queueName, consumerName, messageGenerator, n)
+		ConsumeN(t, ctx, c, queueName, consumerName, messageGenerator, n)
 	}()
 }
 
@@ -99,6 +98,43 @@ type Producer interface {
 	Publish(ctx context.Context, exchange string, routingKey string, msg pool.Publishing) (deliveryTag uint64, err error)
 	IsConfirmable() bool
 	AwaitConfirm(ctx context.Context, expectedTag uint64) error
+}
+
+func PublishN(
+	t *testing.T,
+	ctx context.Context,
+	p Producer,
+	exchangeName string,
+	publishMessageGenerator func() string,
+	n int,
+) {
+	for i := 0; i < n; i++ {
+		message := publishMessageGenerator()
+		err := publish(t, ctx, p, exchangeName, message)
+		assert.NoError(t, err)
+	}
+	logging.NewTestLogger(t).Infof("published %d messages, closing publisher", n)
+}
+
+func publish(t *testing.T, ctx context.Context, p Producer, exchangeName string, message string) error {
+	tag, err := p.Publish(
+		ctx,
+		exchangeName, "",
+		pool.Publishing{
+			Mandatory:   true,
+			ContentType: "text/plain",
+			Body:        []byte(message),
+		})
+	if err != nil {
+		return fmt.Errorf("expected no error when publishing message: %w", err)
+	}
+	if p.IsConfirmable() {
+		err = p.AwaitConfirm(ctx, tag)
+		if err != nil {
+			return fmt.Errorf("expected no error when awaiting confirmation: %w", err)
+		}
+	}
+	return nil
 }
 
 func PublishAsyncN(
@@ -113,41 +149,23 @@ func PublishAsyncN(
 	wg.Add(1)
 	go func(wg *sync.WaitGroup, publishMessageGenerator func() string, n int) {
 		defer wg.Done()
-
-		for i := 0; i < n; i++ {
-			func() {
-				tctx, cancel := context.WithTimeout(ctx, 60*time.Second)
-				defer cancel()
-
-				tag, err := p.Publish(
-					tctx,
-					exchangeName, "",
-					pool.Publishing{
-						Mandatory:   true,
-						ContentType: "text/plain",
-						Body:        []byte(publishMessageGenerator()),
-					})
-				if err != nil {
-					assert.NoError(t, err, "expected no error when publishing message")
-					return
-				}
-				if p.IsConfirmable() {
-					err = p.AwaitConfirm(tctx, tag)
-					if err != nil {
-						assert.NoError(t, err, "expected no error when awaiting confirmation")
-						return
-					}
-				}
-			}()
-		}
-		logging.NewTestLogger(t).Infof("published %d messages, closing publisher", n)
+		PublishN(t, ctx, p, exchangeName, publishMessageGenerator, n)
 	}(wg, publishMessageGenerator, n)
+}
+
+type Topologer interface {
+	ExchangeDeclare(ctx context.Context, name string, kind pool.ExchangeKind, option ...pool.ExchangeDeclareOptions) error
+	ExchangeDelete(ctx context.Context, name string, option ...pool.ExchangeDeleteOptions) error
+	QueueDeclare(ctx context.Context, name string, option ...pool.QueueDeclareOptions) (pool.Queue, error)
+	QueueDelete(ctx context.Context, name string, option ...pool.QueueDeleteOptions) (purgedMsgs int, err error)
+	QueueBind(ctx context.Context, queueName string, routingKey string, exchange string, option ...pool.QueueBindOptions) error
+	QueueUnbind(ctx context.Context, name string, routingKey string, exchange string, arg ...amqp091.Table) error
 }
 
 func DeclareExchangeQueue(
 	t *testing.T,
 	ctx context.Context,
-	s *pool.Session,
+	s Topologer,
 	exchangeName string,
 	queueName string,
 ) (cleanup func()) {

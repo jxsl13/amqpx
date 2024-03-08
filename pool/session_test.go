@@ -655,230 +655,78 @@ func TestNewSessionPublishWithDisconnect(t *testing.T) {
 	defer cleanup()
 
 	var (
-		msgGen = func() string { return "test message content" }
-		wg     sync.WaitGroup
+		consumeMsgGen = testutils.MessageGenerator(queueName)
+		publishMsgGen = testutils.MessageGenerator(queueName)
+		numMsgs       = 20
+		wg            sync.WaitGroup
 	)
 
-	ConsumeAsyncN(t, ctx, &wg, hs, queueName, nextConsumerName(), msgGen, 1)
+	ConsumeAsyncN(t, ctx, &wg, hs, queueName, nextConsumerName(), consumeMsgGen, numMsgs)
 
 	disconnected, reconnected := Disconnect(t, proxyName, 5*time.Second)
 	disconnected()
-	PublishAsyncN(t, ctx, &wg, s, exchangeName, msgGen, 1)
+	PublishN(t, ctx, s, exchangeName, publishMsgGen, numMsgs)
 	reconnected()
 
 	wg.Wait()
 }
 
-/*
-func TestNewSessionWithDisconnect(t *testing.T) {
+func TestNewSessionConsumeWithDisconnect(t *testing.T) {
+	t.Parallel()
 
 	var (
-		ctx                      = context.TODO()
 		proxyName, connectURL, _ = testutils.NextConnectURL()
+		ctx                      = context.TODO()
 		nextConnName             = testutils.ConnectionNameGenerator()
-		connName                 = nextConnName()
-		nextSessionName          = testutils.SessionNameGenerator(connName)
 	)
 
-	var reconnectCounter int64 = 0
-	defer func() {
-		assert.Equal(t, 10, reconnectCounter-1)
-	}()
-	c, err := pool.NewConnection(
+	healthyConnCB, hcbAssert := AssertConnectionReconnectAttempts(t, 0)
+	defer hcbAssert()
+	hs, hsclose := NewSession(
+		t,
+		ctx,
+		testutils.HealthyConnectURL,
+		nextConnName(),
+		pool.ConnectionWithRecoverCallback(healthyConnCB),
+	)
+	defer hsclose()
+
+	brokenReconnCB, scbAssert := AssertConnectionReconnectAttempts(t, 1)
+	defer scbAssert()
+	s, sclose := NewSession(
+		t,
 		ctx,
 		connectURL,
-		connName,
-		pool.ConnectionWithLogger(logging.NewTestLogger(t)),
-		pool.ConnectionWithRecoverCallback(func(name string, retry int, err error) {
-			if retry == 0 {
-				atomic.AddInt64(&reconnectCounter, 1)
-			}
-		}),
+		nextConnName(),
+		pool.ConnectionWithRecoverCallback(brokenReconnCB),
 	)
-	if err != nil {
-		assert.NoError(t, err)
-		return
-	}
-	defer func() {
-		c.Close() // can be nil or error
-	}()
+	defer sclose()
 
-	var wg sync.WaitGroup
+	var (
+		nextExchangeName = testutils.ExchangeNameGenerator(hs.Name())
+		nextQueueName    = testutils.QueueNameGenerator(hs.Name())
 
-	sessions := 1
-	wg.Add(sessions)
+		exchangeName     = nextExchangeName()
+		queueName        = nextQueueName()
+		nextConsumerName = testutils.ConsumerNameGenerator(queueName)
+	)
 
-	start, started, stopped := DisconnectWithStartStartedStopped(t, proxyName, time.Second)
-	start2, started2, stopped2 := DisconnectWithStartStartedStopped(t, proxyName, time.Second)
-	start3, started3, stopped3 := DisconnectWithStartStartedStopped(t, proxyName, time.Second)
-	start4, started4, stopped4 := DisconnectWithStartStartedStopped(t, proxyName, time.Second)
-	start5, started5, stopped5 := DisconnectWithStartStartedStopped(t, proxyName, time.Second)
-	start6, started6, stopped6 := DisconnectWithStartStartedStopped(t, proxyName, time.Second)
+	cleanup := DeclareExchangeQueue(t, ctx, hs, exchangeName, queueName)
+	defer cleanup()
 
-	// deferred
-	start7, started7, stopped7 := DisconnectWithStartStartedStopped(t, proxyName, time.Second)
-	start8, started8, stopped8 := DisconnectWithStartStartedStopped(t, proxyName, time.Second)
-	start9, started9, stopped9 := DisconnectWithStartStartedStopped(t, proxyName, time.Second)
-	start10, started10, stopped10 := DisconnectWithStartStartedStopped(t, proxyName, time.Second)
+	var (
+		publisherMsgGen = testutils.MessageGenerator(queueName)
+		consumerMsgGen  = testutils.MessageGenerator(queueName)
+		numMsgs         = 20
+		wg              sync.WaitGroup
+	)
 
-	for id := 0; id < sessions; id++ {
-		go func() {
-			defer wg.Done()
+	PublishAsyncN(t, ctx, &wg, hs, exchangeName, publisherMsgGen, numMsgs)
 
-			var (
-				sessionName      = nextSessionName()
-				nextQueueName    = testutils.QueueNameGenerator(sessionName)
-				queueName        = nextQueueName()
-				nextExchangeName = testutils.ExchangeNameGenerator(sessionName)
-				exchangeName     = nextExchangeName()
-				nextConsumerName = testutils.ConsumerNameGenerator(queueName)
-				consumerName     = nextConsumerName()
-				nextMessage      = testutils.MessageGenerator(queueName)
-			)
-			s, err := pool.NewSession(c, sessionName, pool.SessionWithConfirms(true))
-			if err != nil {
-				assert.NoError(t, err)
-				return
-			}
-			defer func() {
-				// INFO: does not lead to a recovery
-				start10()
-				started10()
-
-				s.Close() // can be nil or error
-				stopped10()
-			}()
-
-			start() // await connection loss start
-			started()
-
-			err = s.ExchangeDeclare(ctx, exchangeName, pool.ExchangeKindTopic)
-			if err != nil {
-				assert.NoError(t, err)
-				return
-			}
-
-			stopped()
-
-			defer func() {
-				start9()
-				started9()
-
-				err := s.ExchangeDelete(ctx, exchangeName)
-				assert.NoError(t, err)
-
-				stopped9()
-			}()
-
-			start2()
-			started2()
-
-			_, err = s.QueueDeclare(ctx, queueName)
-			if err != nil {
-				assert.NoError(t, err)
-				return
-			}
-			stopped2()
-
-			defer func() {
-				start8()
-				started8()
-				stopped8()
-
-				_, err := s.QueueDelete(ctx, queueName)
-				assert.NoError(t, err)
-			}()
-
-			start3()
-			started3()
-
-			err = s.QueueBind(ctx, queueName, "#", exchangeName)
-			if err != nil {
-				assert.NoError(t, err)
-				return
-			}
-			stopped3()
-
-			defer func() {
-				start7()
-				started7()
-
-				err := s.QueueUnbind(ctx, queueName, "#", exchangeName, nil)
-				assert.NoError(t, err)
-
-				stopped7()
-			}()
-
-			start4()
-			started4()
-
-			delivery, err := s.Consume(
-				queueName,
-				pool.ConsumeOptions{
-					ConsumerTag: consumerName,
-					Exclusive:   true,
-				},
-			)
-			if err != nil {
-				assert.NoError(t, err)
-				return
-			}
-			stopped4()
-
-			message := nextMessage()
-
-			wg.Add(1)
-			go func(msg string) {
-				defer wg.Done()
-
-				msgsReceived := 0
-				for val := range delivery {
-					receivedMsg := string(val.Body)
-					assert.Equal(t, message, receivedMsg)
-					msgsReceived++
-				}
-				// consumption fails because the connection will be closed
-				assert.Equal(t, 0, msgsReceived)
-				// this routine must be closed upon session closure
-			}(message)
-
-			time.Sleep(2 * time.Second)
-
-			start5()
-			started5()
-			var once sync.Once
-
-			for {
-				tag, err := s.Publish(ctx, exchangeName, "", pool.Publishing{
-					Mandatory:   true,
-					ContentType: "application/json",
-					Body:        []byte(message),
-				})
-				if err != nil {
-					assert.NoError(t, err)
-					return
-				}
-
-				stopped5()
-
-				once.Do(func() {
-					start6()
-					started6()
-					stopped6()
-				})
-
-				err = s.AwaitConfirm(ctx, tag)
-				if err != nil {
-					// retry because the first attempt at confirmation failed
-					continue
-				}
-				break
-			}
-
-		}()
-	}
+	disconnected, reconnected := Disconnect(t, proxyName, 5*time.Second)
+	disconnected()
+	ConsumeN(t, ctx, s, queueName, nextConsumerName(), consumerMsgGen, numMsgs)
+	reconnected()
 
 	wg.Wait()
 }
-
-*/
