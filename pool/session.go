@@ -24,6 +24,7 @@ type Session struct {
 	bufferSize  int
 
 	channel  *amqp091.Channel
+	returned chan amqp091.Return
 	confirms chan amqp091.Confirmation
 	errors   chan *amqp091.Error
 
@@ -110,6 +111,7 @@ func NewSession(conn *Connection, name string, options ...SessionOption) (*Sessi
 		channel:   nil, // will be created on connect
 		errors:    nil, // will be created on connect
 		confirms:  nil, // will be created on connect
+		returned:  nil, // will be created on connect
 
 		conn:          conn,
 		autoCloseConn: option.AutoCloseConn,
@@ -198,6 +200,8 @@ func (s *Session) close() (err error) {
 		s.debug("flushing channels...")
 		flush(s.errors)
 		flush(s.confirms)
+		flush(s.returned)
+
 		if s.channel != nil {
 			s.channel = nil
 		}
@@ -270,6 +274,9 @@ func (s *Session) connect() (err error) {
 		if err != nil {
 			return err
 		}
+
+		s.returned = make(chan amqp091.Return, s.bufferSize)
+		channel.NotifyReturn(s.returned)
 	}
 
 	// reset consumer tracking upon reconnect
@@ -377,6 +384,15 @@ func (s *Session) AwaitConfirm(ctx context.Context, expectedTag uint64) error {
 			return fmt.Errorf("await confirm failed: %w: expected %d, got %d", ErrDeliveryTagMismatch, expectedTag, confirm.DeliveryTag)
 		}
 		return nil
+	case returned, ok := <-s.returned:
+		if !ok {
+			err := s.error()
+			if err != nil {
+				return fmt.Errorf("await confirm failed: returned channel closed: %w", err)
+			}
+			return fmt.Errorf("await confirm failed: %w", errReturnedClosed)
+		}
+		return fmt.Errorf("await confirm failed: %w: %s", ErrReturned, returned.ReplyText)
 	case blocking, ok := <-s.conn.FlowControl():
 		if !ok {
 			err := s.error()

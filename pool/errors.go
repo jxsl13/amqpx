@@ -31,6 +31,12 @@ var (
 	// TODO: make public api after a while
 	errFlowControlClosed = errors.New("flow control channel closed")
 
+	// ErrReturned is returned when a message is returned by the server when publishing
+	ErrReturned = errors.New("returned")
+
+	// errReturnedClosed
+	errReturnedClosed = errors.New("returned channel closed")
+
 	// ErrReject can be used to reject a specific message
 	// This is a special error that negatively acknowledges messages and does not reuque them.
 	ErrReject = errors.New("message rejected")
