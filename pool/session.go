@@ -231,7 +231,7 @@ func (s *Session) connect() (err error) {
 	defer func() {
 		// reset state in case of an error
 		if err != nil {
-			s.close()
+			err = errors.Join(err, s.close())
 			s.warn(err, "failed to open session")
 		} else {
 			s.info("opened session")
@@ -243,7 +243,7 @@ func (s *Session) connect() (err error) {
 		return ErrClosed
 	}
 
-	s.close() // close any open rabbitmq channel & cleanup Go channels
+	_ = s.close() // close any open rabbitmq channel & cleanup Go channels
 
 	channel, err := s.conn.channel()
 	if err != nil {
