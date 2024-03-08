@@ -18,6 +18,8 @@ import (
 type Connection struct {
 	// connection url (user ,password, host, port, vhost, etc)
 	url  string
+	addr string
+
 	name string
 
 	// indicates that the connection is part of a connection pool.
@@ -89,6 +91,7 @@ func NewConnection(ctx context.Context, connectUrl, name string, options ...Conn
 
 	conn := &Connection{
 		url:     u.String(),
+		addr:    u.Host,
 		name:    name,
 		cached:  option.Cached,
 		flagged: false,
@@ -371,18 +374,21 @@ func (ch *Connection) shutdownErr() error {
 	return ch.ctx.Err()
 }
 
+func (ch *Connection) cLog() logging.Logger {
+	return ch.log.WithFields(map[string]any{
+		"connection": ch.name,
+		"address":    ch.addr,
+	})
+}
+
 func (ch *Connection) info(a ...any) {
-	ch.log.WithField("connection", ch.Name()).Info(a...)
+	ch.cLog().Info(a...)
 }
 
 func (ch *Connection) warn(err error, a ...any) {
-	ch.log.WithField("connection", ch.Name()).WithField("error", err.Error()).Warn(a...)
-}
-
-func (ch *Connection) warnf(format string, a ...any) {
-	ch.log.WithField("connection", ch.Name()).Warnf(format, a...)
+	ch.cLog().WithField("error", err.Error()).Warn(a...)
 }
 
 func (ch *Connection) debug(a ...any) {
-	ch.log.WithField("connection", ch.Name()).Debug(a...)
+	ch.cLog().Debug(a...)
 }
