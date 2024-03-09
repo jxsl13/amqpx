@@ -161,4 +161,5 @@ func TestPublishAwaitFlowControl(t *testing.T) {
 		Body:        []byte(publisherMsgGen()),
 	})
 	assert.ErrorIs(t, err, pool.ErrFlowControl)
+	// FIXME: this test gets stuck when the sessions in the session pool are closed.:
 }

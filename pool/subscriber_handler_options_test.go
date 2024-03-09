@@ -8,6 +8,8 @@ import (
 )
 
 func TestWithMaxBatchSize(t *testing.T) {
+	t.Parallel()
+
 	dummyHandler := func(context.Context, []Delivery) error { return nil }
 	bh := NewBatchHandler("test", dummyHandler, WithMaxBatchSize(0), WithMaxBatchBytes(0))
 
