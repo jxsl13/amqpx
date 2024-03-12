@@ -117,7 +117,7 @@ func DisconnectWithStopped(t *testing.T, proxyName string, block, timeout, durat
 		if duration > 0 {
 			time.Sleep(duration)
 		}
-		log.Debug("enabled rabbitmq connection")
+		log.Debugf("enabled rabbitmq connection proxy: %s", proxyName)
 		err = proxy.Enable()
 		if err != nil {
 			require.NoError(t, err)
@@ -155,7 +155,7 @@ func DisconnectWithStartedStopped(t *testing.T, proxyName string, block, startIn
 		if wait := time.Until(start); wait > 0 {
 			time.Sleep(wait)
 		}
-		log.Debug("disabled rabbitmq connection")
+		log.Debugf("disabled rabbitmq connection proxy: %s", proxyName)
 		err := proxy.Disable()
 		if err != nil {
 			require.NoError(t, err)
@@ -165,7 +165,7 @@ func DisconnectWithStartedStopped(t *testing.T, proxyName string, block, startIn
 		if duration > 0 {
 			time.Sleep(duration)
 		}
-		log.Debug("enabled rabbitmq connection")
+		log.Debugf("enabled rabbitmq connection proxy: %s", proxyName)
 		err = proxy.Enable()
 		if err != nil {
 			require.NoError(t, err)
@@ -218,7 +218,7 @@ func DisconnectWithStartStartedStopped(t *testing.T, proxyName string, duration 
 			defer wgStop.Done()
 			log := logging.NewTestLogger(t)
 
-			log.Debug("disabled rabbitmq connection")
+			log.Debugf("disabled rabbitmq connection proxy: %s", proxyName)
 			err := proxy.Disable()
 			if err != nil {
 				require.NoError(t, err)
@@ -228,7 +228,7 @@ func DisconnectWithStartStartedStopped(t *testing.T, proxyName string, duration 
 			if duration > 0 {
 				time.Sleep(duration)
 			}
-			log.Debug("enabled rabbitmq connection")
+			log.Debugf("enabled rabbitmq connection proxy: %s", proxyName)
 			err = proxy.Enable()
 			if err != nil {
 				require.NoError(t, err)
