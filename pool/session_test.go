@@ -848,13 +848,6 @@ func TestChannelFullChainOnOutOfMemoryRabbitMQ(t *testing.T) {
 	defer cancel()
 
 	select {
-	case b, ok := <-blocked:
-		if !ok {
-			assert.Fail(t, "expected blocked channel to be open")
-			return
-		}
-		assert.True(t, b.Active, "expected blocked notification to be active")
-		assert.NotEmpty(t, b.Reason, "expected blocked notification to have a reason")
 	case f, ok := <-flow:
 		if !ok {
 			assert.Fail(t, "expected flow channel to be open")
@@ -881,6 +874,13 @@ func TestChannelFullChainOnOutOfMemoryRabbitMQ(t *testing.T) {
 		assert.Fail(t, "expected no returned message when publishing message", "got=%v", r)
 	case <-tctx.Done():
 		assert.NoError(t, tctx.Err(), "expected no timeout when waiting for flow channel")
+	case b, ok := <-blocked:
+		if !ok {
+			assert.Fail(t, "expected blocked channel to be open")
+			return
+		}
+		assert.True(t, b.Active, "expected blocked notification to be active")
+		assert.NotEmpty(t, b.Reason, "expected blocked notification to have a reason")
 	}
 }
 
