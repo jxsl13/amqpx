@@ -245,11 +245,10 @@ func (sp *SessionPool) ReturnSession(session *Session, err error) {
 		return
 	}
 
-	// try recovering until context closed or shutdown
-	session.Flag(flaggable(err))
+	session.Flag(err)
 
 	// flush confirms channel
-	session.flush()
+	session.Flush()
 
 	// always put the session back into the pool
 	// even if the session is still broken
