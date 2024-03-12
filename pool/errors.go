@@ -65,7 +65,24 @@ func recoverable(err error) bool {
 		panic("checking nil error for recoverability")
 	}
 
+	if errors.Is(err, context.Canceled) {
+		return false
+	}
+
+	if errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+
+	if errors.Is(err, ErrClosed) {
+		return false
+	}
+
+	if errors.Is(err, ErrFlowControl) {
+		return false
+	}
+
 	// invalid usage of the amqp protocol is not recoverable
+	// INFO: this should be checked last.
 	ae := &amqp091.Error{}
 	if errors.As(err, &ae) {
 		switch ae.Code {
@@ -83,12 +100,6 @@ func recoverable(err error) bool {
 			return !ae.Recover
 		}
 	}
-
-	if errors.Is(err, context.Canceled) {
-		return false
-	}
-
-	// TODO: errors.Is(err, context.DeadlineExceeded) also needed?
 
 	// every other unknown error is recoverable
 	return true
