@@ -157,9 +157,11 @@ func (ch *Connection) Close() (err error) {
 // Flag flags the connection as broken which must be recovered.
 // A flagged connection implies a closed connection.
 // Flagging of a connectioncan only be undone by Recover-ing the connection.
-func (ch *Connection) Flag(flagged bool) {
+func (ch *Connection) Flag(err error) {
 	ch.mu.Lock()
 	defer ch.mu.Unlock()
+
+	flagged := err != nil && recoverable(err)
 
 	if !ch.flagged && flagged {
 		ch.flagged = flagged

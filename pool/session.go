@@ -151,10 +151,11 @@ func NewSession(conn *Connection, name string, options ...SessionOption) (*Sessi
 // Flag marks the session as flagged.
 // This is useful in case of a connection pool, where the session is returned to the pool
 // and should be recovered by the next user.
-func (s *Session) Flag(flagged bool) {
+func (s *Session) Flag(err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	flagged := err != nil && recoverable(err)
 	if !s.flagged && flagged {
 		s.flagged = flagged
 	}
@@ -1507,15 +1508,16 @@ func (s *Session) debug(a ...any) {
 	s.slog().Debug(a...)
 }
 
-// flush should be called when you return the session back to the pool
-// TODO: improve the name of this function and decide whether it should be exported or not
-func (s *Session) flush() {
+// Flush internal channels.
+func (s *Session) Flush() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	// do not flush the errors channel
 	// as it i sneeded for checking whether a session recovery is needed
 
+	flush(s.errors)
 	flush(s.confirms)
+	flush(s.returned)
 }
 
 // flush is a helper function to flush a channel
