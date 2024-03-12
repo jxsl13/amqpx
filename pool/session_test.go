@@ -9,6 +9,7 @@ import (
 	"github.com/jxsl13/amqpx/internal/testutils"
 	"github.com/jxsl13/amqpx/logging"
 	"github.com/jxsl13/amqpx/pool"
+	"github.com/rabbitmq/amqp091-go"
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/stretchr/testify/assert"
 )
@@ -728,16 +729,176 @@ func TestNewSessionConsumeWithDisconnect(t *testing.T) {
 	wg.Wait()
 }
 
-func TestChannelCloseOnOutOfMemoryRabbitMQ(t *testing.T) {
+func TestChannelFullChainOnOutOfMemoryRabbitMQ(t *testing.T) {
 	t.Parallel()
 
-	amqpConn, err := amqp.Dial(testutils.BrokenConnectURL)
+	var (
+		ctx              = context.TODO()
+		log              = logging.NewTestLogger(t)
+		nextConnName     = testutils.ConnectionNameGenerator()
+		nextSessionName  = testutils.SessionNameGenerator(nextConnName())
+		sessionName      = nextSessionName()
+		nextExchangeName = testutils.ExchangeNameGenerator(sessionName)
+		nextQueueName    = testutils.QueueNameGenerator(sessionName)
+		exchangeName     = nextExchangeName()
+		queueName        = nextQueueName()
+		bufferSize       = 1
+	)
+
+	log.Info("creating connection")
+	conn, err := amqp.Dial(
+		testutils.BrokenConnectURL, // out of memory rabbitmq
+	)
 	if err != nil {
 		assert.NoError(t, err)
 		return
 	}
 	defer func() {
-		assert.NoError(t, amqpConn.Close(), "expected no error when closing connection")
+		assert.NoError(t, conn.Close(), "expected no error when closing connection")
+	}()
+
+	log.Info("registering flow control notification channel")
+	blocked := make(chan amqp.Blocking, bufferSize)
+	conn.NotifyBlocked(blocked)
+
+	log.Info("creating channel")
+	c, err := conn.Channel()
+	if err != nil {
+		assert.NoError(t, err, "expected no error when creating channel")
+		return
+	}
+	defer func() {
+		log.Info("closing channel")
+		err = c.Close()
+		assert.NoError(t, err, "expected no error when closing channel")
+	}()
+
+	log.Info("registering error notification channel")
+	errors := make(chan *amqp091.Error, bufferSize)
+	c.NotifyClose(errors)
+
+	log.Info("registering confirms notification channel")
+	confirms := make(chan amqp.Confirmation, bufferSize)
+	c.NotifyPublish(confirms)
+	err = c.Confirm(false)
+	if err != nil {
+		assert.NoError(t, err, "expected no error when enabling confirms")
+		return
+	}
+
+	log.Info("registering flow control notification channel")
+	flow := make(chan bool, bufferSize)
+	c.NotifyFlow(flow)
+
+	log.Info("registering returned message notification channel")
+	returned := make(chan amqp091.Return, bufferSize)
+	c.NotifyReturn(returned)
+
+	log.Info("declaring exchange")
+	err = c.ExchangeDeclare(exchangeName, "topic", true, false, false, false, nil)
+	if err != nil {
+		assert.NoError(t, err, "expected no error when declaring exchange")
+		return
+	}
+	defer func() {
+		log.Info("deleting exchange")
+		err = c.ExchangeDelete(exchangeName, false, false)
+		assert.NoError(t, err, "expected no error when deleting exchange")
+	}()
+
+	log.Info("declaring queue")
+	_, err = c.QueueDeclare(queueName, true, false, false, false, nil)
+	if err != nil {
+		assert.NoError(t, err, "expected no error when declaring queue")
+		return
+	}
+	defer func() {
+		log.Info("deleting queue")
+		_, err = c.QueueDelete(queueName, false, false, false)
+		assert.NoError(t, err, "expected no error when deleting queue")
+	}()
+
+	log.Info("binding queue")
+	err = c.QueueBind(queueName, "#", exchangeName, false, nil)
+	if err != nil {
+		assert.NoError(t, err, "expected no error when binding queue")
+		return
+	}
+	defer func() {
+		log.Info("unbinding queue")
+		err = c.QueueUnbind(queueName, "#", exchangeName, nil)
+		if err != nil {
+			assert.NoError(t, err, "expected no error when unbinding queue")
+			return
+		}
+	}()
+
+	log.Info("publishing message")
+	msg := "hello world"
+	err = c.PublishWithContext(ctx, exchangeName, "", false, false, amqp.Publishing{
+		ContentType: "text/plain",
+		Body:        []byte(msg),
+	})
+	if err != nil {
+		assert.NoError(t, err, "expected no error when publishing message")
+		return
+	}
+
+	tctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+
+	select {
+	case b, ok := <-blocked:
+		if !ok {
+			assert.Fail(t, "expected blocked channel to be open")
+			return
+		}
+		assert.True(t, b.Active, "expected blocked notification to be active")
+		assert.NotEmpty(t, b.Reason, "expected blocked notification to have a reason")
+	case f, ok := <-flow:
+		if !ok {
+			assert.Fail(t, "expected flow channel to be open")
+			return
+		}
+		assert.Fail(t, "expected no flow message when publishing message", "got=%v", f)
+	case confirm, ok := <-confirms:
+		if !ok {
+			assert.Fail(t, "expected confirms channel to be open")
+			return
+		}
+		assert.Fail(t, "expected no confirmation when publishing message", "got=%v", confirm)
+	case e, ok := <-errors:
+		if !ok {
+			assert.Fail(t, "expected errors channel to be open")
+			return
+		}
+		assert.Fail(t, "expected no error when publishing message", "got=%v", e)
+	case r, ok := <-returned:
+		if !ok {
+			assert.Fail(t, "expected returned channel to be open")
+			return
+		}
+		assert.Fail(t, "expected no returned message when publishing message", "got=%v", r)
+	case <-tctx.Done():
+		assert.NoError(t, tctx.Err(), "expected no timeout when waiting for flow channel")
+	}
+}
+
+func TestChannelCloseWithDisconnect(t *testing.T) {
+	t.Parallel()
+
+	var (
+		proxyName, connectURL, _  = testutils.NextConnectURL()
+		disconnected, reconnected = Disconnect(t, proxyName, 5*time.Second)
+	)
+
+	amqpConn, err := amqp.Dial(connectURL)
+	if err != nil {
+		assert.NoError(t, err)
+		return
+	}
+	defer func() {
+		assert.Error(t, amqpConn.Close(), "expected no error when closing connection")
 	}()
 
 	amqpChan, err := amqpConn.Channel()
@@ -746,6 +907,209 @@ func TestChannelCloseOnOutOfMemoryRabbitMQ(t *testing.T) {
 		return
 	}
 
+	disconnected()
+	defer reconnected()
 	err = amqpChan.Close()
 	assert.NoError(t, err, "expected no error when closing channel")
+}
+
+func TestNewSingleSessionCloseWithDisconnect(t *testing.T) {
+	t.Parallel() // can be run in parallel because the connection to the rabbitmq is never broken
+
+	var (
+		ctx                       = context.TODO()
+		nextConnName              = testutils.ConnectionNameGenerator()
+		connName                  = nextConnName()
+		nextSessionName           = testutils.SessionNameGenerator(connName)
+		sessionName               = nextSessionName()
+		proxyName, connectURL, _  = testutils.NextConnectURL()
+		disconnected, reconnected = Disconnect(t, proxyName, 5*time.Second)
+	)
+
+	reconnectCB, deferredAssert := AssertConnectionReconnectAttempts(t, 0)
+	defer deferredAssert()
+	c, err := pool.NewConnection(
+		ctx,
+		connectURL,
+		connName,
+		pool.ConnectionWithLogger(logging.NewTestLogger(t)),
+		pool.ConnectionWithRecoverCallback(reconnectCB),
+	)
+	if err != nil {
+		assert.NoError(t, err)
+		return
+	}
+	defer func() {
+		//TODO: we do not want to assert anything here
+		assert.NoError(t, c.Close())
+	}()
+
+	s, err := pool.NewSession(
+		c,
+		sessionName,
+		pool.SessionWithConfirms(true),
+		pool.SessionWithRetryCallback(
+			func(operation, connName, sessionName string, retry int, err error) {
+				assert.NoErrorf(t, err, "operation=%s connName=%s sessionName=%s retry=%d", operation, connName, sessionName, retry)
+			},
+		),
+	)
+	if err != nil {
+		assert.NoError(t, err)
+		return
+	}
+
+	disconnected()
+	defer reconnected()
+	assert.NoError(t, s.Close())
+}
+
+func TestNewSingleSessionCloseWithOutOfMemoryRabbitMQ(t *testing.T) {
+	t.Parallel() // can be run in parallel because the connection to the rabbitmq is never broken
+
+	var (
+		ctx              = context.TODO()
+		log              = logging.NewTestLogger(t)
+		nextConnName     = testutils.ConnectionNameGenerator()
+		connName         = nextConnName()
+		nextSessionName  = testutils.SessionNameGenerator(connName)
+		sessionName      = nextSessionName()
+		nextExchangeName = testutils.ExchangeNameGenerator(sessionName)
+		nextQueueName    = testutils.QueueNameGenerator(sessionName)
+		exchangeName     = nextExchangeName()
+		queueName        = nextQueueName()
+	)
+
+	reconnectCB, deferredAssert := AssertConnectionReconnectAttempts(t, 0)
+	defer deferredAssert()
+	c, err := pool.NewConnection(
+		ctx,
+		testutils.BrokenConnectURL, // out of memory rabbitmq
+		connName,
+		pool.ConnectionWithLogger(log),
+		pool.ConnectionWithRecoverCallback(reconnectCB),
+	)
+	if err != nil {
+		assert.NoError(t, err)
+		return
+	}
+	defer func() {
+		//TODO: we do not want to assert anything here
+		assert.NoError(t, c.Close())
+	}()
+
+	s, err := pool.NewSession(
+		c,
+		sessionName,
+		pool.SessionWithConfirms(true),
+		pool.SessionWithRetryCallback(
+			func(operation, connName, sessionName string, retry int, err error) {
+				assert.NoErrorf(t, err, "operation=%s connName=%s sessionName=%s retry=%d", operation, connName, sessionName, retry)
+			},
+		),
+	)
+	if err != nil {
+		assert.NoError(t, err)
+		return
+	}
+
+	cleanup := DeclareExchangeQueue(t, ctx, s, exchangeName, queueName)
+	defer cleanup()
+
+	log.Infof("publishing message to exchange %s", exchangeName)
+	tag, err := s.Publish(ctx, exchangeName, "",
+		pool.Publishing{
+			ContentType: "text/plain",
+			Body:        []byte("hello world"),
+		},
+	)
+	if err != nil {
+		assert.NoError(t, err)
+		return
+	}
+
+	log.Infof("awaiting confirm for tag %d", tag)
+	err = s.AwaitConfirm(ctx, tag)
+	assert.Error(t, err, "expected a flow control error")
+	cleanup()
+
+	log.Infof("closing session %s", s.Name())
+	err = s.Close()
+	assert.NoError(t, err)
+}
+
+func TestNewSingleSessionCloseWithHealthyRabbitMQ(t *testing.T) {
+	t.Parallel() // can be run in parallel because the connection to the rabbitmq is never broken
+
+	var (
+		ctx              = context.TODO()
+		log              = logging.NewTestLogger(t)
+		nextConnName     = testutils.ConnectionNameGenerator()
+		connName         = nextConnName()
+		nextSessionName  = testutils.SessionNameGenerator(connName)
+		sessionName      = nextSessionName()
+		nextExchangeName = testutils.ExchangeNameGenerator(sessionName)
+		nextQueueName    = testutils.QueueNameGenerator(sessionName)
+		exchangeName     = nextExchangeName()
+		queueName        = nextQueueName()
+	)
+
+	reconnectCB, deferredAssert := AssertConnectionReconnectAttempts(t, 0)
+	defer deferredAssert()
+	c, err := pool.NewConnection(
+		ctx,
+		testutils.HealthyConnectURL, // healthy rabbitmq
+		connName,
+		pool.ConnectionWithLogger(log),
+		pool.ConnectionWithRecoverCallback(reconnectCB),
+	)
+	if err != nil {
+		assert.NoError(t, err)
+		return
+	}
+	defer func() {
+		//TODO: we do not want to assert anything here
+		assert.NoError(t, c.Close())
+	}()
+
+	s, err := pool.NewSession(
+		c,
+		sessionName,
+		pool.SessionWithConfirms(true),
+		pool.SessionWithRetryCallback(
+			func(operation, connName, sessionName string, retry int, err error) {
+				assert.NoErrorf(t, err, "operation=%s connName=%s sessionName=%s retry=%d", operation, connName, sessionName, retry)
+			},
+		),
+	)
+	if err != nil {
+		assert.NoError(t, err)
+		return
+	}
+
+	cleanup := DeclareExchangeQueue(t, ctx, s, exchangeName, queueName)
+	defer cleanup()
+
+	log.Infof("publishing message to exchange %s", exchangeName)
+	tag, err := s.Publish(ctx, exchangeName, "",
+		pool.Publishing{
+			ContentType: "text/plain",
+			Body:        []byte("hello world"),
+		},
+	)
+	if err != nil {
+		assert.NoError(t, err)
+		return
+	}
+
+	log.Infof("awaiting confirm for tag %d", tag)
+	err = s.AwaitConfirm(ctx, tag)
+	log.Infof("await confirm failed(as expected): %v", err)
+	assert.NoError(t, err)
+
+	cleanup()
+
+	log.Infof("closing session %s", s.Name())
+	err = s.Close()
+	assert.NoError(t, err)
 }
