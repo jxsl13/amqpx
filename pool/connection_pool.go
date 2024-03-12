@@ -104,12 +104,12 @@ func newConnectionPoolFromOption(connectUrl string, option connectionPoolOption)
 		recoverCB: option.ConnectionRecoverCallback,
 	}
 
-	cp.debug("initializing pool connections")
+	cp.debug("initializing pool connections...")
 	defer func() {
 		if err != nil {
 			cp.error(err, "failed to initialize pool connections")
 		} else {
-			cp.info("initialized")
+			cp.info("initialized pool connections")
 		}
 	}()
 
@@ -183,32 +183,13 @@ func (cp *ConnectionPool) GetConnection(ctx context.Context) (*Connection, error
 func (cp *ConnectionPool) nextTransientID() int64 {
 	cp.mu.Lock()
 	defer cp.mu.Unlock()
-	id := cp.transientID
 	cp.transientID++
-	return id
-}
-
-func (cp *ConnectionPool) incTransient() {
-	cp.mu.Lock()
-	cp.concurrentTransient++
-	cp.mu.Unlock()
-}
-
-func (cp *ConnectionPool) decTransient() {
-	cp.mu.Lock()
-	cp.concurrentTransient--
-	cp.mu.Unlock()
+	return cp.transientID
 }
 
 // GetTransientConnection may return an error when the context was cancelled before the connection could be obtained.
 // Transient connections may be returned to the pool. The are closed properly upon returning.
 func (cp *ConnectionPool) GetTransientConnection(ctx context.Context) (_ *Connection, err error) {
-	defer func() {
-		if err == nil {
-			cp.incTransient()
-		}
-	}()
-
 	conn, err := cp.deriveConnection(ctx, cp.nextTransientID(), false)
 	if err == nil {
 		return conn, nil
@@ -231,11 +212,10 @@ func (cp *ConnectionPool) GetTransientConnection(ctx context.Context) (_ *Connec
 func (cp *ConnectionPool) ReturnConnection(conn *Connection, err error) {
 	// close transient connections
 	if !conn.IsCached() {
-		cp.decTransient() // decrease transient cinnections
 		_ = conn.Close()
 		return
 	}
-	conn.Flag(flaggable(err))
+	conn.Flag(err)
 
 	select {
 	case cp.connections <- conn:
