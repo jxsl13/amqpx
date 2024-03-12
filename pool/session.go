@@ -222,12 +222,6 @@ func (s *Session) close() (err error) {
 		}
 	}
 
-	if s.error() != nil {
-		// cannot close erred channel
-		s.debug("not closing erred amqp channel")
-		return nil
-	}
-
 	s.debug("closing amqp channel...")
 	return s.channel.Close()
 }
