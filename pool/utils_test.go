@@ -186,6 +186,9 @@ type Topologer interface {
 	QueueUnbind(ctx context.Context, name string, routingKey string, exchange string, arg ...amqp091.Table) error
 }
 
+// DeclareExchangeQueue declares an exchange and a queue and binds them together.
+// It returns a cleanup function that can be used to delete the exchange and queue.
+// The cleanup function is idempotent and can be called multiple times, but it will only delete the exchange and queue once.
 func DeclareExchangeQueue(
 	t *testing.T,
 	ctx context.Context,
@@ -196,6 +199,9 @@ func DeclareExchangeQueue(
 	cleanup = func() {}
 	var err error
 
+	log := logging.NewTestLogger(t)
+
+	log.Infof("declaring exchange %s", exchangeName)
 	err = s.ExchangeDeclare(ctx, exchangeName, pool.ExchangeKindTopic)
 	if err != nil {
 		assert.NoError(t, err, "expected no error when declaring exchange")
@@ -203,10 +209,12 @@ func DeclareExchangeQueue(
 	}
 	defer func() {
 		if err != nil {
+			log.Infof("deleting exchange %s", exchangeName)
 			assert.NoError(t, s.ExchangeDelete(ctx, exchangeName), "expected no error when deleting exchange")
 		}
 	}()
 
+	log.Infof("declaring queue %s", queueName)
 	_, err = s.QueueDeclare(ctx, queueName)
 	if err != nil {
 		assert.NoError(t, err)
@@ -214,6 +222,7 @@ func DeclareExchangeQueue(
 	}
 	defer func() {
 		if err != nil {
+			log.Infof("deleting queue %s", queueName)
 			_, e := s.QueueDelete(ctx, queueName)
 			assert.NoError(t, e, "expected no error when deleting queue")
 			// TODO: asserting the number of purged messages seems to be flaky, so we do not do that for now.
@@ -221,6 +230,7 @@ func DeclareExchangeQueue(
 		}
 	}()
 
+	log.Infof("binding queue %s to exchange %s", queueName, exchangeName)
 	err = s.QueueBind(ctx, queueName, "#", exchangeName)
 	if err != nil {
 		assert.NoError(t, err)
@@ -228,16 +238,24 @@ func DeclareExchangeQueue(
 	}
 	defer func() {
 		if err != nil {
+			log.Infof("unbinding queue %s from exchange %s", queueName, exchangeName)
 			assert.NoError(t, s.QueueUnbind(ctx, queueName, "#", exchangeName, nil))
 		}
 	}()
 
+	once := sync.Once{}
 	return func() {
-		assert.NoError(t, s.QueueUnbind(ctx, queueName, "#", exchangeName, nil))
+		once.Do(func() {
+			log.Infof("unbinding queue %s from exchange %s", queueName, exchangeName)
+			assert.NoError(t, s.QueueUnbind(ctx, queueName, "#", exchangeName, nil))
 
-		_, e := s.QueueDelete(ctx, queueName)
-		assert.NoError(t, e)
-		assert.NoError(t, s.ExchangeDelete(ctx, exchangeName))
+			log.Infof("deleting queue %s", queueName)
+			_, e := s.QueueDelete(ctx, queueName)
+			assert.NoError(t, e)
+
+			log.Infof("deleting exchange %s", exchangeName)
+			assert.NoError(t, s.ExchangeDelete(ctx, exchangeName))
+		})
 	}
 }
 
@@ -270,7 +288,9 @@ func NewSession(t *testing.T, ctx context.Context, connectURL, connectionName st
 		return nil, cleanup
 	}
 	return s, func() {
+		log.Infof("closing session %s", s.Name())
 		assert.NoError(t, s.Close(), "expected no error when closing session")
+		log.Infof("closing connection %s", c.Name())
 		assert.NoError(t, c.Close(), "expected no error when closing connection")
 	}
 }
