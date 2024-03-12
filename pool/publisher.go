@@ -97,7 +97,7 @@ func (p *Publisher) Publish(ctx context.Context, exchange string, routingKey str
 func (p *Publisher) publish(ctx context.Context, exchange string, routingKey string, msg Publishing) (err error) {
 	defer func() {
 		if err != nil {
-			p.warn(exchange, routingKey, err)
+			p.warn(exchange, routingKey, err, "failed to publish message")
 		} else {
 			p.info(exchange, routingKey, "published a message")
 		}
