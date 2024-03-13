@@ -11,10 +11,12 @@ import (
 	"github.com/jxsl13/amqpx/pool"
 )
 
+/*
 var (
 	// global variable, as we usually only need a single connection
 	amqpx = New()
 )
+*/
 
 type (
 	TopologyFunc func(context.Context, *pool.Topologer) error
@@ -318,6 +320,7 @@ func (a *AMQPX) Get(ctx context.Context, queue string, autoAck bool) (msg pool.D
 	return a.pub.Get(ctx, queue, autoAck)
 }
 
+/*
 // RegisterTopology registers a topology creating function that is called upon
 // Start. The creation of topologie sis the first step before any publisher or subscriber is started.
 func RegisterTopologyCreator(topology TopologyFunc) {
@@ -376,3 +379,4 @@ func Get(ctx context.Context, queue string, autoAck bool) (msg pool.Delivery, ok
 func Reset() error {
 	return amqpx.Reset()
 }
+*/

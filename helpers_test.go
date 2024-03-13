@@ -5,91 +5,95 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/jxsl13/amqpx"
 	"github.com/jxsl13/amqpx/pool"
 )
 
-func createTopology(ctx context.Context, t *pool.Topologer) (err error) {
-	// documentation: https://www.cloudamqp.com/blog/part4-rabbitmq-for-beginners-exchanges-routing-keys-bindings.html#:~:text=The%20routing%20key%20is%20a%20message%20attribute%20added%20to%20the,routing%20key%20of%20the%20message.
+func createTopology(prefix string) amqpx.TopologyFunc {
+	return func(ctx context.Context, t *pool.Topologer) (err error) {
+		// documentation: https://www.cloudamqp.com/blog/part4-rabbitmq-for-beginners-exchanges-routing-keys-bindings.html#:~:text=The%20routing%20key%20is%20a%20message%20attribute%20added%20to%20the,routing%20key%20of%20the%20message.
 
-	err = createExchange(ctx, "exchange-01", t)
-	if err != nil {
-		return err
-	}
+		err = createExchange(ctx, prefix+"exchange-01", t)
+		if err != nil {
+			return err
+		}
 
-	err = createQueue(ctx, "queue-01", t)
-	if err != nil {
-		return err
-	}
+		err = createQueue(ctx, prefix+"queue-01", t)
+		if err != nil {
+			return err
+		}
 
-	err = t.QueueBind(ctx, "queue-01", "event-01", "exchange-01")
-	if err != nil {
-		return err
-	}
+		err = t.QueueBind(ctx, prefix+"queue-01", "event-01", prefix+"exchange-01")
+		if err != nil {
+			return err
+		}
 
-	err = createExchange(ctx, "exchange-02", t)
-	if err != nil {
-		return err
-	}
+		err = createExchange(ctx, prefix+"exchange-02", t)
+		if err != nil {
+			return err
+		}
 
-	err = createQueue(ctx, "queue-02", t)
-	if err != nil {
-		return err
-	}
+		err = createQueue(ctx, prefix+"queue-02", t)
+		if err != nil {
+			return err
+		}
 
-	err = t.QueueBind(ctx, "queue-02", "event-02", "exchange-02")
-	if err != nil {
-		return err
-	}
+		err = t.QueueBind(ctx, prefix+"queue-02", "event-02", prefix+"exchange-02")
+		if err != nil {
+			return err
+		}
 
-	err = createExchange(ctx, "exchange-03", t)
-	if err != nil {
-		return err
-	}
+		err = createExchange(ctx, prefix+"exchange-03", t)
+		if err != nil {
+			return err
+		}
 
-	err = createQueue(ctx, "queue-03", t)
-	if err != nil {
-		return err
+		err = createQueue(ctx, prefix+"queue-03", t)
+		if err != nil {
+			return err
+		}
+		err = t.QueueBind(ctx, prefix+"queue-03", "event-03", prefix+"exchange-03")
+		if err != nil {
+			return err
+		}
+		return nil
 	}
-	err = t.QueueBind(ctx, "queue-03", "event-03", "exchange-03")
-	if err != nil {
-		return err
-	}
-	return nil
-
 }
 
-func deleteTopology(ctx context.Context, t *pool.Topologer) (err error) {
-	err = deleteQueue(ctx, "queue-01", t)
-	if err != nil {
-		return err
-	}
+func deleteTopology(prefix string) amqpx.TopologyFunc {
+	return func(ctx context.Context, t *pool.Topologer) (err error) {
+		err = deleteQueue(ctx, prefix+"queue-01", t)
+		if err != nil {
+			return err
+		}
 
-	err = deleteQueue(ctx, "queue-02", t)
-	if err != nil {
-		return err
-	}
+		err = deleteQueue(ctx, prefix+"queue-02", t)
+		if err != nil {
+			return err
+		}
 
-	err = deleteQueue(ctx, "queue-03", t)
-	if err != nil {
-		return err
-	}
+		err = deleteQueue(ctx, prefix+"queue-03", t)
+		if err != nil {
+			return err
+		}
 
-	err = deleteExchange(ctx, "exchange-01", t)
-	if err != nil {
-		return err
-	}
+		err = deleteExchange(ctx, prefix+"exchange-01", t)
+		if err != nil {
+			return err
+		}
 
-	err = deleteExchange(ctx, "exchange-02", t)
-	if err != nil {
-		return err
-	}
+		err = deleteExchange(ctx, prefix+"exchange-02", t)
+		if err != nil {
+			return err
+		}
 
-	err = deleteExchange(ctx, "exchange-03", t)
-	if err != nil {
-		return err
-	}
+		err = deleteExchange(ctx, prefix+"exchange-03", t)
+		if err != nil {
+			return err
+		}
 
-	return nil
+		return nil
+	}
 }
 
 func createQueue(ctx context.Context, name string, t *pool.Topologer) (err error) {
