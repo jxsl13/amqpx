@@ -10,16 +10,10 @@ import (
 	"github.com/jxsl13/amqpx/logging"
 	"github.com/jxsl13/amqpx/pool"
 	"github.com/stretchr/testify/assert"
-	"go.uber.org/goleak"
 )
 
 func TestMain(m *testing.M) {
-	goleak.VerifyTestMain(
-		m,
-		goleak.IgnoreTopFunction("internal/poll.runtime_pollWait"),
-		goleak.IgnoreTopFunction("github.com/rabbitmq/amqp091-go.(*Connection).heartbeater"),
-		goleak.IgnoreTopFunction("net/http.(*persistConn).writeLoop"),
-	)
+	testutils.VerifyLeak(m)
 }
 
 func TestNewPool(t *testing.T) {

@@ -17,23 +17,11 @@ func TestNewSingleSubscriber(t *testing.T) {
 	t.Parallel()
 
 	var (
-		ctx      = context.TODO()
-		poolName = testutils.FuncName()
+		ctx          = context.TODO()
+		nextPoolName = testutils.PoolNameGenerator()
+		poolName     = nextPoolName()
+		hp           = NewPool(t, ctx, testutils.HealthyConnectURL, poolName, 1, 2)
 	)
-
-	hp, err := pool.New(
-		ctx,
-		testutils.HealthyConnectURL,
-		1,
-		2,
-		pool.WithConfirms(true),
-		pool.WithLogger(logging.NewTestLogger(t)),
-		pool.WithName(poolName),
-	)
-	if err != nil {
-		assert.NoError(t, err)
-		return
-	}
 	defer hp.Close()
 
 	var (
@@ -43,8 +31,10 @@ func TestNewSingleSubscriber(t *testing.T) {
 		queueName        = nextQueueName()
 		nextConsumerName = testutils.ConsumerNameGenerator(queueName)
 		consumerName     = nextConsumerName()
+
 		publisherMsgGen  = testutils.MessageGenerator(queueName)
 		subscriberMsgGen = testutils.MessageGenerator(queueName)
+		numMsgs          = 20
 	)
 
 	ts, err := hp.GetTransientSession(ctx)
@@ -56,90 +46,26 @@ func TestNewSingleSubscriber(t *testing.T) {
 
 	cleanup := DeclareExchangeQueue(t, ctx, ts, exchangeName, queueName)
 	defer cleanup()
+	var wg sync.WaitGroup
+	defer wg.Wait()
 
-	cctx, cancel := context.WithCancel(ctx)
-
-	sub := pool.NewSubscriber(hp, pool.SubscriberWithContext(cctx))
-	defer sub.Close()
-
-	sub.RegisterHandlerFunc(queueName,
-		func(ctx context.Context, msg pool.Delivery) error {
-
-			// handler func
-			receivedMsg := string(msg.Body)
-			// assert equel to message that is to be sent
-			assert.Equal(t, subscriberMsgGen(), receivedMsg)
-
-			// close subscriber from within handler
-			cancel()
-			return nil
-		},
-		pool.ConsumeOptions{
-			ConsumerTag: consumerName,
-			Exclusive:   true,
-		},
-	)
-	err = sub.Start(ctx)
-	if err != nil {
-		assert.NoError(t, err)
-		return
-	}
-	time.Sleep(5 * time.Second)
-
-	pub := pool.NewPublisher(hp)
-	defer pub.Close()
-
-	err = pub.Publish(ctx, exchangeName, "", pool.Publishing{
-		Mandatory:   true,
-		ContentType: "application/json",
-		Body:        []byte(publisherMsgGen()),
-	})
-	assert.NoError(t, err)
-
-	// this should be canceled upon context cancelation from within the
-	// subscriber handler.
-	sub.Wait()
+	SubscriberConsumeAsyncN(t, ctx, &wg, hp, queueName, consumerName, subscriberMsgGen, numMsgs, false)
+	PublisherPublishAsyncN(t, ctx, &wg, hp, exchangeName, publisherMsgGen, numMsgs)
 }
 
-func TestNewSubscriberWithDisconnect(t *testing.T) {
+func TestNewSingleSubscriberWithDisconnect(t *testing.T) {
 	t.Parallel()
 
 	var (
 		ctx                       = context.TODO()
-		poolName                  = testutils.FuncName()
+		nextPoolName              = testutils.PoolNameGenerator()
+		poolName                  = nextPoolName()
+		hp                        = NewPool(t, ctx, testutils.HealthyConnectURL, poolName, 1, 2)
 		proxyName, connectURL, _  = testutils.NextConnectURL()
+		pp                        = NewPool(t, ctx, connectURL, nextPoolName()+proxyName, 1, 1)
 		disconnected, reconnected = Disconnect(t, proxyName, 5*time.Second)
 	)
-
-	hp, err := pool.New(
-		ctx,
-		testutils.HealthyConnectURL,
-		1,
-		1,
-		pool.WithConfirms(true),
-		pool.WithLogger(logging.NewTestLogger(t)),
-		pool.WithName(poolName),
-	)
-	if err != nil {
-		assert.NoError(t, err)
-		return
-	}
 	defer hp.Close()
-
-	bp, err := pool.New(
-		ctx,
-		connectURL,
-		1,
-		1,
-		pool.WithConfirms(true),
-		pool.WithLogger(logging.NewTestLogger(t)),
-		pool.WithName(poolName+"-broken"),
-	)
-	if err != nil {
-		assert.NoError(t, err)
-		return
-	}
-	defer bp.Close()
 
 	var (
 		nextExchangeName = testutils.ExchangeNameGenerator(poolName)
@@ -148,8 +74,10 @@ func TestNewSubscriberWithDisconnect(t *testing.T) {
 		queueName        = nextQueueName()
 		nextConsumerName = testutils.ConsumerNameGenerator(queueName)
 		consumerName     = nextConsumerName()
+
 		publisherMsgGen  = testutils.MessageGenerator(queueName)
 		subscriberMsgGen = testutils.MessageGenerator(queueName)
+		numMsgs          = 20
 	)
 
 	ts, err := hp.GetTransientSession(ctx)
@@ -161,228 +89,128 @@ func TestNewSubscriberWithDisconnect(t *testing.T) {
 
 	cleanup := DeclareExchangeQueue(t, ctx, ts, exchangeName, queueName)
 	defer cleanup()
-
-	cctx, cancel := context.WithCancel(ctx)
-
-	sub := pool.NewSubscriber(hp, pool.SubscriberWithContext(cctx))
-	defer sub.Close()
-
-	sub.RegisterHandlerFunc(queueName,
-		func(ctx context.Context, msg pool.Delivery) error {
-
-			// handler func
-			receivedMsg := string(msg.Body)
-			// assert equel to message that is to be sent
-			assert.Equal(t, subscriberMsgGen(), receivedMsg)
-
-			// close subscriber from within handler
-			cancel()
-			return nil
-		},
-		pool.ConsumeOptions{
-			ConsumerTag: consumerName,
-			Exclusive:   true,
-		},
-	)
-	pub := pool.NewPublisher(hp)
-	defer pub.Close()
-
-	err = pub.Publish(ctx, exchangeName, "", pool.Publishing{
-		Mandatory:   true,
-		ContentType: "application/json",
-		Body:        []byte(publisherMsgGen()),
-	})
-	assert.NoError(t, err)
+	var wg sync.WaitGroup
+	defer wg.Wait()
+	PublisherPublishAsyncN(t, ctx, &wg, hp, exchangeName, publisherMsgGen, numMsgs)
 
 	disconnected()
-	err = sub.Start(ctx)
-	if err != nil {
-		assert.NoError(t, err)
-		return
-	}
-
-	sub.Wait()
-	reconnected()
+	defer reconnected()
+	SubscriberConsumeN(t, ctx, pp, queueName, consumerName, subscriberMsgGen, numMsgs, true)
 }
 
-func TestBatchSubscriber(t *testing.T) {
+func TestNewSingleBatchSubscriber(t *testing.T) {
+	t.Parallel()
+
 	var (
 		ctx          = context.TODO()
-		sessions     = 2 // publisher sessions + consumer sessions
-		numMessages  = 50
-		batchTimeout = 10 * time.Second // keep this at a higher number for slow machines
+		nextPoolName = testutils.PoolNameGenerator()
+		poolName     = nextPoolName()
+		hp           = NewPool(t, ctx, testutils.HealthyConnectURL, poolName, 1, 2)
 	)
-	p, err := pool.New(
-		ctx,
-		testutils.HealthyConnectURL,
-		1,
-		sessions,
-		pool.WithConfirms(true),
-		pool.WithLogger(logging.NewTestLogger(t)),
+	defer hp.Close()
+
+	var (
+		nextExchangeName = testutils.ExchangeNameGenerator(poolName)
+		nextQueueName    = testutils.QueueNameGenerator(poolName)
+		exchangeName     = nextExchangeName()
+		queueName        = nextQueueName()
+		nextConsumerName = testutils.ConsumerNameGenerator(queueName)
+		consumerName     = nextConsumerName()
+
+		publisherMsgGen  = testutils.MessageGenerator(queueName)
+		subscriberMsgGen = testutils.MessageGenerator(queueName)
+		numMsgs          = 20
+		batchSize        = numMsgs / 4
 	)
+
+	ts, err := hp.GetTransientSession(ctx)
 	if err != nil {
 		assert.NoError(t, err)
 		return
 	}
-	defer p.Close()
+	defer hp.ReturnSession(ts, nil)
+
+	cleanup := DeclareExchangeQueue(t, ctx, ts, exchangeName, queueName)
+	defer cleanup()
+	var wg sync.WaitGroup
+	defer wg.Wait()
+
+	SubscriberBatchConsumeAsyncN(
+		t,
+		ctx,
+		&wg,
+		hp,
+		queueName,
+		consumerName,
+		subscriberMsgGen,
+		numMsgs,
+		batchSize,
+		numMsgs*1024, // should not be hit
+		false,
+	)
+	PublisherPublishAsyncN(t, ctx, &wg, hp, exchangeName, publisherMsgGen, numMsgs)
+}
+
+func TestBatchSubscriberMaxBytes(t *testing.T) {
+	t.Parallel()
 
 	var wg sync.WaitGroup
-
-	channels := sessions / 2 // one sessions for consumer and one for publisher
-	wg.Add(channels)
-	for id := 0; id < channels; id++ {
-		go func(id int64) {
-			defer wg.Done()
-
-			ts, err := p.GetTransientSession(p.Context())
-			if err != nil {
-				assert.NoError(t, err)
-				return
-			}
-			defer p.ReturnSession(ts, nil)
-
-			queueName := fmt.Sprintf("TestBatchSubscriber-Queue-%d", id)
-			_, err = ts.QueueDeclare(ctx, queueName)
-			if err != nil {
-				assert.NoError(t, err)
-				return
-			}
-			defer func() {
-				i, err := ts.QueueDelete(ctx, queueName)
-				assert.NoError(t, err)
-				assert.Equal(t, 0, i)
-			}()
-
-			exchangeName := fmt.Sprintf("TestBatchSubscriber-Exchange-%d", id)
-			err = ts.ExchangeDeclare(ctx, exchangeName, "topic")
-			if err != nil {
-				assert.NoError(t, err)
-				return
-			}
-			defer func() {
-				err := ts.ExchangeDelete(ctx, exchangeName)
-				assert.NoError(t, err)
-			}()
-
-			err = ts.QueueBind(ctx, queueName, "#", exchangeName)
-			if err != nil {
-				assert.NoError(t, err)
-				return
-			}
-			defer func() {
-				err := ts.QueueUnbind(ctx, queueName, "#", exchangeName, nil)
-				assert.NoError(t, err)
-			}()
-
-			// publish all messages
-			pub := pool.NewPublisher(p)
-			defer pub.Close()
-
-			for i := 0; i < numMessages; i++ {
-				message := fmt.Sprintf("Message-%s-%d", queueName, i)
-
-				pub.Publish(ctx, exchangeName, "", pool.Publishing{
-					Mandatory:   true,
-					ContentType: "application/json",
-					Body:        []byte(message),
-				})
-			}
-
-			ctx, cancel := context.WithCancel(p.Context())
-
-			sub := pool.NewSubscriber(p, pool.SubscriberWithContext(ctx))
-			defer sub.Close()
-
-			batchSize := numMessages / 2
-
-			batchCount := 0
-			messageCount := 0
-			sub.RegisterBatchHandlerFunc(queueName,
-				func(ctx context.Context, msgs []pool.Delivery) error {
-					log := logging.NewTestLogger(t)
-					assert.Equal(t, batchSize, len(msgs))
-
-					for idx, msg := range msgs {
-						assert.Truef(t, len(msg.Body) > 0, "msg body is empty: message index: %d", idx)
-						log.Debugf("batch: %d message: %d: body: %q", batchCount, idx, string(msg.Body))
-					}
-
-					messageCount += len(msgs)
-					batchCount += 1
-
-					if messageCount == numMessages {
-						// close subscriber from within handler
-						cancel()
-					}
-					return nil
-				},
-				pool.WithMaxBatchSize(batchSize),
-				pool.WithBatchFlushTimeout(batchTimeout),
-				pool.WithBatchConsumeOptions(pool.ConsumeOptions{
-					ConsumerTag: fmt.Sprintf("Consumer-%s", queueName),
-					Exclusive:   true,
-				}),
-			)
-			sub.Start(ctx)
-
-			// this should be canceled upon context cancelation from within the
-			// subscriber handler.
-			sub.Wait()
-
-			assert.Equalf(t, numMessages, messageCount, "expected messages counter to have the same number as publishes messages")
-			assert.Equalf(t, 2, batchCount, "required to have two batches received")
-
-		}(int64(id))
+	for i := 1; i <= 2048; i = i*2 + 1 {
+		wg.Add(1)
+		go testBatchSubscriberMaxBytes(t, i, &wg)
 	}
 
 	wg.Wait()
 }
 
-func TestBatchSubscriberMaxBytes(t *testing.T) {
-	for i := 1; i <= 2048; i = i*2 + 1 {
-		testBatchSubscriberMaxBytes(t, i)
-	}
-}
-
-func testBatchSubscriberMaxBytes(t *testing.T, maxBatchBytes int) {
+func testBatchSubscriberMaxBytes(t *testing.T, maxBatchBytes int, w *sync.WaitGroup) {
 	t.Helper()
+	defer w.Done()
 
 	var (
 		ctx          = context.TODO()
-		sessions     = 2 // publisher sessions + consumer sessions
-		numMessages  = 50
+		nextPoolName = testutils.PoolNameGenerator(
+			testutils.WithUp(3),
+			testutils.WithSuffix(fmt.Sprintf("-max-batch-bytes-%d", maxBatchBytes)),
+		)
+		poolName = nextPoolName()
+
+		nextExchangeName = testutils.ExchangeNameGenerator(poolName)
+		nextQueueName    = testutils.QueueNameGenerator(poolName)
+
+		numSessions = 2
+		hp          = NewPool(t, ctx, testutils.HealthyConnectURL, poolName, 1, numSessions) // // publisher sessions + consumer sessions
+
+		numMsgs      = 20
 		batchTimeout = 5 * time.Second // keep this at a higher number for slow machines
 	)
-	p, err := pool.New(
-		ctx,
-		testutils.HealthyConnectURL,
-		1,
-		sessions,
-		pool.WithConfirms(true),
-		pool.WithLogger(logging.NewTestLogger(t)),
-	)
-	if err != nil {
-		assert.NoError(t, err)
-		return
-	}
-	defer p.Close()
+	defer hp.Close()
 
 	var wg sync.WaitGroup
 
-	channels := sessions / 2 // one sessions for consumer and one for publisher
+	channels := numSessions / 2 // one sessions for consumer and one for publisher
 	wg.Add(channels)
 	for id := 0; id < channels; id++ {
 		go func(id int64) {
 			defer wg.Done()
 
-			ts, err := p.GetTransientSession(p.Context())
+			var (
+				log              = logging.NewTestLogger(t)
+				exchangeName     = nextExchangeName()
+				queueName        = nextQueueName()
+				nextConsumerName = testutils.ConsumerNameGenerator(queueName)
+			)
+
+			ts, err := hp.GetTransientSession(ctx)
 			if err != nil {
 				assert.NoError(t, err)
 				return
 			}
-			defer p.ReturnSession(ts, nil)
+			defer hp.ReturnSession(ts, nil)
 
-			queueName := fmt.Sprintf("TestBatchSubscriberMaxBytes-Queue-%d", id)
+			cleanup := DeclareExchangeQueue(t, ctx, ts, exchangeName, queueName)
+			defer cleanup()
+
 			_, err = ts.QueueDeclare(ctx, queueName)
 			if err != nil {
 				assert.NoError(t, err)
@@ -394,35 +222,12 @@ func testBatchSubscriberMaxBytes(t *testing.T, maxBatchBytes int) {
 				assert.Equal(t, 0, i)
 			}()
 
-			exchangeName := fmt.Sprintf("TestBatchSubscriberMaxBytes-Exchange-%d", id)
-			err = ts.ExchangeDeclare(ctx, exchangeName, "topic")
-			if err != nil {
-				assert.NoError(t, err)
-				return
-			}
-			defer func() {
-				err := ts.ExchangeDelete(ctx, exchangeName)
-				assert.NoError(t, err)
-			}()
-
-			err = ts.QueueBind(ctx, queueName, "#", exchangeName)
-			if err != nil {
-				assert.NoError(t, err)
-				return
-			}
-			defer func() {
-				err := ts.QueueUnbind(ctx, queueName, "#", exchangeName, nil)
-				assert.NoError(t, err)
-			}()
-
 			// publish all messages
-			pub := pool.NewPublisher(p)
+			pub := pool.NewPublisher(hp)
 			defer pub.Close()
 
-			log := logging.NewTestLogger(t)
-
 			maxMsgLen := 0
-			for i := 0; i < numMessages; i++ {
+			for i := 0; i < numMsgs; i++ {
 				message := fmt.Sprintf("Message-%s-%06d", queueName, i) // max 6 digits
 				mlen := len(message)
 				if mlen > maxMsgLen {
@@ -431,7 +236,7 @@ func testBatchSubscriberMaxBytes(t *testing.T, maxBatchBytes int) {
 
 				pub.Publish(ctx, exchangeName, "", pool.Publishing{
 					Mandatory:   true,
-					ContentType: "application/json",
+					ContentType: "text/plain",
 					Body:        []byte(message),
 				})
 			}
@@ -442,15 +247,16 @@ func testBatchSubscriberMaxBytes(t *testing.T, maxBatchBytes int) {
 				expectedMessagesPerBatch += 1
 			}
 			log.Debugf("expected messages per batch: %d", expectedMessagesPerBatch)
-			expectedBatches := numMessages / expectedMessagesPerBatch
-			if numMessages%expectedMessagesPerBatch > 0 {
+			expectedBatches := numMsgs / expectedMessagesPerBatch
+			if numMsgs%expectedMessagesPerBatch > 0 {
 				expectedBatches += 1
 			}
 			log.Debugf("expected batches: %d", expectedBatches)
 
-			cctx, cancel := context.WithCancel(p.Context())
+			cctx, cancel := context.WithCancel(ctx)
+			defer cancel()
 
-			sub := pool.NewSubscriber(p, pool.SubscriberWithContext(cctx))
+			sub := pool.NewSubscriber(hp, pool.SubscriberWithContext(cctx))
 			defer sub.Close()
 
 			batchCount := 0
@@ -472,7 +278,7 @@ func testBatchSubscriberMaxBytes(t *testing.T, maxBatchBytes int) {
 					}
 					assert.Equal(t, expectedMessages, len(msgs))
 
-					if messageCount == numMessages {
+					if messageCount == numMsgs {
 						// close subscriber from within handler
 						cancel()
 					}
@@ -482,7 +288,7 @@ func testBatchSubscriberMaxBytes(t *testing.T, maxBatchBytes int) {
 				pool.WithMaxBatchSize(0), // disable this check
 				pool.WithBatchFlushTimeout(batchTimeout),
 				pool.WithBatchConsumeOptions(pool.ConsumeOptions{
-					ConsumerTag: fmt.Sprintf("Consumer-%s", queueName),
+					ConsumerTag: nextConsumerName(),
 					Exclusive:   true,
 				}),
 			)
@@ -492,7 +298,7 @@ func testBatchSubscriberMaxBytes(t *testing.T, maxBatchBytes int) {
 			// subscriber handler.
 			sub.Wait()
 
-			assert.Equalf(t, numMessages, messageCount, "expected messages counter to have the same number as publishes messages")
+			assert.Equalf(t, numMsgs, messageCount, "expected messages counter to have the same number as publishes messages")
 			assert.Equalf(t, expectedBatches, batchCount, "required to have %d batches received", expectedBatches)
 
 		}(int64(id))

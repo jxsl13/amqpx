@@ -9,7 +9,6 @@ import (
 	"github.com/jxsl13/amqpx/internal/testutils"
 	"github.com/jxsl13/amqpx/logging"
 	"github.com/jxsl13/amqpx/pool"
-	"github.com/rabbitmq/amqp091-go"
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/stretchr/testify/assert"
 )
@@ -729,6 +728,8 @@ func TestNewSessionConsumeWithDisconnect(t *testing.T) {
 	wg.Wait()
 }
 
+/*
+// FIXME: ou of memory tests are disabled until https://github.com/rabbitmq/amqp091-go/issues/253 is resolved
 func TestChannelFullChainOnOutOfMemoryRabbitMQ(t *testing.T) {
 	t.Parallel()
 
@@ -883,6 +884,7 @@ func TestChannelFullChainOnOutOfMemoryRabbitMQ(t *testing.T) {
 		assert.NotEmpty(t, b.Reason, "expected blocked notification to have a reason")
 	}
 }
+*/
 
 func TestChannelCloseWithDisconnect(t *testing.T) {
 	t.Parallel()
@@ -964,6 +966,8 @@ func TestNewSingleSessionCloseWithDisconnect(t *testing.T) {
 	assert.NoError(t, s.Close())
 }
 
+/*
+// FIXME: ou of memory tests are disabled until https://github.com/rabbitmq/amqp091-go/issues/253 is resolved
 func TestNewSingleSessionCloseWithOutOfMemoryRabbitMQ(t *testing.T) {
 	t.Parallel() // can be run in parallel because the connection to the rabbitmq is never broken
 
@@ -1037,6 +1041,7 @@ func TestNewSingleSessionCloseWithOutOfMemoryRabbitMQ(t *testing.T) {
 	err = s.Close()
 	assert.NoError(t, err)
 }
+*/
 
 func TestNewSingleSessionCloseWithHealthyRabbitMQ(t *testing.T) {
 	t.Parallel() // can be run in parallel because the connection to the rabbitmq is never broken

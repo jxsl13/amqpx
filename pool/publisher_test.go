@@ -99,6 +99,8 @@ func TestSinglePublisher(t *testing.T) {
 	wg.Wait()
 }
 
+/*
+// TODO: out of memory rabbitmq tests are disabled until https://github.com/rabbitmq/amqp091-go/issues/253 is resolved
 func TestPublishAwaitFlowControl(t *testing.T) {
 	t.Parallel()
 
@@ -163,3 +165,4 @@ func TestPublishAwaitFlowControl(t *testing.T) {
 	assert.ErrorIs(t, err, pool.ErrFlowControl)
 	// FIXME: this test gets stuck when the sessions in the session pool are closed.:
 }
+*/

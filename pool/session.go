@@ -390,15 +390,15 @@ func (s *Session) AwaitConfirm(ctx context.Context, expectedTag uint64) error {
 			return fmt.Errorf("await confirm failed: %w", errReturnedClosed)
 		}
 		return fmt.Errorf("await confirm failed: %w: %s", ErrReturned, returned.ReplyText)
-	case blocking, ok := <-s.conn.FlowControl():
+	case blocking, ok := <-s.conn.BlockingFlowControl():
 		if !ok {
 			err := s.error()
 			if err != nil {
 				return fmt.Errorf("await confirm failed: blocking channel closed: %w", err)
 			}
-			return fmt.Errorf("await confirm failed: %w", errFlowControlClosed)
+			return fmt.Errorf("await confirm failed: %w", errBlockingFlowControlClosed)
 		}
-		return fmt.Errorf("await confirm failed: %w: %s", ErrFlowControl, blocking.Reason)
+		return fmt.Errorf("await confirm failed: %w: %s", ErrBlockingFlowControl, blocking.Reason)
 	case <-ctx.Done():
 		err := ctx.Err()
 		return fmt.Errorf("await confirm: failed context %w: %w", ErrClosed, err)

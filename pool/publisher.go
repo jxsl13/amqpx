@@ -71,17 +71,9 @@ func (p *Publisher) Publish(ctx context.Context, exchange string, routingKey str
 		switch {
 		case err == nil:
 			return nil
-		case errors.Is(err, context.Canceled):
-			return err
-		case errors.Is(err, context.DeadlineExceeded):
-			return err
-		case errors.Is(err, ErrClosed):
-			return err
 		case errors.Is(err, ErrNack):
 			return err
 		case errors.Is(err, ErrDeliveryTagMismatch):
-			return err
-		case errors.Is(err, ErrFlowControl):
 			return err
 		default:
 			if recoverable(err) {

@@ -219,7 +219,7 @@ func (ch *Connection) connect(ctx context.Context) error {
 	return nil
 }
 
-func (ch *Connection) FlowControl() <-chan amqp.Blocking {
+func (ch *Connection) BlockingFlowControl() <-chan amqp.Blocking {
 	ch.mu.Lock()
 	defer ch.mu.Unlock()
 

@@ -22,14 +22,14 @@ var (
 	// the queue was not found.
 	ErrNotFound = errors.New("not found")
 
-	// ErrFlowControl is returned when the server is under flow control
+	// ErrBlockingFlowControl is returned when the server is under flow control
 	// Your HTTP api may return 503 Service Unavailable or 429 Too Many Requests with a Retry-After header (https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Retry-After)
-	ErrFlowControl = errors.New("flow control")
+	ErrBlockingFlowControl = errors.New("blocking flow control")
 
-	// errFlowControlClosed is returned when the flow control channel is closed
+	// errBlockingFlowControlClosed is returned when the flow control channel is closed
 	// Specifically interesting when awaiting publish confirms
 	// TODO: make public api after a while
-	errFlowControlClosed = errors.New("flow control channel closed")
+	errBlockingFlowControlClosed = errors.New("blocking flow control channel closed")
 
 	// ErrReturned is returned when a message is returned by the server when publishing
 	ErrReturned = errors.New("returned")
@@ -77,7 +77,7 @@ func recoverable(err error) bool {
 		return false
 	}
 
-	if errors.Is(err, ErrFlowControl) {
+	if errors.Is(err, ErrBlockingFlowControl) {
 		return false
 	}
 

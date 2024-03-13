@@ -94,6 +94,8 @@ func TestNewConnectionPool(t *testing.T) {
 }
 
 func TestNewConnectionPoolWithDisconnect(t *testing.T) {
+	t.Parallel()
+
 	var (
 		ctx                      = context.TODO()
 		poolName                 = testutils.FuncName()
