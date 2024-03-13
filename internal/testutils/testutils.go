@@ -38,3 +38,20 @@ func FuncName(up ...int) string {
 	}
 	return f.Name()
 }
+
+func CallerFuncName(up ...int) string {
+	offset := 2
+	if len(up) > 0 && up[0] > 0 {
+		offset = up[0]
+	}
+	pc, _, _, ok := runtime.Caller(offset)
+	if !ok {
+		panic("failed to get caller")
+	}
+
+	f := runtime.FuncForPC(pc)
+	if f == nil {
+		panic("failed to get function name")
+	}
+	return f.Name()
+}

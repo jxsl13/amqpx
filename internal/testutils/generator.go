@@ -25,6 +25,13 @@ func (o *generatorOptions) ToSuffix() string {
 
 type GeneratorOption func(*generatorOptions)
 
+// WithUp sets the number of stack frames to skip when generating the name
+func WithUp(up int) GeneratorOption {
+	return func(o *generatorOptions) {
+		o.up = up
+	}
+}
+
 func WithRandomSuffix(addRandomSuffix bool) GeneratorOption {
 	return func(o *generatorOptions) {
 		o.randomSuffix = addRandomSuffix
@@ -101,8 +108,10 @@ func QueueNameGenerator(sessionName string, options ...GeneratorOption) (nextQue
 		opt(&opts)
 	}
 
-	var mu sync.Mutex
-	var counter int64
+	var (
+		mu      sync.Mutex
+		counter int64
+	)
 	return func() string {
 		mu.Lock()
 		cnt := counter
@@ -124,14 +133,43 @@ func SessionNameGenerator(connectionName string, options ...GeneratorOption) (ne
 		opt(&opts)
 	}
 
-	var mu sync.Mutex
-	var counter int64
+	var (
+		mu      sync.Mutex
+		counter int64
+	)
 	return func() string {
 		mu.Lock()
 		cnt := counter
 		counter++
 		mu.Unlock()
 		return fmt.Sprintf("%s-%ssession-%d%s", connectionName, opts.prefix, cnt, opts.ToSuffix())
+	}
+}
+
+func PoolNameGenerator(options ...GeneratorOption) (nextConnName func() string) {
+	opts := generatorOptions{
+		prefix:       "",
+		randomSuffix: false,
+
+		up: 2,
+	}
+
+	for _, opt := range options {
+		opt(&opts)
+	}
+
+	var mu sync.Mutex
+	funcName := FuncName(opts.up)
+	parts := strings.Split(funcName, ".")
+	funcName = parts[len(parts)-1]
+
+	var counter int64
+	return func() string {
+		mu.Lock()
+		cnt := counter
+		counter++
+		mu.Unlock()
+		return fmt.Sprintf("%s%s-%d%s", opts.prefix, funcName, cnt, opts.ToSuffix())
 	}
 }
 
