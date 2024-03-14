@@ -8,7 +8,7 @@ down:
 	docker-compose down
 
 test:
-	go test -timeout 900s -v -race -count=1 ./...
+	go test -timeout 300s -v -race -count=1 ./...
 
 count-tests:
 	grep -REn 'func Test.+\(.+testing\.T.*\)' . | wc -l
