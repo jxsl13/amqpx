@@ -50,6 +50,29 @@ func WithSuffix(suffix string) GeneratorOption {
 	}
 }
 
+func RoutingKeyGenerator(sessionName string, options ...GeneratorOption) (nextRoutingKey func() string) {
+	opts := generatorOptions{
+		prefix:       "",
+		randomSuffix: false,
+
+		up: 2,
+	}
+
+	for _, opt := range options {
+		opt(&opts)
+	}
+
+	var mu sync.Mutex
+	var counter int64
+	return func() string {
+		mu.Lock()
+		cnt := counter
+		counter++
+		mu.Unlock()
+		return fmt.Sprintf("%s-%srouting-key-%d%s", sessionName, opts.prefix, cnt, opts.ToSuffix())
+	}
+}
+
 func ExchangeNameGenerator(sessionName string, options ...GeneratorOption) (nextExchangeName func() string) {
 	opts := generatorOptions{
 		prefix:       "",
@@ -220,4 +243,37 @@ func MessageGenerator(queueOrExchangeName string, options ...GeneratorOption) (n
 		mu.Unlock()
 		return fmt.Sprintf("%s-message-%d%s", queueOrExchangeName, cnt, opts.ToSuffix())
 	}
+}
+
+func NewExchangeQueueGenerator(funcName string) func() ExchangeQueue {
+	var (
+		nextExchangeName = ExchangeNameGenerator(funcName)
+		nextQueueName    = QueueNameGenerator(funcName)
+		nextRoutingKey   = RoutingKeyGenerator(funcName)
+	)
+	return func() ExchangeQueue {
+		return NewExchangeQueue(nextExchangeName(), nextQueueName(), nextRoutingKey())
+	}
+}
+
+func NewExchangeQueue(exchange, queue, routingKey string) ExchangeQueue {
+	return ExchangeQueue{
+		Exchange:    exchange,
+		Queue:       queue,
+		RoutingKey:  routingKey,
+		ConsumerTag: ConsumerNameGenerator(queue)(), // generate one consumer name
+		NextPubMsg:  MessageGenerator(exchange),
+		NextSubMsg:  MessageGenerator(exchange),
+	}
+}
+
+type ExchangeQueue struct {
+	Exchange   string
+	Queue      string
+	RoutingKey string
+
+	ConsumerTag string
+
+	NextPubMsg func() string
+	NextSubMsg func() string
 }

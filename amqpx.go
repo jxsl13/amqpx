@@ -11,21 +11,23 @@ import (
 	"github.com/jxsl13/amqpx/pool"
 )
 
-/*
 var (
 	// global variable, as we usually only need a single connection
 	amqpx = New()
 )
-*/
 
 type (
 	TopologyFunc func(context.Context, *pool.Topologer) error
 )
 
+func noopCancel() {}
+
 type AMQPX struct {
-	pubPool *pool.Pool
-	pub     *pool.Publisher
-	sub     *pool.Subscriber
+	pubCtx    context.Context
+	pubCancel context.CancelFunc
+	pubPool   *pool.Pool
+	pub       *pool.Publisher
+	sub       *pool.Subscriber
 
 	mu            sync.RWMutex
 	handlers      []*pool.Handler
@@ -42,9 +44,11 @@ type AMQPX struct {
 
 func New() *AMQPX {
 	return &AMQPX{
-		pubPool: nil,
-		pub:     nil,
-		sub:     nil,
+		pubCtx:    context.Background(),
+		pubCancel: noopCancel,
+		pubPool:   nil,
+		pub:       nil,
+		sub:       nil,
 
 		handlers:         make([]*pool.Handler, 0),
 		batchHandlers:    make([]*pool.BatchHandler, 0),
@@ -59,6 +63,8 @@ func (a *AMQPX) Reset() error {
 	defer a.mu.Unlock()
 	err := a.close()
 
+	a.pubCtx = context.Background()
+	a.pubCancel = noopCancel
 	a.pubPool = nil
 	a.pub = nil
 	a.sub = nil
@@ -166,7 +172,7 @@ func (a *AMQPX) Start(ctx context.Context, connectUrl string, options ...Option)
 			PublisherOptions:      make([]pool.PublisherOption, 0),
 			PublisherConnections:  1,
 			PublisherSessions:     10,
-			SubscriberConnections: 1,
+			SubscriberConnections: len(a.handlers) + len(a.batchHandlers),
 			CloseTimeout:          15 * time.Second,
 		}
 
@@ -179,8 +185,11 @@ func (a *AMQPX) Start(ctx context.Context, connectUrl string, options ...Option)
 		a.closeTimeout = option.CloseTimeout
 
 		// publisher and subscriber need to have different tcp connections (tcp pushback prevention)
+		// pub pool is only closed when .Close() is called.
+		// This is needed so that we can correctly call the topology deleters.
+		a.pubCtx, a.pubCancel = context.WithCancel(context.Background())
 		a.pubPool, err = pool.New(
-			ctx,
+			a.pubCtx,
 			connectUrl,
 			option.PublisherConnections,
 			option.PublisherSessions,
@@ -218,7 +227,7 @@ func (a *AMQPX) Start(ctx context.Context, connectUrl string, options ...Option)
 				connections = requiredHandlers
 			)
 
-			if option.SubscriberConnections > connections {
+			if option.SubscriberConnections >= connections {
 				connections = option.SubscriberConnections
 			}
 
@@ -264,6 +273,7 @@ func (a *AMQPX) Close() error {
 
 func (a *AMQPX) close() (err error) {
 	a.closeOnce.Do(func() {
+		defer a.pubCancel()
 
 		if a.sub != nil {
 			a.sub.Close()
@@ -274,7 +284,7 @@ func (a *AMQPX) close() (err error) {
 		}
 
 		if a.pubPool != nil && len(a.topologyDeleters) > 0 {
-			ctx, cancel := context.WithTimeout(context.Background(), a.closeTimeout)
+			ctx, cancel := context.WithTimeout(a.pubCtx, a.closeTimeout)
 			defer cancel()
 
 			topologer := pool.NewTopologer(
@@ -320,7 +330,6 @@ func (a *AMQPX) Get(ctx context.Context, queue string, autoAck bool) (msg pool.D
 	return a.pub.Get(ctx, queue, autoAck)
 }
 
-/*
 // RegisterTopology registers a topology creating function that is called upon
 // Start. The creation of topologie sis the first step before any publisher or subscriber is started.
 func RegisterTopologyCreator(topology TopologyFunc) {
@@ -379,4 +388,3 @@ func Get(ctx context.Context, queue string, autoAck bool) (msg pool.Delivery, ok
 func Reset() error {
 	return amqpx.Reset()
 }
-*/
