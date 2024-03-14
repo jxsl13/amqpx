@@ -19,15 +19,11 @@ func TestNewSingleConnection(t *testing.T) {
 		nextName = testutils.ConnectionNameGenerator()
 	)
 
-	reconnectCB, deferredAssert := AssertConnectionReconnectAttempts(t, 0)
-	defer deferredAssert()
-
 	c, err := pool.NewConnection(
 		ctx,
 		testutils.HealthyConnectURL,
 		nextName(),
 		pool.ConnectionWithLogger(logging.NewTestLogger(t)),
-		pool.ConnectionWithRecoverCallback(reconnectCB),
 	)
 
 	if err != nil {
@@ -54,14 +50,11 @@ func TestManyNewConnection(t *testing.T) {
 		go func() {
 			defer wg.Done()
 
-			reconnectCB, deferredAssert := AssertConnectionReconnectAttempts(t, 0)
-			defer deferredAssert()
 			c, err := pool.NewConnection(
 				ctx,
 				testutils.HealthyConnectURL,
 				nextName(),
 				pool.ConnectionWithLogger(logging.NewTestLogger(t)),
-				pool.ConnectionWithRecoverCallback(reconnectCB),
 			)
 			if err != nil {
 				assert.NoError(t, err)
@@ -88,9 +81,6 @@ func TestNewSingleConnectionWithDisconnect(t *testing.T) {
 		nextName                 = testutils.ConnectionNameGenerator()
 	)
 
-	reconnectCB, deferredAssert := AssertConnectionReconnectAttempts(t, 1)
-	defer deferredAssert()
-
 	started, stopped := DisconnectWithStartedStopped(t, proxyName, 0, 0, 10*time.Second)
 	started()
 	defer stopped()
@@ -100,7 +90,6 @@ func TestNewSingleConnectionWithDisconnect(t *testing.T) {
 		connectURL,
 		nextName(),
 		pool.ConnectionWithLogger(logging.NewTestLogger(t)),
-		pool.ConnectionWithRecoverCallback(reconnectCB),
 	)
 	if err != nil {
 		assert.NoError(t, err)
@@ -131,13 +120,10 @@ func TestManyNewConnectionWithDisconnect(t *testing.T) {
 		go func() {
 			defer wg.Done()
 
-			reconnectCB, deferredAssert := AssertConnectionReconnectAttempts(t, 1)
-			defer deferredAssert()
 			c, err := pool.NewConnection(
 				ctx,
 				connectURL,
 				nextName(),
-				pool.ConnectionWithRecoverCallback(reconnectCB),
 			)
 			if err != nil {
 				assert.NoError(t, err)

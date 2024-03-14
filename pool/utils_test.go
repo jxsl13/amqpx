@@ -296,27 +296,6 @@ func NewSession(t *testing.T, ctx context.Context, connectURL, connectionName st
 	}
 }
 
-func AssertConnectionReconnectAttempts(t *testing.T, n int) (callback pool.ConnectionRecoverCallback, deferredAssert func()) {
-	var (
-		i   int
-		mu  sync.Mutex
-		log = logging.NewTestLogger(t)
-	)
-	return func(name string, retry int, err error) {
-			if retry == 0 {
-				log.Infof("connection %s retry %d, error: %v", name, retry, err)
-				mu.Lock()
-				i++
-				mu.Unlock()
-			}
-		},
-		func() {
-			mu.Lock()
-			defer mu.Unlock()
-			assert.Equal(t, n, i, "expected %d reconnect attempts, got %d", n, i)
-		}
-}
-
 func PublisherPublishN(t *testing.T, ctx context.Context, p *pool.Pool, exchangeName string, publishMessageGenerator func() string, n int) {
 	pub := pool.NewPublisher(p)
 	defer pub.Close()

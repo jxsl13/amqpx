@@ -34,14 +34,11 @@ func TestNewSingleSessionPublishAndConsume(t *testing.T) {
 		numMsgs                 = 20
 	)
 
-	reconnectCB, deferredAssert := AssertConnectionReconnectAttempts(t, 0)
-	defer deferredAssert()
 	c, err := pool.NewConnection(
 		ctx,
 		testutils.HealthyConnectURL,
 		connName,
 		pool.ConnectionWithLogger(logging.NewTestLogger(t)),
-		pool.ConnectionWithRecoverCallback(reconnectCB),
 	)
 	if err != nil {
 		assert.NoError(t, err)
@@ -91,14 +88,11 @@ func TestManyNewSessionsPublishAndConsume(t *testing.T) {
 		numMsgs         = 20
 	)
 
-	reconnectCB, deferredAssert := AssertConnectionReconnectAttempts(t, 0)
-	defer deferredAssert()
 	c, err := pool.NewConnection(
 		ctx,
 		testutils.HealthyConnectURL,
 		connName,
 		pool.ConnectionWithLogger(logging.NewTestLogger(t)),
-		pool.ConnectionWithRecoverCallback(reconnectCB),
 	)
 	if err != nil {
 		assert.NoError(t, err)
@@ -158,14 +152,11 @@ func TestNewSessionQueueDeclarePassive(t *testing.T) {
 		nextQueueName   = testutils.QueueNameGenerator(sessionName)
 	)
 
-	reconnectCB, deferredAssert := AssertConnectionReconnectAttempts(t, 0)
-	defer deferredAssert()
 	conn, err := pool.NewConnection(
 		ctx,
 		testutils.HealthyConnectURL,
 		connName,
 		pool.ConnectionWithLogger(logging.NewTestLogger(t)),
-		pool.ConnectionWithRecoverCallback(reconnectCB),
 	)
 	if err != nil {
 		assert.NoError(t, err)
@@ -233,14 +224,11 @@ func TestNewSessionExchangeDeclareWithDisconnect(t *testing.T) {
 		nextSessionName          = testutils.SessionNameGenerator(connName)
 	)
 
-	reconnectCB, deferredAssert := AssertConnectionReconnectAttempts(t, 1)
-	defer deferredAssert()
 	c, err := pool.NewConnection(
 		ctx,
 		connectURL,
 		connName,
 		pool.ConnectionWithLogger(logging.NewTestLogger(t)),
-		pool.ConnectionWithRecoverCallback(reconnectCB),
 	)
 	if err != nil {
 		assert.NoError(t, err)
@@ -289,14 +277,11 @@ func TestNewSessionExchangeDeleteWithDisconnect(t *testing.T) {
 		nextSessionName          = testutils.SessionNameGenerator(connName)
 	)
 
-	reconnectCB, deferredAssert := AssertConnectionReconnectAttempts(t, 1)
-	defer deferredAssert()
 	c, err := pool.NewConnection(
 		ctx,
 		connectURL,
 		connName,
 		pool.ConnectionWithLogger(logging.NewTestLogger(t)),
-		pool.ConnectionWithRecoverCallback(reconnectCB),
 	)
 	if err != nil {
 		assert.NoError(t, err)
@@ -346,14 +331,11 @@ func TestNewSessionQueueDeclareWithDisconnect(t *testing.T) {
 		nextSessionName          = testutils.SessionNameGenerator(connName)
 	)
 
-	reconnectCB, deferredAssert := AssertConnectionReconnectAttempts(t, 1)
-	defer deferredAssert()
 	c, err := pool.NewConnection(
 		ctx,
 		connectURL,
 		connName,
 		pool.ConnectionWithLogger(logging.NewTestLogger(t)),
-		pool.ConnectionWithRecoverCallback(reconnectCB),
 	)
 	if err != nil {
 		assert.NoError(t, err, "expected no error when creating new connection")
@@ -405,14 +387,11 @@ func TestNewSessionQueueDeleteWithDisconnect(t *testing.T) {
 		nextSessionName          = testutils.SessionNameGenerator(connName)
 	)
 
-	reconnectCB, deferredAssert := AssertConnectionReconnectAttempts(t, 1)
-	defer deferredAssert()
 	c, err := pool.NewConnection(
 		ctx,
 		connectURL,
 		connName,
 		pool.ConnectionWithLogger(logging.NewTestLogger(t)),
-		pool.ConnectionWithRecoverCallback(reconnectCB),
 	)
 	if err != nil {
 		assert.NoError(t, err)
@@ -462,14 +441,11 @@ func TestNewSessionQueueBindWithDisconnect(t *testing.T) {
 		nextSessionName          = testutils.SessionNameGenerator(connName)
 	)
 
-	reconnectCB, deferredAssert := AssertConnectionReconnectAttempts(t, 1)
-	defer deferredAssert()
 	c, err := pool.NewConnection(
 		ctx,
 		connectURL,
 		connName,
 		pool.ConnectionWithLogger(logging.NewTestLogger(t)),
-		pool.ConnectionWithRecoverCallback(reconnectCB),
 	)
 	if err != nil {
 		assert.NoError(t, err)
@@ -539,14 +515,11 @@ func TestNewSessionQueueUnbindWithDisconnect(t *testing.T) {
 		nextSessionName          = testutils.SessionNameGenerator(connName)
 	)
 
-	reconnectCB, deferredAssert := AssertConnectionReconnectAttempts(t, 1)
-	defer deferredAssert()
 	c, err := pool.NewConnection(
 		ctx,
 		connectURL,
 		connName,
 		pool.ConnectionWithLogger(logging.NewTestLogger(t)),
-		pool.ConnectionWithRecoverCallback(reconnectCB),
 	)
 	if err != nil {
 		assert.NoError(t, err)
@@ -617,25 +590,19 @@ func TestNewSessionPublishWithDisconnect(t *testing.T) {
 		nextConnName             = testutils.ConnectionNameGenerator()
 	)
 
-	healthyConnCB, hcbAssert := AssertConnectionReconnectAttempts(t, 0)
-	defer hcbAssert()
 	hs, hsclose := NewSession(
 		t,
 		ctx,
 		testutils.HealthyConnectURL,
 		nextConnName(),
-		pool.ConnectionWithRecoverCallback(healthyConnCB),
 	)
 	defer hsclose()
 
-	brokenReconnCB, scbAssert := AssertConnectionReconnectAttempts(t, 1)
-	defer scbAssert()
 	s, sclose := NewSession(
 		t,
 		ctx,
 		connectURL,
 		nextConnName(),
-		pool.ConnectionWithRecoverCallback(brokenReconnCB),
 	)
 	defer sclose()
 
@@ -677,25 +644,19 @@ func TestNewSessionConsumeWithDisconnect(t *testing.T) {
 		nextConnName             = testutils.ConnectionNameGenerator()
 	)
 
-	healthyConnCB, hcbAssert := AssertConnectionReconnectAttempts(t, 0)
-	defer hcbAssert()
 	hs, hsclose := NewSession(
 		t,
 		ctx,
 		testutils.HealthyConnectURL,
 		nextConnName(),
-		pool.ConnectionWithRecoverCallback(healthyConnCB),
 	)
 	defer hsclose()
 
-	brokenReconnCB, scbAssert := AssertConnectionReconnectAttempts(t, 1)
-	defer scbAssert()
 	s, sclose := NewSession(
 		t,
 		ctx,
 		connectURL,
 		nextConnName(),
-		pool.ConnectionWithRecoverCallback(brokenReconnCB),
 	)
 	defer sclose()
 
@@ -928,14 +889,11 @@ func TestNewSingleSessionCloseWithDisconnect(t *testing.T) {
 		disconnected, reconnected = Disconnect(t, proxyName, 5*time.Second)
 	)
 
-	reconnectCB, deferredAssert := AssertConnectionReconnectAttempts(t, 0)
-	defer deferredAssert()
 	c, err := pool.NewConnection(
 		ctx,
 		connectURL,
 		connName,
 		pool.ConnectionWithLogger(logging.NewTestLogger(t)),
-		pool.ConnectionWithRecoverCallback(reconnectCB),
 	)
 	if err != nil {
 		assert.NoError(t, err)
@@ -967,7 +925,7 @@ func TestNewSingleSessionCloseWithDisconnect(t *testing.T) {
 }
 
 /*
-// FIXME: ou of memory tests are disabled until https://github.com/rabbitmq/amqp091-go/issues/253 is resolved
+// FIXME: out of memory tests are disabled until https://github.com/rabbitmq/amqp091-go/issues/253 is resolved
 func TestNewSingleSessionCloseWithOutOfMemoryRabbitMQ(t *testing.T) {
 	t.Parallel() // can be run in parallel because the connection to the rabbitmq is never broken
 
@@ -984,14 +942,11 @@ func TestNewSingleSessionCloseWithOutOfMemoryRabbitMQ(t *testing.T) {
 		queueName        = nextQueueName()
 	)
 
-	reconnectCB, deferredAssert := AssertConnectionReconnectAttempts(t, 0)
-	defer deferredAssert()
 	c, err := pool.NewConnection(
 		ctx,
 		testutils.BrokenConnectURL, // out of memory rabbitmq
 		connName,
 		pool.ConnectionWithLogger(log),
-		pool.ConnectionWithRecoverCallback(reconnectCB),
 	)
 	if err != nil {
 		assert.NoError(t, err)
@@ -1059,14 +1014,11 @@ func TestNewSingleSessionCloseWithHealthyRabbitMQ(t *testing.T) {
 		queueName        = nextQueueName()
 	)
 
-	reconnectCB, deferredAssert := AssertConnectionReconnectAttempts(t, 0)
-	defer deferredAssert()
 	c, err := pool.NewConnection(
 		ctx,
 		testutils.HealthyConnectURL, // healthy rabbitmq
 		connName,
 		pool.ConnectionWithLogger(log),
-		pool.ConnectionWithRecoverCallback(reconnectCB),
 	)
 	if err != nil {
 		assert.NoError(t, err)

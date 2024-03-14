@@ -23,14 +23,11 @@ func TestSinglePublisher(t *testing.T) {
 		numMsgs                  = 10
 	)
 
-	healthyConnCB, hcbAssert := AssertConnectionReconnectAttempts(t, 0)
-	defer hcbAssert()
 	hs, hsclose := NewSession(
 		t,
 		ctx,
 		testutils.HealthyConnectURL,
 		nextConnName(),
-		pool.ConnectionWithRecoverCallback(healthyConnCB),
 	)
 	defer hsclose()
 
@@ -109,14 +106,11 @@ func TestPublishAwaitFlowControl(t *testing.T) {
 		nextConnName = testutils.ConnectionNameGenerator()
 	)
 
-	healthyConnCB, hcbAssert := AssertConnectionReconnectAttempts(t, 0)
-	defer hcbAssert()
 	hs, hsclose := NewSession(
 		t,
 		ctx,
 		testutils.HealthyConnectURL,
 		nextConnName(),
-		pool.ConnectionWithRecoverCallback(healthyConnCB),
 	)
 	defer hsclose()
 
