@@ -17,11 +17,11 @@ const (
 
 // Session is
 type Session struct {
-	name        string
-	cached      bool
-	flagged     bool
-	confirmable bool
-	bufferSize  int
+	name           string
+	cached         bool
+	flagged        bool
+	confirmable    bool
+	bufferCapacity int
 
 	channel  *amqp091.Channel
 	returned chan amqp091.Return
@@ -83,10 +83,10 @@ func NewSession(conn *Connection, name string, options ...SessionOption) (*Sessi
 
 	// default values
 	option := sessionOption{
-		Logger:      conn.log, // derive logger form connection
-		Cached:      false,
-		Confirmable: false,
-		BufferSize:  100,
+		Logger:         conn.log, // derive logger form connection
+		Cached:         false,
+		Confirmable:    false,
+		BufferCapacity: 10,
 		// derive context from connection, as we are derived from the connection
 		// so in case the connection is closed, we are closed as well.
 		Ctx:           conn.ctx,
@@ -102,10 +102,10 @@ func NewSession(conn *Connection, name string, options ...SessionOption) (*Sessi
 	cancel := toCancelFunc(fmt.Errorf("session %w", ErrClosed), cc)
 
 	session := &Session{
-		name:        name,
-		cached:      option.Cached,
-		confirmable: option.Confirmable,
-		bufferSize:  option.BufferSize,
+		name:           name,
+		cached:         option.Cached,
+		confirmable:    option.Confirmable,
+		bufferCapacity: option.BufferCapacity,
 
 		consumers: map[string]bool{},
 		channel:   nil, // will be created on connect
@@ -261,18 +261,18 @@ func (s *Session) connect() (err error) {
 		return fmt.Errorf("%v: %w", ErrConnectionFailed, err)
 	}
 
-	s.errors = make(chan *amqp091.Error, s.bufferSize)
+	s.errors = make(chan *amqp091.Error, s.bufferCapacity)
 	channel.NotifyClose(s.errors)
 
 	if s.confirmable {
-		s.confirms = make(chan amqp091.Confirmation, s.bufferSize)
+		s.confirms = make(chan amqp091.Confirmation, s.bufferCapacity)
 		channel.NotifyPublish(s.confirms)
 		err = channel.Confirm(false)
 		if err != nil {
 			return err
 		}
 
-		s.returned = make(chan amqp091.Return, s.bufferSize)
+		s.returned = make(chan amqp091.Return, s.bufferCapacity)
 		channel.NotifyReturn(s.returned)
 	}
 

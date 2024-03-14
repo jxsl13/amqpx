@@ -15,10 +15,10 @@ type SessionPool struct {
 
 	transientID int64
 
-	size        int
-	bufferSize  int
-	confirmable bool
-	sessions    chan *Session
+	capacity       int
+	bufferCapacity int
+	confirmable    bool
+	sessions       chan *Session
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -52,11 +52,11 @@ func NewSessionPool(pool *ConnectionPool, numSessions int, options ...SessionPoo
 
 	// use sane defaults
 	option := sessionPoolOption{
-		AutoClosePool: false, // caller owns the connection pool by default
-		Size:          numSessions,
-		Confirmable:   false,
-		BufferSize:    1,        // fault tolerance over throughput
-		Logger:        pool.log, // derive logger from connection pool
+		AutoClosePool:  false, // caller owns the connection pool by default
+		Capacity:       numSessions,
+		Confirmable:    false,
+		BufferCapacity: 10,       // fault tolerance over throughput
+		Logger:         pool.log, // derive logger from connection pool
 	}
 
 	for _, o := range options {
@@ -76,10 +76,10 @@ func newSessionPoolFromOption(pool *ConnectionPool, ctx context.Context, option 
 		pool:              pool,
 		autoCloseConnPool: option.AutoClosePool,
 
-		size:        option.Size,
-		bufferSize:  option.BufferSize,
-		confirmable: option.Confirmable,
-		sessions:    make(chan *Session, option.Size),
+		capacity:       option.Capacity,
+		bufferCapacity: option.BufferCapacity,
+		confirmable:    option.Confirmable,
+		sessions:       make(chan *Session, option.Capacity),
 
 		ctx:    ctx,
 		cancel: cancel,
@@ -124,7 +124,7 @@ func newSessionPoolFromOption(pool *ConnectionPool, ctx context.Context, option 
 }
 
 func (sp *SessionPool) initCachedSessions() error {
-	for i := 0; i < sp.size; i++ {
+	for i := 0; i < sp.capacity; i++ {
 		session, err := sp.initCachedSession(i)
 		if err != nil {
 			return err
@@ -157,9 +157,14 @@ func (sp *SessionPool) initCachedSession(id int) (*Session, error) {
 	}
 }
 
-// Size returns the size of the session pool which indicate sthe number of available cached sessions.
+// Size returns the number of available idle sessions in the pool.
 func (sp *SessionPool) Size() int {
-	return sp.size
+	return len(sp.sessions)
+}
+
+// Capacity returns the size of the session pool which indicate t he number of available cached sessions.
+func (sp *SessionPool) Capacity() int {
+	return sp.capacity
 }
 
 // GetSession gets a pooled session.
@@ -209,7 +214,7 @@ func (sp *SessionPool) deriveSession(ctx context.Context, conn *Connection, id i
 
 	return NewSession(conn, name,
 		SessionWithContext(ctx),
-		SessionWithBufferSize(sp.size),
+		SessionWithBufferCapacity(sp.bufferCapacity),
 		SessionWithCached(cached),
 		SessionWithConfirms(sp.confirmable),
 		SessionWithAutoCloseConnection(!cached), // only close transient connections
@@ -280,7 +285,7 @@ func (sp *SessionPool) Close() {
 	wg := &sync.WaitGroup{}
 
 	// close all sessions:
-	for i := 0; i < sp.size; i++ {
+	for i := 0; i < sp.capacity; i++ {
 		session := <-sp.sessions
 		wg.Add(1)
 		go func(s *Session) {

@@ -17,7 +17,7 @@ type connectionPoolOption struct {
 	Name string
 	Ctx  context.Context
 
-	Size int
+	Capacity int
 
 	ConnHeartbeatInterval time.Duration
 	ConnTimeout           time.Duration

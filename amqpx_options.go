@@ -57,11 +57,11 @@ func WithTLS(config *tls.Config) Option {
 	}
 }
 
-// WithBufferSize allows to configurethe size of
+// WithBufferCapacity allows to configurethe size of
 // the confirmation, error & blocker buffers of all sessions
-func WithBufferSize(size int) Option {
+func WithBufferCapacity(capacity int) Option {
 	return func(o *option) {
-		o.PoolOptions = append(o.PoolOptions, pool.WithBufferSize(size))
+		o.PoolOptions = append(o.PoolOptions, pool.WithBufferCapacity(capacity))
 	}
 }
 

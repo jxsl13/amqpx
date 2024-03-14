@@ -36,8 +36,6 @@ func NewTopologer(p *Pool, options ...TopologerOption) *Topologer {
 	return top
 }
 
-// TODO: it should be possible to pass a custom context in here so that we can define
-// timeouts, especially for a topology deleter which operates on a closed context and needs a new one.
 func (t *Topologer) getSession(ctx context.Context) (*Session, error) {
 
 	if t.transientOnly || t.pool.SessionPoolSize() == 0 {

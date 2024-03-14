@@ -22,7 +22,7 @@ type ConnectionPool struct {
 	heartbeat   time.Duration
 	connTimeout time.Duration
 
-	size int
+	capacity int
 
 	tls *tls.Config
 
@@ -49,8 +49,8 @@ func NewConnectionPool(ctx context.Context, connectUrl string, numConns int, opt
 
 	// use sane defaults
 	option := connectionPoolOption{
-		Name: defaultAppName(),
-		Size: numConns,
+		Name:     defaultAppName(),
+		Capacity: numConns,
 
 		Ctx: ctx,
 
@@ -92,9 +92,9 @@ func newConnectionPoolFromOption(connectUrl string, option connectionPoolOption)
 		heartbeat:   option.ConnHeartbeatInterval,
 		connTimeout: option.ConnTimeout,
 
-		size:        option.Size,
+		capacity:    option.Capacity,
 		tls:         option.TLSConfig,
-		connections: make(chan *Connection, option.Size),
+		connections: make(chan *Connection, option.Capacity),
 
 		ctx:    ctx,
 		cancel: cancel,
@@ -122,7 +122,7 @@ func newConnectionPoolFromOption(connectUrl string, option connectionPoolOption)
 }
 
 func (cp *ConnectionPool) initCachedConns() error {
-	for id := int64(0); id < int64(cp.size); id++ {
+	for id := int64(0); id < int64(cp.capacity); id++ {
 		conn, err := cp.deriveConnection(cp.ctx, id, true)
 		if err != nil {
 			return fmt.Errorf("%w: %v", ErrPoolInitializationFailed, err)
@@ -234,10 +234,10 @@ func (cp *ConnectionPool) Close() {
 	defer cp.info("closed")
 
 	wg := &sync.WaitGroup{}
-	wg.Add(cp.size)
+	wg.Add(cp.capacity)
 	cp.cancel()
 
-	for i := 0; i < cp.size; i++ {
+	for i := 0; i < cp.capacity; i++ {
 		go func() {
 			defer wg.Done()
 			conn := <-cp.connections
@@ -255,19 +255,20 @@ func (cp *ConnectionPool) StatTransientActive() int {
 	return cp.concurrentTransient
 }
 
-// StatCachedIdle returns the number of idle cached connections.
-func (cp *ConnectionPool) StatCachedIdle() int {
+// StatCachedActive returns the number of active cached connections.
+func (cp *ConnectionPool) StatCachedActive() int {
+	return cp.capacity - len(cp.connections)
+}
+
+// Size returns the number of idle cached connections.
+func (cp *ConnectionPool) Size() int {
 	return len(cp.connections)
 }
 
-// StatCachedActive returns the number of active cached connections.
-func (cp *ConnectionPool) StatCachedActive() int {
-	return cp.size - len(cp.connections)
-}
-
-// Size is the total size of the cached connection pool without any transient connections.
-func (cp *ConnectionPool) Size() int {
-	return cp.size
+// Capacity is the capacity of the cached connection pool without any transient connections.
+// It is the initial number of connections that were created for this connection pool.
+func (cp *ConnectionPool) Capacity() int {
+	return cp.capacity
 }
 
 func (cp *ConnectionPool) catchShutdown() <-chan struct{} {

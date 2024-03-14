@@ -33,9 +33,9 @@ func New(ctx context.Context, connectUrl string, numConns, numSessions int, opti
 	// use sane defaults
 	option := poolOption{
 		cpo: connectionPoolOption{
-			Name: defaultAppName(),
-			Ctx:  ctx,
-			Size: numConns, // at least one connection
+			Name:     defaultAppName(),
+			Ctx:      ctx,
+			Capacity: numConns, // at least one connection
 
 			ConnHeartbeatInterval: 15 * time.Second,
 			ConnTimeout:           30 * time.Second,
@@ -44,9 +44,9 @@ func New(ctx context.Context, connectUrl string, numConns, numSessions int, opti
 			Logger: logger,
 		},
 		spo: sessionPoolOption{
-			Size:        numSessions,
-			Confirmable: false, // require publish confirmations
-			BufferSize:  1,     // fault tolerance over throughput
+			Capacity:       numSessions,
+			Confirmable:    true, // require publish confirmations
+			BufferCapacity: 10,
 
 			Logger: logger,
 		},
@@ -106,10 +106,22 @@ func (p *Pool) Name() string {
 	return p.cp.Name()
 }
 
-func (p *Pool) ConnectionPoolSize() int {
-	return p.cp.Size()
+// ConnectionPoolCapacity returns the capacity of the connection pool.
+func (p *Pool) ConnectionPoolCapacity() int {
+	return p.cp.Capacity()
 }
 
+// ConnectionPoolSize returns the number of connections in the pool that are idling.
+func (p *Pool) ConnectionPoolSize() int {
+	return p.cp.Capacity()
+}
+
+// SessionPoolCapacity returns the capacity of the session pool.
+func (p *Pool) SessionPoolCapacity() int {
+	return p.sp.Capacity()
+}
+
+// SessionPoolSize returns the number of sessions in the pool that are idling.
 func (p *Pool) SessionPoolSize() int {
 	return p.sp.Size()
 }
