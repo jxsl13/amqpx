@@ -25,13 +25,6 @@ func (o *generatorOptions) ToSuffix() string {
 
 type GeneratorOption func(*generatorOptions)
 
-// WithUp sets the number of stack frames to skip when generating the name
-func WithUp(up int) GeneratorOption {
-	return func(o *generatorOptions) {
-		o.up = up
-	}
-}
-
 func WithRandomSuffix(addRandomSuffix bool) GeneratorOption {
 	return func(o *generatorOptions) {
 		o.randomSuffix = addRandomSuffix
@@ -169,7 +162,7 @@ func SessionNameGenerator(connectionName string, options ...GeneratorOption) (ne
 	}
 }
 
-func PoolNameGenerator(options ...GeneratorOption) (nextConnName func() string) {
+func PoolNameGenerator(funcName string, options ...GeneratorOption) (nextConnName func() string) {
 	opts := generatorOptions{
 		prefix:       "",
 		randomSuffix: false,
@@ -182,7 +175,6 @@ func PoolNameGenerator(options ...GeneratorOption) (nextConnName func() string) 
 	}
 
 	var mu sync.Mutex
-	funcName := FuncName(opts.up)
 	parts := strings.Split(funcName, ".")
 	funcName = parts[len(parts)-1]
 
@@ -247,11 +239,14 @@ func MessageGenerator(queueOrExchangeName string, options ...GeneratorOption) (n
 
 func NewExchangeQueueGenerator(funcName string) func() ExchangeQueue {
 	var (
+		mu               sync.Mutex
 		nextExchangeName = ExchangeNameGenerator(funcName)
 		nextQueueName    = QueueNameGenerator(funcName)
 		nextRoutingKey   = RoutingKeyGenerator(funcName)
 	)
 	return func() ExchangeQueue {
+		mu.Lock()
+		defer mu.Unlock()
 		return NewExchangeQueue(nextExchangeName(), nextQueueName(), nextRoutingKey())
 	}
 }
