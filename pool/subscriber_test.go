@@ -14,7 +14,6 @@ import (
 )
 
 func TestNewSingleSubscriber(t *testing.T) {
-	t.Parallel()
 
 	var (
 		ctx          = context.TODO()
@@ -54,7 +53,6 @@ func TestNewSingleSubscriber(t *testing.T) {
 }
 
 func TestNewSingleSubscriberWithDisconnect(t *testing.T) {
-	t.Parallel()
 
 	var (
 		ctx                       = context.TODO()
@@ -99,7 +97,6 @@ func TestNewSingleSubscriberWithDisconnect(t *testing.T) {
 }
 
 func TestNewSingleBatchSubscriber(t *testing.T) {
-	t.Parallel()
 
 	var (
 		ctx          = context.TODO()
@@ -152,7 +149,6 @@ func TestNewSingleBatchSubscriber(t *testing.T) {
 }
 
 func TestBatchSubscriberMaxBytes(t *testing.T) {
-	t.Parallel()
 	var wg sync.WaitGroup
 	funcName := testutils.FuncName()
 

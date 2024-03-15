@@ -17,7 +17,6 @@ func TestMain(m *testing.M) {
 }
 
 func TestNewPool(t *testing.T) {
-	t.Parallel() // can be run in parallel because the connection to the rabbitmq is never broken
 
 	var (
 		ctx         = context.TODO()

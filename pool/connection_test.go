@@ -13,7 +13,7 @@ import (
 )
 
 func TestNewSingleConnection(t *testing.T) {
-	t.Parallel() // can be run in parallel because the connection to the rabbitmq is never broken
+
 	var (
 		ctx      = context.TODO()
 		nextName = testutils.ConnectionNameGenerator()
@@ -36,7 +36,6 @@ func TestNewSingleConnection(t *testing.T) {
 }
 
 func TestManyNewConnection(t *testing.T) {
-	t.Parallel() // can be run in parallel because the connection to the rabbitmq is never broken
 
 	var (
 		ctx         = context.TODO()
@@ -74,7 +73,6 @@ func TestManyNewConnection(t *testing.T) {
 }
 
 func TestNewSingleConnectionWithDisconnect(t *testing.T) {
-	t.Parallel()
 	var (
 		ctx                      = context.TODO()
 		proxyName, connectURL, _ = testutils.NextConnectURL()
@@ -101,7 +99,6 @@ func TestNewSingleConnectionWithDisconnect(t *testing.T) {
 }
 
 func TestManyNewConnectionWithDisconnect(t *testing.T) {
-	t.Parallel()
 
 	var (
 		ctx                      = context.TODO()

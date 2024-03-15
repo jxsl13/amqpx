@@ -13,7 +13,6 @@ import (
 )
 
 func TestSingleSessionPool(t *testing.T) {
-	t.Parallel() // can be run in parallel because the connection to the rabbitmq is never
 
 	var (
 		poolName    = testutils.FuncName()
@@ -56,7 +55,6 @@ func TestSingleSessionPool(t *testing.T) {
 }
 
 func TestNewSessionPool(t *testing.T) {
-	t.Parallel() // can be run in parallel because the connection to the rabbitmq is never
 
 	var (
 		poolName    = testutils.FuncName()
