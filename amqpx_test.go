@@ -3,9 +3,7 @@ package amqpx_test
 import (
 	"context"
 	"fmt"
-	"os/signal"
 	"sync"
-	"syscall"
 	"testing"
 	"time"
 
@@ -171,7 +169,7 @@ func TestAMQPXSubAndPub(t *testing.T) {
 	var (
 		amqp              = amqpx.New()
 		log               = logging.NewTestLogger(t)
-		cctx, cancel      = signal.NotifyContext(context.TODO(), syscall.SIGINT, syscall.SIGINT)
+		cctx, cancel      = context.WithCancel(context.TODO())
 		funcName          = testutils.FuncName()
 		nextExchangeQueue = testutils.NewExchangeQueueGenerator(funcName)
 		eq1               = nextExchangeQueue()
@@ -227,7 +225,7 @@ func TestAMQPXSubAndPubMulti(t *testing.T) {
 	var (
 		amqp              = amqpx.New()
 		log               = logging.NewTestLogger(t)
-		cctx, cancel      = signal.NotifyContext(context.TODO(), syscall.SIGINT, syscall.SIGINT)
+		cctx, cancel      = context.WithCancel(context.TODO())
 		funcName          = testutils.FuncName()
 		nextExchangeQueue = testutils.NewExchangeQueueGenerator(funcName)
 
@@ -323,7 +321,7 @@ func TestAMQPXSubHandler(t *testing.T) {
 	var (
 		amqp              = amqpx.New()
 		log               = logging.NewTestLogger(t)
-		cctx, cancel      = signal.NotifyContext(context.TODO(), syscall.SIGINT, syscall.SIGINT)
+		cctx, cancel      = context.WithCancel(context.TODO())
 		funcName          = testutils.FuncName()
 		nextExchangeQueue = testutils.NewExchangeQueueGenerator(funcName)
 		eq1               = nextExchangeQueue()
@@ -379,7 +377,7 @@ func TestCreateDeleteTopology(t *testing.T) {
 	var (
 		amqp              = amqpx.New()
 		log               = logging.NewTestLogger(t)
-		cctx, cancel      = signal.NotifyContext(context.TODO(), syscall.SIGINT, syscall.SIGINT)
+		cctx, cancel      = context.WithCancel(context.TODO())
 		funcName          = testutils.FuncName()
 		nextExchangeQueue = testutils.NewExchangeQueueGenerator(funcName)
 		eq1               = nextExchangeQueue()
@@ -410,7 +408,7 @@ func TestPauseResumeHandlerNoProcessing(t *testing.T) {
 	var (
 		amqp          = amqpx.New()
 		log           = logging.NewTestLogger(t)
-		cctx, cancel  = signal.NotifyContext(context.TODO(), syscall.SIGINT, syscall.SIGINT)
+		cctx, cancel  = context.WithCancel(context.TODO())
 		funcName      = testutils.FuncName()
 		nextQueueName = testutils.QueueNameGenerator(funcName)
 		queueName     = nextQueueName()
@@ -496,7 +494,7 @@ func testHandlerPauseAndResume(t *testing.T, i int) {
 	var (
 		amqp              = amqpx.New()
 		log               = logging.NewTestLogger(t)
-		cctx, cancel      = signal.NotifyContext(context.TODO(), syscall.SIGINT, syscall.SIGINT)
+		cctx, cancel      = context.WithCancel(context.TODO())
 		funcName          = fmt.Sprintf("%s-%d", testutils.CallerFuncName(), i)
 		nextExchangeQueue = testutils.NewExchangeQueueGenerator(funcName)
 		eq1               = nextExchangeQueue()
@@ -659,7 +657,7 @@ func testBatchHandlerPauseAndResume(t *testing.T, i int) {
 	var (
 		amqp              = amqpx.New()
 		log               = logging.NewTestLogger(t)
-		cctx, cancel      = signal.NotifyContext(context.TODO(), syscall.SIGINT, syscall.SIGINT)
+		cctx, cancel      = context.WithCancel(context.TODO())
 		funcName          = fmt.Sprintf("%s-%d", testutils.CallerFuncName(), i)
 		nextExchangeQueue = testutils.NewExchangeQueueGenerator(funcName)
 		eq1               = nextExchangeQueue()
@@ -808,7 +806,7 @@ func TestQueueDeletedConsumerReconnect(t *testing.T) {
 		err           error
 		amqp          = amqpx.New()
 		log           = logging.NewTestLogger(t)
-		cctx, cancel  = signal.NotifyContext(context.TODO(), syscall.SIGINT, syscall.SIGINT)
+		cctx, cancel  = context.WithCancel(context.TODO())
 		funcName      = testutils.FuncName()
 		nextQueueName = testutils.QueueNameGenerator(funcName)
 		queueName     = nextQueueName()
@@ -883,7 +881,7 @@ func TestQueueDeletedBatchConsumerReconnect(t *testing.T) {
 		err           error
 		amqp          = amqpx.New()
 		log           = logging.NewTestLogger(t)
-		cctx, cancel  = signal.NotifyContext(context.TODO(), syscall.SIGINT, syscall.SIGINT)
+		cctx, cancel  = context.WithCancel(context.TODO())
 		funcName      = testutils.FuncName()
 		nextQueueName = testutils.QueueNameGenerator(funcName)
 		queueName     = nextQueueName()
@@ -986,7 +984,7 @@ func testHandlerReset(t *testing.T, i int) {
 		err               error
 		amqp              = amqpx.New()
 		log               = logging.NewTestLogger(t)
-		cctx, cancel      = signal.NotifyContext(context.TODO(), syscall.SIGINT, syscall.SIGINT)
+		cctx, cancel      = context.WithCancel(context.TODO())
 		funcName          = fmt.Sprintf("%s-i-%d", testutils.CallerFuncName(), i)
 		nextExchangeQueue = testutils.NewExchangeQueueGenerator(funcName)
 		eq1               = nextExchangeQueue()
@@ -1083,7 +1081,7 @@ func testBatchHandlerReset(t *testing.T, i int) {
 		err               error
 		amqp              = amqpx.New()
 		log               = logging.NewTestLogger(t)
-		cctx, cancel      = signal.NotifyContext(context.TODO(), syscall.SIGINT, syscall.SIGINT)
+		cctx, cancel      = context.WithCancel(context.TODO())
 		funcName          = fmt.Sprintf("%s-i-%d", testutils.CallerFuncName(), i)
 		nextExchangeQueue = testutils.NewExchangeQueueGenerator(funcName)
 		eq1               = nextExchangeQueue()
