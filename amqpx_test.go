@@ -1091,7 +1091,6 @@ func TestBatchHandlerReset(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		testBatchHandlerReset(t, i)
 	}
-	t.Log("done")
 }
 
 func testBatchHandlerReset(t *testing.T, i int) {
@@ -1112,9 +1111,10 @@ func testBatchHandlerReset(t *testing.T, i int) {
 	defer cancel()
 
 	options := []amqpx.Option{
-		amqpx.WithLogger(logging.NewNoOpLogger()),
+		amqpx.WithLogger(log),
 		amqpx.WithPublisherConnections(1),
 		amqpx.WithPublisherSessions(5),
+		amqpx.WithCloseTimeout(60 * time.Second),
 	}
 
 	amqpxPublish := amqpx.New()
