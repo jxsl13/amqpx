@@ -15,7 +15,8 @@ const (
 	notImplemented = 540
 )
 
-// Session is
+// Session is a wrapper for an amqp channel.
+// It MUST not be used in a multithreaded context, but only in a single goroutine.
 type Session struct {
 	name           string
 	cached         bool
@@ -363,6 +364,9 @@ func (s *Session) AwaitConfirm(ctx context.Context, expectedTag uint64) error {
 	}
 
 	select {
+	// TODO: this might lead to problems when a single session is used
+	// in a multithreaded context. That way we might received out of order confirmations
+	// which could lead to unexpected behavior.
 	case confirm, ok := <-s.confirms:
 		if !ok {
 			err := s.error()
