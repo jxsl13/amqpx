@@ -15,3 +15,8 @@ count-tests:
 
 count-disconnect-tests:
 	grep -REn 'func Test.+WithDisconnect.*\(.+testing\.T.*\)' . | wc -l
+
+
+pool.TestBatchSubscriberMaxBytes:
+	go test -timeout 0m30s github.com/jxsl13/amqpx/pool -run ^TestBatchSubscriberMaxBytes$  -v -count=1 -race 2>&1 > test.log
+	cat test.log | grep 'INFO: session' | sort | uniq -c
