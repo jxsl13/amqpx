@@ -18,7 +18,7 @@ func TestNewSingleSubscriber(t *testing.T) {
 
 	var (
 		ctx          = context.TODO()
-		nextPoolName = testutils.PoolNameGenerator()
+		nextPoolName = testutils.PoolNameGenerator(testutils.FuncName())
 		poolName     = nextPoolName()
 		hp           = NewPool(t, ctx, testutils.HealthyConnectURL, poolName, 1, 2)
 	)
@@ -58,7 +58,7 @@ func TestNewSingleSubscriberWithDisconnect(t *testing.T) {
 
 	var (
 		ctx                       = context.TODO()
-		nextPoolName              = testutils.PoolNameGenerator()
+		nextPoolName              = testutils.PoolNameGenerator(testutils.FuncName())
 		poolName                  = nextPoolName()
 		hp                        = NewPool(t, ctx, testutils.HealthyConnectURL, poolName, 1, 2)
 		proxyName, connectURL, _  = testutils.NextConnectURL()
@@ -103,7 +103,7 @@ func TestNewSingleBatchSubscriber(t *testing.T) {
 
 	var (
 		ctx          = context.TODO()
-		nextPoolName = testutils.PoolNameGenerator()
+		nextPoolName = testutils.PoolNameGenerator(testutils.FuncName())
 		poolName     = nextPoolName()
 		hp           = NewPool(t, ctx, testutils.HealthyConnectURL, poolName, 1, 2)
 	)
@@ -153,30 +153,31 @@ func TestNewSingleBatchSubscriber(t *testing.T) {
 
 func TestBatchSubscriberMaxBytes(t *testing.T) {
 	t.Parallel()
-
 	var wg sync.WaitGroup
-	for i := 1; i <= 2048; i = i*2 + 1 {
-		wg.Add(1)
-		go testBatchSubscriberMaxBytes(t, i, &wg)
-	}
+	funcName := testutils.FuncName()
 
+	const (
+		maxBatchBytes = 2048
+		iterations    = 100
+	)
+	for i := 0; i < iterations; i++ {
+		for j := 1; j <= maxBatchBytes; j = j*2 + 1 {
+			wg.Add(1)
+			go testBatchSubscriberMaxBytes(t, fmt.Sprintf("%s-%d-max-batch-bytes-%d", funcName, i, j), j, &wg)
+		}
+	}
 	wg.Wait()
 }
 
-func testBatchSubscriberMaxBytes(t *testing.T, maxBatchBytes int, w *sync.WaitGroup) {
+func testBatchSubscriberMaxBytes(t *testing.T, funcName string, maxBatchBytes int, w *sync.WaitGroup) {
 	t.Helper()
 	defer w.Done()
 
 	var (
-		ctx          = context.TODO()
-		nextPoolName = testutils.PoolNameGenerator(
-			testutils.WithUp(3),
-			testutils.WithSuffix(fmt.Sprintf("-max-batch-bytes-%d", maxBatchBytes)),
-		)
-		poolName = nextPoolName()
-
-		nextExchangeName = testutils.ExchangeNameGenerator(poolName)
-		nextQueueName    = testutils.QueueNameGenerator(poolName)
+		ctx               = context.TODO()
+		nextPoolName      = testutils.PoolNameGenerator(funcName)
+		poolName          = nextPoolName()
+		nextExchangeQueue = testutils.NewExchangeQueueGenerator(poolName)
 
 		numSessions = 2
 		hp          = NewPool(t, ctx, testutils.HealthyConnectURL, poolName, 1, numSessions) // // publisher sessions + consumer sessions
@@ -195,10 +196,8 @@ func testBatchSubscriberMaxBytes(t *testing.T, maxBatchBytes int, w *sync.WaitGr
 			defer wg.Done()
 
 			var (
-				log              = logging.NewTestLogger(t)
-				exchangeName     = nextExchangeName()
-				queueName        = nextQueueName()
-				nextConsumerName = testutils.ConsumerNameGenerator(queueName)
+				log = logging.NewTestLogger(t)
+				eq  = nextExchangeQueue()
 			)
 
 			ts, err := hp.GetTransientSession(ctx)
@@ -208,19 +207,8 @@ func testBatchSubscriberMaxBytes(t *testing.T, maxBatchBytes int, w *sync.WaitGr
 			}
 			defer hp.ReturnSession(ts, nil)
 
-			cleanup := DeclareExchangeQueue(t, ctx, ts, exchangeName, queueName)
+			cleanup := DeclareExchangeQueue(t, ctx, ts, eq.Exchange, eq.Queue)
 			defer cleanup()
-
-			_, err = ts.QueueDeclare(ctx, queueName)
-			if err != nil {
-				assert.NoError(t, err)
-				return
-			}
-			defer func() {
-				i, err := ts.QueueDelete(ctx, queueName)
-				assert.NoError(t, err)
-				assert.Equal(t, 0, i)
-			}()
 
 			// publish all messages
 			pub := pool.NewPublisher(hp)
@@ -228,17 +216,18 @@ func testBatchSubscriberMaxBytes(t *testing.T, maxBatchBytes int, w *sync.WaitGr
 
 			maxMsgLen := 0
 			for i := 0; i < numMsgs; i++ {
-				message := fmt.Sprintf("Message-%s-%06d", queueName, i) // max 6 digits
+				message := fmt.Sprintf("Message-%s-%06d", eq.Queue, i) // max 6 digits
 				mlen := len(message)
 				if mlen > maxMsgLen {
 					maxMsgLen = mlen
 				}
 
-				pub.Publish(ctx, exchangeName, "", pool.Publishing{
+				err = pub.Publish(ctx, eq.Exchange, "", pool.Publishing{
 					Mandatory:   true,
 					ContentType: "text/plain",
 					Body:        []byte(message),
 				})
+				assert.NoError(t, err)
 			}
 			log.Debugf("max message length: %d", maxMsgLen)
 			log.Debugf("max batch bytes: %d", maxBatchBytes)
@@ -261,7 +250,7 @@ func testBatchSubscriberMaxBytes(t *testing.T, maxBatchBytes int, w *sync.WaitGr
 
 			batchCount := 0
 			messageCount := 0
-			sub.RegisterBatchHandlerFunc(queueName,
+			sub.RegisterBatchHandlerFunc(eq.Queue,
 				func(ctx context.Context, msgs []pool.Delivery) error {
 
 					for idx, msg := range msgs {
@@ -288,11 +277,12 @@ func testBatchSubscriberMaxBytes(t *testing.T, maxBatchBytes int, w *sync.WaitGr
 				pool.WithMaxBatchSize(0), // disable this check
 				pool.WithBatchFlushTimeout(batchTimeout),
 				pool.WithBatchConsumeOptions(pool.ConsumeOptions{
-					ConsumerTag: nextConsumerName(),
+					ConsumerTag: eq.ConsumerTag,
 					Exclusive:   true,
 				}),
 			)
-			sub.Start(ctx)
+			err = sub.Start(ctx)
+			assert.NoError(t, err)
 
 			// this should be canceled upon context cancelation from within the
 			// subscriber handler.
