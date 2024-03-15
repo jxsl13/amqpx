@@ -36,14 +36,15 @@ import (
 	"context"
 	"fmt"
 	"os/signal"
+	"syscall"
 
 	"github.com/jxsl13/amqpx"
-	"github.com/jxsl13/amqpx/pool"
 	"github.com/jxsl13/amqpx/logging"
+	"github.com/jxsl13/amqpx/pool"
 )
 
 func main() {
-	ctx, cancel := signal.NotifyContext(context.Background())
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGINT)
 	defer cancel()
 
 	amqpx.RegisterTopologyCreator(func(ctx context.Context, t *pool.Topologer) error {
@@ -96,10 +97,11 @@ import (
 	"context"
 	"fmt"
 	"os/signal"
+	"syscall"
 
 	"github.com/jxsl13/amqpx"
-	"github.com/jxsl13/amqpx/pool"
 	"github.com/jxsl13/amqpx/logging"
+	"github.com/jxsl13/amqpx/pool"
 )
 
 func SomeConsumer(cancel func()) pool.HandlerFunc {
@@ -114,7 +116,7 @@ func SomeConsumer(cancel func()) pool.HandlerFunc {
 }
 
 func main() {
-	ctx, cancel := signal.NotifyContext(context.Background())
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGINT)
 	defer cancel()
 
 	amqpx.RegisterTopologyCreator(func(ctx context.Context, t *pool.Topologer) error {
