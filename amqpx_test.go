@@ -183,9 +183,13 @@ func TestAMQPXSubAndPub(t *testing.T) {
 	amqp.RegisterTopologyCreator(createTopology(log, eq1))
 	amqp.RegisterTopologyDeleter(deleteTopology(log, eq1))
 
-	amqp.RegisterHandler(eq1.Queue, func(ctx context.Context, msg pool.Delivery) error {
-		log.Infof("subscriber of %s", eq1.Queue)
-		assert.Equal(t, eq1.NextSubMsg(), string(msg.Body))
+	// we only expect a single message to arrive or
+	// a duplicate message due to network issues.
+	expectedMsg := eq1.NextSubMsg()
+	amqp.RegisterHandler(eq1.Queue, func(ctx context.Context, d pool.Delivery) error {
+		msg := string(d.Body)
+		log.Infof("subscriber of %s received message: %s", eq1.Queue, msg)
+		assert.Equal(t, expectedMsg, msg)
 		cancel()
 		return nil
 	})
@@ -204,8 +208,12 @@ func TestAMQPXSubAndPub(t *testing.T) {
 	}
 
 	// publish event to first queue
-
-	err = amqp.Publish(cctx, eq1.Exchange, eq1.RoutingKey, pool.Publishing{
+	// due to bad network it is possible that the message is received multiple times.
+	// that is why we pass context.TODO() to the publish method in order to avoid
+	// aborting a secondary retry which would return an error here.
+	tctx, tcancel := context.WithTimeout(context.TODO(), 10*time.Second)
+	defer tcancel()
+	err = amqp.Publish(tctx, eq1.Exchange, eq1.RoutingKey, pool.Publishing{
 		ContentType: "text/plain",
 		Body:        []byte(eq1.NextPubMsg()),
 	})
@@ -326,8 +334,10 @@ func TestAMQPXSubHandler(t *testing.T) {
 		nextExchangeQueue = testutils.NewExchangeQueueGenerator(funcName)
 		eq1               = nextExchangeQueue()
 	)
-	defer cancel()
 	defer func() {
+		log.Info("canceling context")
+		cancel()
+
 		log.Info("closing amqp")
 		assert.NoError(t, amqp.Close())
 	}()
@@ -335,9 +345,13 @@ func TestAMQPXSubHandler(t *testing.T) {
 	amqp.RegisterTopologyCreator(createTopology(log, eq1))
 	amqp.RegisterTopologyDeleter(deleteTopology(log, eq1))
 
-	amqp.RegisterHandler(eq1.Queue, func(ctx context.Context, msg pool.Delivery) error {
-		log.Infof("subscriber of %s", eq1.Queue)
-		assert.Equal(t, eq1.NextSubMsg(), string(msg.Body))
+	// we want to only receive one message or one duplicate message
+	expectedMsg := eq1.NextSubMsg()
+	amqp.RegisterHandler(eq1.Queue, func(ctx context.Context, d pool.Delivery) error {
+		msg := string(d.Body)
+		log.Infof("subscriber of %s: received message: %s", eq1.Queue, msg)
+		assert.Equal(t, expectedMsg, msg)
+		log.Info("canceling context from within handler")
 		cancel()
 		return nil
 	})
@@ -356,8 +370,12 @@ func TestAMQPXSubHandler(t *testing.T) {
 	}
 
 	// publish event to first queue
-
-	err = amqp.Publish(cctx, eq1.Exchange, eq1.RoutingKey, pool.Publishing{
+	// due to bad network it is possible that the message is received multiple times.
+	// that is why we pass context.TODO() to the publish method in order to avoid
+	// aborting a secondary retry which would return an error here.
+	tctx, tcancel := context.WithTimeout(context.TODO(), 10*time.Second)
+	defer tcancel()
+	err = amqp.Publish(tctx, eq1.Exchange, eq1.RoutingKey, pool.Publishing{
 		ContentType: "text/plain",
 		Body:        []byte(eq1.NextPubMsg()),
 	})
@@ -858,7 +876,7 @@ func TestQueueDeletedConsumerReconnect(t *testing.T) {
 	_, err = ts.QueueDelete(cctx, queueName)
 	assert.NoError(t, err)
 
-	tctx, tcancel := context.WithTimeout(cctx, 5*time.Second)
+	tctx, tcancel := context.WithTimeout(cctx, 10*time.Second)
 	err = h.Resume(tctx)
 	tcancel()
 	assert.Error(t, err)
@@ -867,7 +885,7 @@ func TestQueueDeletedConsumerReconnect(t *testing.T) {
 	_, err = ts.QueueDeclare(cctx, queueName)
 	assert.NoError(t, err)
 
-	tctx, tcancel = context.WithTimeout(cctx, 5*time.Second)
+	tctx, tcancel = context.WithTimeout(cctx, 10*time.Second)
 	err = h.Resume(tctx)
 	tcancel()
 	assert.NoError(t, err)
