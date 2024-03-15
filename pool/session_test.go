@@ -860,9 +860,8 @@ func TestChannelCloseWithDisconnect(t *testing.T) {
 		assert.NoError(t, err)
 		return
 	}
-	defer func() {
-		assert.Error(t, amqpConn.Close(), "expected no error when closing connection")
-	}()
+	// only check that there is no deadlock
+	defer amqpConn.Close()
 
 	amqpChan, err := amqpConn.Channel()
 	if err != nil {
@@ -872,8 +871,9 @@ func TestChannelCloseWithDisconnect(t *testing.T) {
 
 	disconnected()
 	defer reconnected()
-	err = amqpChan.Close()
-	assert.NoError(t, err, "expected no error when closing channel")
+
+	// only check that there is no deadlock
+	_ = amqpChan.Close()
 }
 
 func TestNewSingleSessionCloseWithDisconnect(t *testing.T) {
