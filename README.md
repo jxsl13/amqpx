@@ -44,7 +44,7 @@ import (
 )
 
 func main() {
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGINT)
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
 	amqpx.RegisterTopologyCreator(func(ctx context.Context, t *pool.Topologer) error {
@@ -116,7 +116,7 @@ func SomeConsumer(cancel func()) pool.HandlerFunc {
 }
 
 func main() {
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGINT)
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
 	amqpx.RegisterTopologyCreator(func(ctx context.Context, t *pool.Topologer) error {
