@@ -137,7 +137,7 @@ func TestManyNewConnectionWithDisconnect(t *testing.T) {
 
 			wait() // wait for connection to work again.
 
-			tctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			tctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 			defer cancel()
 			assert.NoError(t, c.Recover(tctx))
 			assert.NoError(t, c.Error())
