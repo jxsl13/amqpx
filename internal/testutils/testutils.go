@@ -25,7 +25,7 @@ func FilePath(relative string, up ...int) string {
 func FuncName(up ...int) string {
 	offset := 1
 	if len(up) > 0 && up[0] > 0 {
-		offset = up[0]
+		offset = +up[0]
 	}
 	pc, _, _, ok := runtime.Caller(offset)
 	if !ok {
@@ -39,10 +39,28 @@ func FuncName(up ...int) string {
 	return f.Name()
 }
 
+func FileLine(up ...int) string {
+	offset := 1
+	if len(up) > 0 && up[0] > 0 {
+		offset += up[0]
+	}
+	pc, _, _, ok := runtime.Caller(offset)
+	if !ok {
+		panic("failed to get caller")
+	}
+
+	f := runtime.FuncForPC(pc)
+	if f == nil {
+		panic("failed to get function name")
+	}
+	file, line := f.FileLine(pc)
+	return fmt.Sprintf("%s:%d", file, line)
+}
+
 func CallerFuncName(up ...int) string {
 	offset := 2
 	if len(up) > 0 && up[0] > 0 {
-		offset = up[0]
+		offset += up[0]
 	}
 	pc, _, _, ok := runtime.Caller(offset)
 	if !ok {
@@ -54,4 +72,22 @@ func CallerFuncName(up ...int) string {
 		panic("failed to get function name")
 	}
 	return f.Name()
+}
+
+func CallerFileLine(up ...int) string {
+	offset := 2
+	if len(up) > 0 && up[0] > 0 {
+		offset += up[0]
+	}
+	pc, _, _, ok := runtime.Caller(offset)
+	if !ok {
+		panic("failed to get caller")
+	}
+
+	f := runtime.FuncForPC(pc)
+	if f == nil {
+		panic("failed to get function name")
+	}
+	file, line := f.FileLine(pc)
+	return fmt.Sprintf("%s:%d", file, line)
 }
