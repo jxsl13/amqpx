@@ -6,27 +6,25 @@ import (
 	"fmt"
 	"net/url"
 	"sync"
-	"sync/atomic"
 	"time"
 
-	"github.com/Workiva/go-datastructures/queue"
 	"github.com/jxsl13/amqpx/logging"
 )
 
 // ConnectionPool houses the pool of RabbitMQ connections.
 type ConnectionPool struct {
+	// connection pool name will be added to all of its connections
 	name string
-	url  string
+
+	// connection url to connect to the RabbitMQ server (user, password, url, port, vhost, etc)
+	url string
 
 	heartbeat   time.Duration
 	connTimeout time.Duration
 
-	size int
+	capacity int
 
-	tls         *tls.Config
-	connections *queue.Queue
-
-	transientID int64
+	tls *tls.Config
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -34,21 +32,27 @@ type ConnectionPool struct {
 	log logging.Logger
 
 	recoverCB ConnectionRecoverCallback
+
+	connections chan *Connection
+
+	mu                  sync.Mutex
+	transientID         int64
+	concurrentTransient int
 }
 
 // NewConnectionPool creates a new connection pool which has a maximum size it
 // can become and an idle size of connections that are always open.
-func NewConnectionPool(connectUrl string, numConns int, options ...ConnectionPoolOption) (*ConnectionPool, error) {
+func NewConnectionPool(ctx context.Context, connectUrl string, numConns int, options ...ConnectionPoolOption) (*ConnectionPool, error) {
 	if numConns < 1 {
 		return nil, fmt.Errorf("%w: %d", errInvalidPoolSize, numConns)
 	}
 
 	// use sane defaults
 	option := connectionPoolOption{
-		Name: defaultAppName(),
-		Size: numConns,
+		Name:     defaultAppName(),
+		Capacity: numConns,
 
-		Ctx: context.Background(),
+		Ctx: ctx,
 
 		ConnHeartbeatInterval: 15 * time.Second, // https://www.rabbitmq.com/heartbeats.html#false-positives
 		ConnTimeout:           30 * time.Second,
@@ -68,7 +72,7 @@ func NewConnectionPool(connectUrl string, numConns int, options ...ConnectionPoo
 }
 
 func newConnectionPoolFromOption(connectUrl string, option connectionPoolOption) (_ *ConnectionPool, err error) {
-	u, err := url.Parse(connectUrl)
+	u, err := url.ParseRequestURI(connectUrl)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalidConnectURL, err)
 	}
@@ -78,7 +82,8 @@ func newConnectionPoolFromOption(connectUrl string, option connectionPoolOption)
 	}
 
 	// decouple from parent context, in case we want to close this context ourselves.
-	ctx, cancel := context.WithCancel(option.Ctx)
+	ctx, cc := context.WithCancelCause(option.Ctx)
+	cancel := toCancelFunc(fmt.Errorf("connection pool %w", ErrClosed), cc)
 
 	cp := &ConnectionPool{
 		name: option.Name,
@@ -87,9 +92,9 @@ func newConnectionPoolFromOption(connectUrl string, option connectionPoolOption)
 		heartbeat:   option.ConnHeartbeatInterval,
 		connTimeout: option.ConnTimeout,
 
-		size:        option.Size,
+		capacity:    option.Capacity,
 		tls:         option.TLSConfig,
-		connections: queue.New(int64(option.Size)),
+		connections: make(chan *Connection, option.Capacity),
 
 		ctx:    ctx,
 		cancel: cancel,
@@ -99,12 +104,12 @@ func newConnectionPoolFromOption(connectUrl string, option connectionPoolOption)
 		recoverCB: option.ConnectionRecoverCallback,
 	}
 
-	cp.debug("initializing pool connections")
+	cp.debug("initializing pool connections...")
 	defer func() {
 		if err != nil {
 			cp.error(err, "failed to initialize pool connections")
 		} else {
-			cp.info("initialized")
+			cp.info("initialized pool connections")
 		}
 	}()
 
@@ -117,28 +122,33 @@ func newConnectionPoolFromOption(connectUrl string, option connectionPoolOption)
 }
 
 func (cp *ConnectionPool) initCachedConns() error {
-	for id := 0; id < cp.size; id++ {
+	for id := int64(0); id < int64(cp.capacity); id++ {
 		conn, err := cp.deriveConnection(cp.ctx, id, true)
 		if err != nil {
 			return fmt.Errorf("%w: %v", ErrPoolInitializationFailed, err)
 		}
 
-		if err = cp.connections.Put(conn); err != nil {
-			return fmt.Errorf("%w: %v", ErrPoolInitializationFailed, err)
+		select {
+		case cp.connections <- conn:
+		case <-cp.ctx.Done():
+			return fmt.Errorf("%w: %v", ErrPoolInitializationFailed, cp.ctx.Err())
+		default:
+			// should not happen
+			return fmt.Errorf("%w: pool channel buffer full", ErrPoolInitializationFailed)
 		}
+
 	}
 	return nil
 }
 
-func (cp *ConnectionPool) deriveConnection(ctx context.Context, id int, cached bool) (*Connection, error) {
+func (cp *ConnectionPool) deriveConnection(ctx context.Context, id int64, cached bool) (*Connection, error) {
 	var name string
 	if cached {
 		name = fmt.Sprintf("%s-cached-connection-%d", cp.name, id)
 	} else {
 		name = fmt.Sprintf("%s-transient-connection-%d", cp.name, id)
 	}
-	return NewConnection(cp.url, name,
-		ConnectionWithContext(ctx),
+	return NewConnection(ctx, cp.url, name,
 		ConnectionWithTimeout(cp.connTimeout),
 		ConnectionWithHeartbeatInterval(cp.heartbeat),
 		ConnectionWithTLS(cp.tls),
@@ -149,32 +159,57 @@ func (cp *ConnectionPool) deriveConnection(ctx context.Context, id int, cached b
 }
 
 // GetConnection only returns an error upon shutdown
-func (cp *ConnectionPool) GetConnection() (*Connection, error) {
-	conn, err := cp.getConnectionFromPool()
-	if err != nil {
-		return nil, err
-	}
+func (cp *ConnectionPool) GetConnection(ctx context.Context) (conn *Connection, err error) {
+	select {
+	case conn, ok := <-cp.connections:
+		if !ok {
+			return nil, fmt.Errorf("connection pool %w", ErrClosed)
+		}
 
-	err = conn.Recover()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get connection: %w", err)
-	}
+		// recovery may fail, that's why we MUST check for errors
+		// and return the connection back to the pool in case that the recovery failed
+		// due to e.g. the pool being closed, the context being canceled, etc.
+		defer func() {
+			if err != nil {
+				cp.ReturnConnection(conn, err)
+			}
+		}()
 
-	return conn, nil
+		err = conn.Recover(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get connection: %w", err)
+		}
+
+		return conn, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-cp.catchShutdown():
+		return nil, fmt.Errorf("connection pool %w", ErrClosed)
+	}
+}
+
+func (cp *ConnectionPool) nextTransientID() int64 {
+	cp.mu.Lock()
+	defer cp.mu.Unlock()
+	cp.transientID++
+	return cp.transientID
 }
 
 // GetTransientConnection may return an error when the context was cancelled before the connection could be obtained.
 // Transient connections may be returned to the pool. The are closed properly upon returning.
-func (cp *ConnectionPool) GetTransientConnection(ctx context.Context) (*Connection, error) {
-	tID := atomic.AddInt64(&cp.transientID, 1)
-
-	conn, err := cp.deriveConnection(ctx, int(tID), false)
+func (cp *ConnectionPool) GetTransientConnection(ctx context.Context) (conn *Connection, err error) {
+	conn, err = cp.deriveConnection(ctx, cp.nextTransientID(), false)
 	if err == nil {
 		return conn, nil
 	}
+	defer func() {
+		if err != nil {
+			_ = conn.Close()
+		}
+	}()
 
 	// recover until context is closed
-	err = conn.Recover()
+	err = conn.Recover(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get transient connection: %w", err)
 	}
@@ -182,40 +217,23 @@ func (cp *ConnectionPool) GetTransientConnection(ctx context.Context) (*Connecti
 	return conn, nil
 }
 
-func (cp *ConnectionPool) getConnectionFromPool() (*Connection, error) {
-
-	// Pull from the queue.
-	// Pauses here indefinitely if the queue is empty.
-	objects, err := cp.connections.Get(1)
-	if err != nil {
-		return nil, fmt.Errorf("connection pool %w: %v", ErrClosed, err)
-	}
-
-	conn, ok := objects[0].(*Connection)
-	if !ok {
-		panic("invalid type in queue")
-	}
-	return conn, nil
-}
-
 // ReturnConnection puts the connection back in the queue and flag it for error.
 // This helps maintain a Round Robin on Connections and their resources.
-func (cp *ConnectionPool) ReturnConnection(conn *Connection, flag bool) {
-	if flag {
-		conn.Flag(flag)
-	}
-
+// If the connection is flagged, it will be recovered and returned to the pool.
+// If the context is canceled, the connection will be immediately returned to the pool
+// without any recovery attempt.
+func (cp *ConnectionPool) ReturnConnection(conn *Connection, err error) {
 	// close transient connections
 	if !conn.IsCached() {
 		_ = conn.Close()
+		return
 	}
+	conn.Flag(err)
 
-	err := cp.connections.Put(conn)
-	if err != nil {
-		// queue was disposed of,
-		// indicating pool shutdown
-		// -> close connection upon pool shutdown
-		_ = conn.Close()
+	select {
+	case cp.connections <- conn:
+	default:
+		panic("connection pool connections buffer full: not supposed to happen")
 	}
 }
 
@@ -229,25 +247,45 @@ func (cp *ConnectionPool) Close() {
 	defer cp.info("closed")
 
 	wg := &sync.WaitGroup{}
+	wg.Add(cp.capacity)
+	cp.cancel()
 
-	// close all connections
-	for !cp.connections.Empty() {
-		items := cp.connections.Dispose()
-
-		wg.Add(len(items))
-		for _, item := range items {
-			conn, ok := item.(*Connection)
-			if !ok {
-				panic("item in connection queue is not a connection")
-			}
-
-			go func(c *Connection) {
-				defer wg.Done()
-				_ = c.Close()
-			}(conn)
-		}
+	for i := 0; i < cp.capacity; i++ {
+		go func() {
+			defer wg.Done()
+			conn := <-cp.connections
+			_ = conn.Close()
+		}()
 	}
+
 	wg.Wait()
+}
+
+// StatTransientActive returns the number of active transient connections.
+func (cp *ConnectionPool) StatTransientActive() int {
+	cp.mu.Lock()
+	defer cp.mu.Unlock()
+	return cp.concurrentTransient
+}
+
+// StatCachedActive returns the number of active cached connections.
+func (cp *ConnectionPool) StatCachedActive() int {
+	return cp.capacity - len(cp.connections)
+}
+
+// Size returns the number of idle cached connections.
+func (cp *ConnectionPool) Size() int {
+	return len(cp.connections)
+}
+
+// Capacity is the capacity of the cached connection pool without any transient connections.
+// It is the initial number of connections that were created for this connection pool.
+func (cp *ConnectionPool) Capacity() int {
+	return cp.capacity
+}
+
+func (cp *ConnectionPool) catchShutdown() <-chan struct{} {
+	return cp.ctx.Done()
 }
 
 func (cp *ConnectionPool) Name() string {
@@ -264,8 +302,4 @@ func (cp *ConnectionPool) error(err error, a ...any) {
 
 func (cp *ConnectionPool) debug(a ...any) {
 	cp.log.WithField("connectionPool", cp.name).Debug(a...)
-}
-
-func (cp *ConnectionPool) Size() int {
-	return cp.size
 }

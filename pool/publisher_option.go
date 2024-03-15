@@ -2,16 +2,14 @@ package pool
 
 import (
 	"context"
-	"time"
 
 	"github.com/jxsl13/amqpx/logging"
 )
 
 type publisherOption struct {
-	Ctx            context.Context
-	PublishTimeout time.Duration
-	ConfirmTimeout time.Duration
-	AutoClosePool  bool
+	Ctx context.Context
+
+	AutoClosePool bool
 
 	Logger logging.Logger
 }
@@ -33,23 +31,5 @@ func PublisherWithLogger(logger logging.Logger) PublisherOption {
 func PublisherWithAutoClosePool(autoClose bool) PublisherOption {
 	return func(po *publisherOption) {
 		po.AutoClosePool = autoClose
-	}
-}
-
-func PublisherWithConfirmTimeout(timeout time.Duration) PublisherOption {
-	if timeout < time.Second {
-		timeout = time.Second
-	}
-	return func(po *publisherOption) {
-		po.ConfirmTimeout = timeout
-	}
-}
-
-func PublisherWithPublishTimeout(timeout time.Duration) PublisherOption {
-	if timeout < time.Second {
-		timeout = time.Second
-	}
-	return func(po *publisherOption) {
-		po.PublishTimeout = timeout
 	}
 }

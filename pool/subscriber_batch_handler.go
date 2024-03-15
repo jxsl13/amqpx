@@ -163,9 +163,11 @@ func (h *BatchHandler) awaitResumed(ctx context.Context) error {
 	return h.sc.AwaitResumed(ctx)
 }
 
+/*
 func (h *BatchHandler) awaitPaused(ctx context.Context) error {
 	return h.sc.AwaitPaused(ctx)
 }
+*/
 
 func (h *BatchHandler) Queue() string {
 	h.mu.RLock()

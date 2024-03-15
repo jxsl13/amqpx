@@ -8,6 +8,8 @@ import (
 )
 
 func TestBackoffPolicy(t *testing.T) {
+	t.Parallel()
+
 	backoffMultiTest(t, 15, 3)
 	backoffMultiTest(t, 32, 4)
 	backoffMultiTest(t, 64, 5)

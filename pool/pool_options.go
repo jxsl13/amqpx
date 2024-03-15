@@ -1,7 +1,6 @@
 package pool
 
 import (
-	"context"
 	"crypto/tls"
 	"time"
 
@@ -61,13 +60,6 @@ func WithConnectionTimeout(timeout time.Duration) Option {
 	}
 }
 
-// WithContext allows to set a custom connection timeout, that MUST be >= 1 * time.Second
-func WithContext(ctx context.Context) Option {
-	return func(po *poolOption) {
-		ConnectionPoolWithContext(ctx)(&po.cpo)
-	}
-}
-
 // WithTLS allows to configure tls connectivity.
 func WithTLS(config *tls.Config) Option {
 	return func(po *poolOption) {
@@ -75,11 +67,11 @@ func WithTLS(config *tls.Config) Option {
 	}
 }
 
-// WithBufferSize allows to configurethe size of
+// WithBufferCapacity allows to configurethe size of
 // the confirmation, error & blocker buffers of all sessions
-func WithBufferSize(size int) Option {
+func WithBufferCapacity(size int) Option {
 	return func(po *poolOption) {
-		SessionPoolWithBufferSize(size)(&po.spo)
+		SessionPoolWithBufferCapacity(size)(&po.spo)
 	}
 }
 

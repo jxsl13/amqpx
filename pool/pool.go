@@ -19,7 +19,7 @@ type Pool struct {
 	sp *SessionPool
 }
 
-func New(connectUrl string, numConns, numSessions int, options ...Option) (*Pool, error) {
+func New(ctx context.Context, connectUrl string, numConns, numSessions int, options ...Option) (*Pool, error) {
 	if numConns < 1 {
 		return nil, fmt.Errorf("%w: %d", errInvalidPoolSize, numConns)
 	}
@@ -28,16 +28,14 @@ func New(connectUrl string, numConns, numSessions int, options ...Option) (*Pool
 		numSessions = numConns
 	}
 
-	ctx := context.Background()
-
 	logger := logging.NewNoOpLogger()
 
 	// use sane defaults
 	option := poolOption{
 		cpo: connectionPoolOption{
-			Name: defaultAppName(),
-			Ctx:  ctx,
-			Size: numConns, // at least one connection
+			Name:     defaultAppName(),
+			Ctx:      ctx,
+			Capacity: numConns, // at least one connection
 
 			ConnHeartbeatInterval: 15 * time.Second,
 			ConnTimeout:           30 * time.Second,
@@ -46,9 +44,9 @@ func New(connectUrl string, numConns, numSessions int, options ...Option) (*Pool
 			Logger: logger,
 		},
 		spo: sessionPoolOption{
-			Size:        numSessions,
-			Confirmable: false, // require publish confirmations
-			BufferSize:  1,     // fault tolerance over throughput
+			Capacity:       numSessions,
+			Confirmable:    true, // require publish confirmations
+			BufferCapacity: 10,
 
 			Logger: logger,
 		},
@@ -81,16 +79,8 @@ func (p *Pool) Close() {
 }
 
 // GetSession returns a new session from the pool, only returns an error upon shutdown.
-func (p *Pool) GetSession() (*Session, error) {
-	return p.sp.GetSession()
-}
-
-// GetSessionCtx returns a new session from the pool, only returns an error upon shutdown or when the passed context was canceled.
-func (p *Pool) GetSessionCtx(ctx context.Context) (*Session, error) {
-	if p.sp.ctx == ctx {
-		return p.sp.GetSession()
-	}
-	return p.sp.GetSessionCtx(ctx)
+func (p *Pool) GetSession(ctx context.Context) (*Session, error) {
+	return p.sp.GetSession(ctx)
 }
 
 // GetTransientSession returns a new session which is decoupled from anyshutdown mechanism, thus
@@ -103,8 +93,8 @@ func (p *Pool) GetTransientSession(ctx context.Context) (*Session, error) {
 // ReturnSession returns a Session back to the pool.
 // If the session was returned due to an error, erred should be set to true, otherwise
 // erred should be set to false.
-func (p *Pool) ReturnSession(session *Session, erred bool) {
-	p.sp.ReturnSession(session, erred)
+func (p *Pool) ReturnSession(session *Session, err error) {
+	p.sp.ReturnSession(session, err)
 }
 
 func (p *Pool) Context() context.Context {
@@ -116,10 +106,22 @@ func (p *Pool) Name() string {
 	return p.cp.Name()
 }
 
-func (p *Pool) ConnectionPoolSize() int {
-	return p.cp.Size()
+// ConnectionPoolCapacity returns the capacity of the connection pool.
+func (p *Pool) ConnectionPoolCapacity() int {
+	return p.cp.Capacity()
 }
 
+// ConnectionPoolSize returns the number of connections in the pool that are idling.
+func (p *Pool) ConnectionPoolSize() int {
+	return p.cp.Capacity()
+}
+
+// SessionPoolCapacity returns the capacity of the session pool.
+func (p *Pool) SessionPoolCapacity() int {
+	return p.sp.Capacity()
+}
+
+// SessionPoolSize returns the number of sessions in the pool that are idling.
 func (p *Pool) SessionPoolSize() int {
 	return p.sp.Size()
 }

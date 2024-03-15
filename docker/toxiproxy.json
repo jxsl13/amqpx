@@ -1,7 +1,283 @@
 [
   {
-    "name": "rabbitmq",
+    "name": "rabbitmq-5672",
     "listen": "[::]:5672",
+    "upstream": "rabbitmq:5672",
+    "enabled": true
+  },
+  {
+    "name": "rabbitmq-5673",
+    "listen": "[::]:5673",
+    "upstream": "rabbitmq:5672",
+    "enabled": true
+  },
+  {
+    "name": "rabbitmq-5674",
+    "listen": "[::]:5674",
+    "upstream": "rabbitmq:5672",
+    "enabled": true
+  },
+  {
+    "name": "rabbitmq-5675",
+    "listen": "[::]:5675",
+    "upstream": "rabbitmq:5672",
+    "enabled": true
+  },
+  {
+    "name": "rabbitmq-5676",
+    "listen": "[::]:5676",
+    "upstream": "rabbitmq:5672",
+    "enabled": true
+  },
+  {
+    "name": "rabbitmq-5677",
+    "listen": "[::]:5677",
+    "upstream": "rabbitmq:5672",
+    "enabled": true
+  },
+  {
+    "name": "rabbitmq-5678",
+    "listen": "[::]:5678",
+    "upstream": "rabbitmq:5672",
+    "enabled": true
+  },
+  {
+    "name": "rabbitmq-5679",
+    "listen": "[::]:5679",
+    "upstream": "rabbitmq:5672",
+    "enabled": true
+  },
+  {
+    "name": "rabbitmq-5680",
+    "listen": "[::]:5680",
+    "upstream": "rabbitmq:5672",
+    "enabled": true
+  },
+  {
+    "name": "rabbitmq-5681",
+    "listen": "[::]:5681",
+    "upstream": "rabbitmq:5672",
+    "enabled": true
+  },
+  {
+    "name": "rabbitmq-5682",
+    "listen": "[::]:5682",
+    "upstream": "rabbitmq:5672",
+    "enabled": true
+  },
+  {
+    "name": "rabbitmq-5683",
+    "listen": "[::]:5683",
+    "upstream": "rabbitmq:5672",
+    "enabled": true
+  },
+  {
+    "name": "rabbitmq-5684",
+    "listen": "[::]:5684",
+    "upstream": "rabbitmq:5672",
+    "enabled": true
+  },
+  {
+    "name": "rabbitmq-5685",
+    "listen": "[::]:5685",
+    "upstream": "rabbitmq:5672",
+    "enabled": true
+  },
+  {
+    "name": "rabbitmq-5686",
+    "listen": "[::]:5686",
+    "upstream": "rabbitmq:5672",
+    "enabled": true
+  },
+  {
+    "name": "rabbitmq-5687",
+    "listen": "[::]:5687",
+    "upstream": "rabbitmq:5672",
+    "enabled": true
+  },
+  {
+    "name": "rabbitmq-5688",
+    "listen": "[::]:5688",
+    "upstream": "rabbitmq:5672",
+    "enabled": true
+  },
+  {
+    "name": "rabbitmq-5689",
+    "listen": "[::]:5689",
+    "upstream": "rabbitmq:5672",
+    "enabled": true
+  },
+  {
+    "name": "rabbitmq-5690",
+    "listen": "[::]:5690",
+    "upstream": "rabbitmq:5672",
+    "enabled": true
+  },
+  {
+    "name": "rabbitmq-5691",
+    "listen": "[::]:5691",
+    "upstream": "rabbitmq:5672",
+    "enabled": true
+  },
+  {
+    "name": "rabbitmq-5692",
+    "listen": "[::]:5692",
+    "upstream": "rabbitmq:5672",
+    "enabled": true
+  },
+  {
+    "name": "rabbitmq-5693",
+    "listen": "[::]:5693",
+    "upstream": "rabbitmq:5672",
+    "enabled": true
+  },
+  {
+    "name": "rabbitmq-5694",
+    "listen": "[::]:5694",
+    "upstream": "rabbitmq:5672",
+    "enabled": true
+  },
+  {
+    "name": "rabbitmq-5695",
+    "listen": "[::]:5695",
+    "upstream": "rabbitmq:5672",
+    "enabled": true
+  },
+  {
+    "name": "rabbitmq-5696",
+    "listen": "[::]:5696",
+    "upstream": "rabbitmq:5672",
+    "enabled": true
+  },
+  {
+    "name": "rabbitmq-5697",
+    "listen": "[::]:5697",
+    "upstream": "rabbitmq:5672",
+    "enabled": true
+  },
+  {
+    "name": "rabbitmq-5698",
+    "listen": "[::]:5698",
+    "upstream": "rabbitmq:5672",
+    "enabled": true
+  },
+  {
+    "name": "rabbitmq-5699",
+    "listen": "[::]:5699",
+    "upstream": "rabbitmq:5672",
+    "enabled": true
+  },
+  {
+    "name": "rabbitmq-5700",
+    "listen": "[::]:5700",
+    "upstream": "rabbitmq:5672",
+    "enabled": true
+  },
+  {
+    "name": "rabbitmq-5701",
+    "listen": "[::]:5701",
+    "upstream": "rabbitmq:5672",
+    "enabled": true
+  },
+  {
+    "name": "rabbitmq-5702",
+    "listen": "[::]:5702",
+    "upstream": "rabbitmq:5672",
+    "enabled": true
+  },
+  {
+    "name": "rabbitmq-5703",
+    "listen": "[::]:5703",
+    "upstream": "rabbitmq:5672",
+    "enabled": true
+  },
+  {
+    "name": "rabbitmq-5704",
+    "listen": "[::]:5704",
+    "upstream": "rabbitmq:5672",
+    "enabled": true
+  },
+  {
+    "name": "rabbitmq-5705",
+    "listen": "[::]:5705",
+    "upstream": "rabbitmq:5672",
+    "enabled": true
+  },
+  {
+    "name": "rabbitmq-5706",
+    "listen": "[::]:5706",
+    "upstream": "rabbitmq:5672",
+    "enabled": true
+  },
+  {
+    "name": "rabbitmq-5707",
+    "listen": "[::]:5707",
+    "upstream": "rabbitmq:5672",
+    "enabled": true
+  },
+  {
+    "name": "rabbitmq-5708",
+    "listen": "[::]:5708",
+    "upstream": "rabbitmq:5672",
+    "enabled": true
+  },
+  {
+    "name": "rabbitmq-5709",
+    "listen": "[::]:5709",
+    "upstream": "rabbitmq:5672",
+    "enabled": true
+  },
+  {
+    "name": "rabbitmq-5710",
+    "listen": "[::]:5710",
+    "upstream": "rabbitmq:5672",
+    "enabled": true
+  },
+  {
+    "name": "rabbitmq-5711",
+    "listen": "[::]:5711",
+    "upstream": "rabbitmq:5672",
+    "enabled": true
+  },
+  {
+    "name": "rabbitmq-5712",
+    "listen": "[::]:5712",
+    "upstream": "rabbitmq:5672",
+    "enabled": true
+  },
+  {
+    "name": "rabbitmq-5713",
+    "listen": "[::]:5713",
+    "upstream": "rabbitmq:5672",
+    "enabled": true
+  },
+  {
+    "name": "rabbitmq-5714",
+    "listen": "[::]:5714",
+    "upstream": "rabbitmq:5672",
+    "enabled": true
+  },
+  {
+    "name": "rabbitmq-5715",
+    "listen": "[::]:5715",
+    "upstream": "rabbitmq:5672",
+    "enabled": true
+  },
+  {
+    "name": "rabbitmq-5716",
+    "listen": "[::]:5716",
+    "upstream": "rabbitmq:5672",
+    "enabled": true
+  },
+  {
+    "name": "rabbitmq-5717",
+    "listen": "[::]:5717",
+    "upstream": "rabbitmq:5672",
+    "enabled": true
+  },
+  {
+    "name": "rabbitmq-5718",
+    "listen": "[::]:5718",
     "upstream": "rabbitmq:5672",
     "enabled": true
   }

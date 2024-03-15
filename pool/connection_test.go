@@ -1,66 +1,58 @@
 package pool_test
 
 import (
-	"fmt"
+	"context"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/jxsl13/amqpx/internal/testutils"
 	"github.com/jxsl13/amqpx/logging"
 	"github.com/jxsl13/amqpx/pool"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func TestNewSingleConnection(t *testing.T) {
+	t.Parallel()
+	var (
+		ctx      = context.TODO()
+		nextName = testutils.ConnectionNameGenerator()
+	)
+
 	c, err := pool.NewConnection(
-		connectURL,
-		"TestNewSingleConnection",
+		ctx,
+		testutils.HealthyConnectURL,
+		nextName(),
 		pool.ConnectionWithLogger(logging.NewTestLogger(t)),
 	)
 
 	if err != nil {
-		require.NoError(t, err)
+		assert.NoError(t, err)
 		return
 	}
 	defer func() {
-		err := c.Close()
-		require.NoError(t, err)
+		assert.NoError(t, c.Close())
 	}()
 }
 
-func TestNewSingleConnectionWithDisconnect(t *testing.T) {
-	started, stopped := DisconnectWithStartedStopped(t, 0, 0, 15*time.Second)
-	started()
-	defer stopped()
-	c, err := pool.NewConnection(
-		connectURL,
-		"TestNewSingleConnection",
-		pool.ConnectionWithLogger(logging.NewTestLogger(t)),
+func TestManyNewConnection(t *testing.T) {
+	t.Parallel()
+	var (
+		ctx         = context.TODO()
+		wg          sync.WaitGroup
+		connections = 5
+		nextName    = testutils.ConnectionNameGenerator()
 	)
 
-	if err != nil {
-		require.NoError(t, err)
-		return
-	}
-	defer func() {
-		err := c.Close()
-		require.NoError(t, err)
-	}()
-}
-
-func TestNewConnection(t *testing.T) {
-	var wg sync.WaitGroup
-
-	connections := 5
 	wg.Add(connections)
 	for i := 0; i < connections; i++ {
-		go func(id int64) {
+		go func() {
 			defer wg.Done()
 
 			c, err := pool.NewConnection(
-				connectURL,
-				fmt.Sprintf("TestNewConnection-%d", id),
+				ctx,
+				testutils.HealthyConnectURL,
+				nextName(),
 				pool.ConnectionWithLogger(logging.NewTestLogger(t)),
 			)
 			if err != nil {
@@ -68,51 +60,86 @@ func TestNewConnection(t *testing.T) {
 				return
 			}
 			defer func() {
+				// error closed
 				assert.Error(t, c.Error())
 			}()
 			defer c.Close()
-			time.Sleep(2 * time.Second)
+			time.Sleep(testutils.Jitter(time.Second, 3*time.Second))
 			assert.NoError(t, c.Error())
-		}(int64(i))
+		}()
 	}
 
 	wg.Wait()
 }
 
-func TestNewConnectionDisconnect(t *testing.T) {
+func TestNewSingleConnectionWithDisconnect(t *testing.T) {
+	t.Parallel()
+	var (
+		ctx                      = context.TODO()
+		proxyName, connectURL, _ = testutils.NextConnectURL()
+		nextName                 = testutils.ConnectionNameGenerator()
+	)
 
-	var wg sync.WaitGroup
+	started, stopped := DisconnectWithStartedStopped(t, proxyName, 0, 0, 10*time.Second)
+	started()
+	defer stopped()
 
-	connections := 100
-	wg.Add(connections)
+	c, err := pool.NewConnection(
+		ctx,
+		connectURL,
+		nextName(),
+		pool.ConnectionWithLogger(logging.NewTestLogger(t)),
+	)
+	if err != nil {
+		assert.NoError(t, err)
+		return
+	}
+	defer func() {
+		assert.NoError(t, c.Close())
+	}()
+}
 
-	// disconnect directly for 10 seconds
-	wait := DisconnectWithStopped(t, 0, 0, time.Second)
+func TestManyNewConnectionWithDisconnect(t *testing.T) {
+
+	var (
+		ctx                      = context.TODO()
+		proxyName, connectURL, _ = testutils.NextConnectURL()
+	)
+	var (
+		wg          sync.WaitGroup
+		connections = 100
+		nextName    = testutils.ConnectionNameGenerator()
+	)
+	wait := DisconnectWithStopped(t, proxyName, 0, 0, time.Second)
 	defer wait() // wait for goroutine to properly close & unblock the proxy
 
+	wg.Add(connections)
 	for i := 0; i < connections; i++ {
-		go func(id int64) {
+		go func() {
 			defer wg.Done()
 
 			c, err := pool.NewConnection(
+				ctx,
 				connectURL,
-				fmt.Sprintf("TestNewConnectionDisconnect-%d", id),
-				//pool.ConnectionWithLogger(logging.NewTestLogger(t)),
+				nextName(),
 			)
 			if err != nil {
 				assert.NoError(t, err)
 				return
 			}
 			defer func() {
+				// err closed
 				assert.Error(t, c.Error())
 			}()
 			defer c.Close()
 
 			wait() // wait for connection to work again.
 
-			assert.NoError(t, c.Recover())
+			tctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+			defer cancel()
+			assert.NoError(t, c.Recover(tctx))
 			assert.NoError(t, c.Error())
-		}(int64(i))
+		}()
 	}
 
 	wg.Wait()

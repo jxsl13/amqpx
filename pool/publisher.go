@@ -3,16 +3,14 @@ package pool
 import (
 	"context"
 	"errors"
-	"time"
+	"fmt"
 
 	"github.com/jxsl13/amqpx/logging"
 )
 
 type Publisher struct {
-	pool           *Pool
-	autoClosePool  bool
-	publishTimeout time.Duration
-	confirmTimeout time.Duration
+	pool          *Pool
+	autoClosePool bool
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -38,27 +36,24 @@ func NewPublisher(p *Pool, options ...PublisherOption) *Publisher {
 
 	// sane defaults, prefer fault tolerance over performance
 	option := publisherOption{
-		Ctx:            p.Context(),
-		PublishTimeout: 15 * time.Second,
-		ConfirmTimeout: 15 * time.Second,
-		AutoClosePool:  false,
-		Logger:         p.sp.log, // derive logger from session pool
+		Ctx: p.Context(),
+
+		AutoClosePool: false,
+		Logger:        p.sp.log, // derive logger from session pool
 	}
 
 	for _, o := range options {
 		o(&option)
 	}
 
-	ctx, cancel := context.WithCancel(option.Ctx)
+	ctx, cc := context.WithCancelCause(option.Ctx)
+	cancel := toCancelFunc(fmt.Errorf("publisher %w", ErrClosed), cc)
 
 	pub := &Publisher{
-		pool:           p,
-		autoClosePool:  option.AutoClosePool,
-		confirmTimeout: option.ConfirmTimeout,
-		publishTimeout: option.PublishTimeout,
-
-		ctx:    ctx,
-		cancel: cancel,
+		pool:          p,
+		autoClosePool: option.AutoClosePool,
+		ctx:           ctx,
+		cancel:        cancel,
 
 		log: option.Logger,
 	}
@@ -69,52 +64,47 @@ func NewPublisher(p *Pool, options ...PublisherOption) *Publisher {
 
 // Publish a message to a specific exchange with a given routingKey.
 // You may set exchange to "" and routingKey to your queue name in order to publish directly to a queue.
-func (p *Publisher) Publish(exchange string, routingKey string, msg Publishing) error {
+func (p *Publisher) Publish(ctx context.Context, exchange string, routingKey string, msg Publishing) error {
 
 	for {
-		err := p.publish(exchange, routingKey, msg)
-		if err == nil {
+		err := p.publish(ctx, exchange, routingKey, msg)
+		switch {
+		case err == nil:
 			return nil
-		} else if errors.Is(err, ErrClosed) {
+		case errors.Is(err, ErrNack):
 			return err
-		} else {
-			p.warn(exchange, routingKey, err, "publish failed, retrying")
+		case errors.Is(err, ErrDeliveryTagMismatch):
+			return err
+		default:
+			if recoverable(err) {
+				p.warn(exchange, routingKey, err, "publish failed due to recoverable error, retrying")
+				// retry
+			} else {
+				return err
+			}
 		}
-		// continue in any other error case
 	}
 }
 
-func (p *Publisher) publish(exchange string, routingKey string, msg Publishing) (err error) {
+func (p *Publisher) publish(ctx context.Context, exchange string, routingKey string, msg Publishing) (err error) {
 	defer func() {
 		if err != nil {
-			p.warn(exchange, routingKey, err)
+			p.warn(exchange, routingKey, err, "failed to publish message")
 		} else {
 			p.info(exchange, routingKey, "published a message")
 		}
 	}()
 
-	s, err := p.pool.GetSession()
-	if err != nil && errors.Is(err, ErrClosed) {
+	s, err := p.pool.GetSession(ctx)
+	if err != nil {
 		return err
 	}
 	defer func() {
-		// return session
-		if err == nil {
-			p.pool.ReturnSession(s, false)
-		} else if errors.Is(err, ErrClosed) {
-			// TODO: potential message loss upon shutdown
-			// might try a transient session for this one
-			p.pool.ReturnSession(s, false)
-		} else {
-			p.pool.ReturnSession(s, true)
-		}
+		p.pool.ReturnSession(s, err)
 	}()
 
-	pubCtx, pubCancel := context.WithTimeout(p.ctx, p.publishTimeout)
-	defer pubCancel()
-
-	tag, err := s.Publish(pubCtx, exchange, routingKey, msg)
-	if err != nil && errors.Is(err, ErrClosed) {
+	tag, err := s.Publish(ctx, exchange, routingKey, msg)
+	if err != nil {
 		return err
 	}
 
@@ -122,30 +112,20 @@ func (p *Publisher) publish(exchange string, routingKey string, msg Publishing) 
 		return nil
 	}
 
-	confirmCtx, confirmCancel := context.WithTimeout(p.ctx, p.confirmTimeout)
-	defer confirmCancel()
-
-	return s.AwaitConfirm(confirmCtx, tag)
+	return s.AwaitConfirm(ctx, tag)
 }
 
 // Get is only supposed to be used for testing, do not use get for polling any broker queues.
-func (p *Publisher) Get(queue string, autoAck bool) (msg Delivery, ok bool, err error) {
-	s, err := p.pool.GetSession()
-	if err != nil && errors.Is(err, ErrClosed) {
+func (p *Publisher) Get(ctx context.Context, queue string, autoAck bool) (msg Delivery, ok bool, err error) {
+	s, err := p.pool.GetSession(ctx)
+	if err != nil {
 		return Delivery{}, false, err
 	}
 	defer func() {
-		// return session
-		if err == nil {
-			p.pool.ReturnSession(s, false)
-		} else if errors.Is(err, ErrClosed) {
-			p.pool.ReturnSession(s, false)
-		} else {
-			p.pool.ReturnSession(s, true)
-		}
+		p.pool.ReturnSession(s, err)
 	}()
 
-	return s.Get(queue, autoAck)
+	return s.Get(ctx, queue, autoAck)
 }
 
 func (p *Publisher) info(exchange, routingKey string, a ...any) {

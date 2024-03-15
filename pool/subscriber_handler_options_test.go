@@ -1,13 +1,16 @@
 package pool
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 )
 
 func TestWithMaxBatchSize(t *testing.T) {
-	dummyHandler := func([]Delivery) error { return nil }
+	t.Parallel()
+
+	dummyHandler := func(context.Context, []Delivery) error { return nil }
 	bh := NewBatchHandler("test", dummyHandler, WithMaxBatchSize(0), WithMaxBatchBytes(0))
 
 	assert.Equal(t, defaultMaxBatchSize, bh.MaxBatchSize())

@@ -7,12 +7,12 @@ import (
 )
 
 type sessionOption struct {
-	Logger        logging.Logger
-	Cached        bool
-	Confirmable   bool
-	BufferSize    int
-	Ctx           context.Context
-	AutoCloseConn bool
+	Logger         logging.Logger
+	Cached         bool
+	Confirmable    bool
+	BufferCapacity int
+	Ctx            context.Context
+	AutoCloseConn  bool
 
 	RecoverCallback                     SessionRetryCallback
 	PublishRetryCallback                SessionRetryCallback
@@ -72,9 +72,9 @@ func SessionWithConfirms(requiresPublishConfirms bool) SessionOption {
 
 // SessionWithBufferSize allows to customize the size of th einternal channel buffers.
 // all buffers/channels are initialized with this size. (e.g. error or confirm channels)
-func SessionWithBufferSize(size int) SessionOption {
+func SessionWithBufferCapacity(capacity int) SessionOption {
 	return func(so *sessionOption) {
-		so.BufferSize = size
+		so.BufferCapacity = capacity
 	}
 }
 

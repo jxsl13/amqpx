@@ -5,9 +5,9 @@ import (
 )
 
 type sessionPoolOption struct {
-	Size        int
-	Confirmable bool // whether published messages require confirmation awaiting
-	BufferSize  int  // size of the sessio internal confirmation and error buffers.
+	Capacity       int
+	Confirmable    bool // whether published messages require awaiting confirmations.
+	BufferCapacity int  // size of the session internal confirmation and error buffers.
 
 	AutoClosePool bool // whether to close the internal connection pool automatically
 	Logger        logging.Logger
@@ -41,14 +41,14 @@ func SessionPoolWithLogger(logger logging.Logger) SessionPoolOption {
 	}
 }
 
-// SessionPoolWithBufferSize allows to configurethe size of
+// SessionPoolWithBufferCapacity allows to configure the size of
 // the confirmation, error & blocker buffers of all sessions
-func SessionPoolWithBufferSize(size int) SessionPoolOption {
-	if size < 0 {
-		size = 0
+func SessionPoolWithBufferCapacity(capacity int) SessionPoolOption {
+	if capacity < 1 {
+		capacity = 1 // should be at least 1 in order not to create weiird deadlocks.
 	}
 	return func(po *sessionPoolOption) {
-		po.BufferSize = size
+		po.BufferCapacity = capacity
 	}
 }
 

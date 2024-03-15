@@ -1,25 +1,47 @@
 package pool_test
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/jxsl13/amqpx/internal/testutils"
 	"github.com/jxsl13/amqpx/logging"
 	"github.com/jxsl13/amqpx/pool"
 	"github.com/stretchr/testify/assert"
 )
 
-func TestPublisher(t *testing.T) {
-	connections := 1
-	sessions := 10 // publisher sessions + consumer sessions
-	p, err := pool.New(connectURL,
-		connections,
-		sessions,
-		pool.WithName("TestPublisher"),
-		pool.WithConfirms(true),
+func TestSinglePublisher(t *testing.T) {
+	t.Parallel()
+
+	var (
+		proxyName, connectURL, _ = testutils.NextConnectURL()
+		ctx                      = context.TODO()
+		log                      = logging.NewTestLogger(t)
+		nextConnName             = testutils.ConnectionNameGenerator()
+		numMsgs                  = 5
+	)
+
+	hs, hsclose := NewSession(
+		t,
+		ctx,
+		testutils.HealthyConnectURL,
+		nextConnName(),
+	)
+	defer hsclose()
+
+	p, err := pool.New(
+		ctx,
+		connectURL,
+		1,
+		1,
 		pool.WithLogger(logging.NewTestLogger(t)),
+		pool.WithConfirms(true),
+		pool.WithConnectionRecoverCallback(func(name string, retry int, err error) {
+			log.Warnf("connection %s is broken, retry %d, error: %s", name, retry, err)
+		}),
 	)
 	if err != nil {
 		assert.NoError(t, err)
@@ -27,93 +49,118 @@ func TestPublisher(t *testing.T) {
 	}
 	defer p.Close()
 
-	var wg sync.WaitGroup
+	var (
+		nextExchangeName = testutils.ExchangeNameGenerator(hs.Name())
+		nextQueueName    = testutils.QueueNameGenerator(hs.Name())
+		exchangeName     = nextExchangeName()
+		queueName        = nextQueueName()
+	)
+	cleanup := DeclareExchangeQueue(t, ctx, hs, exchangeName, queueName)
+	defer cleanup()
 
-	channels := sessions / 2 // one sessions for consumer and one for publisher
-	wg.Add(channels)
-	for id := 0; id < channels; id++ {
-		go func(id int64) {
-			defer wg.Done()
+	var (
+		nextConsumerName = testutils.ConsumerNameGenerator(queueName)
+		publisherMsgGen  = testutils.MessageGenerator(queueName)
+		consumerMsgGen   = testutils.MessageGenerator(queueName)
+		wg               sync.WaitGroup
+	)
 
-			s, err := p.GetSession()
-			if err != nil {
-				assert.NoError(t, err)
-				return
-			}
+	pub := pool.NewPublisher(p)
+	defer pub.Close()
 
-			queueName := fmt.Sprintf("TestPublisher-Queue-%d", id)
-			_, err = s.QueueDeclare(queueName)
-			if err != nil {
-				assert.NoError(t, err)
-				return
-			}
-			defer func() {
-				i, err := s.QueueDelete(queueName)
-				assert.NoError(t, err)
-				assert.Equal(t, 0, i)
-			}()
+	// TODO: currently this test allows duplication of messages
+	ConsumeAsyncN(t, ctx, &wg, hs, queueName, nextConsumerName(), consumerMsgGen, numMsgs, true)
 
-			exchangeName := fmt.Sprintf("TestPublisher-Exchange-%d", id)
-			err = s.ExchangeDeclare(exchangeName, "topic")
-			if err != nil {
-				assert.NoError(t, err)
-				return
-			}
-			defer func() {
-				err := s.ExchangeDelete(exchangeName)
-				assert.NoError(t, err)
-			}()
-
-			err = s.QueueBind(queueName, "#", exchangeName)
-			if err != nil {
-				assert.NoError(t, err)
-				return
-			}
-			defer func() {
-				err := s.QueueUnbind(queueName, "#", exchangeName, nil)
-				assert.NoError(t, err)
-			}()
-
-			delivery, err := s.Consume(
-				queueName,
-				pool.ConsumeOptions{
-					ConsumerTag: fmt.Sprintf("Consumer-%s", queueName),
-					Exclusive:   true,
-				},
+	for i := 0; i < numMsgs; i++ {
+		msg := publisherMsgGen()
+		err = func(msg string) error {
+			disconnected, reconnected := DisconnectWithStartedStopped(
+				t,
+				proxyName,
+				0,
+				testutils.Jitter(time.Millisecond, 20*time.Millisecond),
+				testutils.Jitter(100*time.Millisecond, 150*time.Millisecond),
 			)
-			if err != nil {
-				assert.NoError(t, err)
-				return
-			}
+			defer func() {
+				disconnected()
+				reconnected()
+			}()
 
-			message := fmt.Sprintf("Message-%s", queueName)
-
-			wg.Add(1)
-			go func(msg string) {
-				defer wg.Done()
-
-				for val := range delivery {
-					receivedMsg := string(val.Body)
-					assert.Equal(t, message, receivedMsg)
-				}
-				// this routine must be closed upon session closure
-			}(message)
-
-			time.Sleep(5 * time.Second)
-
-			pub := pool.NewPublisher(p)
-			defer pub.Close()
-
-			pub.Publish(exchangeName, "", pool.Publishing{
+			return pub.Publish(ctx, exchangeName, "", pool.Publishing{
 				Mandatory:   true,
-				ContentType: "application/json",
-				Body:        []byte(message),
+				ContentType: "text/plain",
+				Body:        []byte(msg),
 			})
-
-			time.Sleep(5 * time.Second)
-
-		}(int64(id))
+		}(msg)
+		if err != nil {
+			assert.NoError(t, err, fmt.Sprintf("when publishing message %s", msg))
+			return
+		}
 	}
-
 	wg.Wait()
 }
+
+/*
+// TODO: out of memory rabbitmq tests are disabled until https://github.com/rabbitmq/amqp091-go/issues/253 is resolved
+func TestPublishAwaitFlowControl(t *testing.T) {
+	t.Parallel()
+
+	var (
+		ctx          = context.TODO()
+		nextConnName = testutils.ConnectionNameGenerator()
+	)
+
+	hs, hsclose := NewSession(
+		t,
+		ctx,
+		testutils.HealthyConnectURL,
+		nextConnName(),
+	)
+	defer hsclose()
+
+	p, err := pool.New(
+		ctx,
+		testutils.BrokenConnectURL,
+		1,
+		1,
+		pool.WithLogger(logging.NewTestLogger(t)),
+		pool.WithConfirms(true),
+	)
+	if err != nil {
+		assert.NoError(t, err)
+		return
+	}
+	defer func() {
+		p.Close()
+	}()
+	var (
+		nextExchangeName = testutils.ExchangeNameGenerator(hs.Name())
+		nextQueueName    = testutils.QueueNameGenerator(hs.Name())
+		exchangeName     = nextExchangeName()
+		queueName        = nextQueueName()
+	)
+	ts, err := p.GetTransientSession(ctx)
+	if err != nil {
+		assert.NoError(t, err)
+		return
+	}
+	defer func() {
+		p.ReturnSession(ts, nil)
+	}()
+	cleanup := DeclareExchangeQueue(t, ctx, ts, exchangeName, queueName)
+	defer cleanup()
+
+	var (
+		publisherMsgGen = testutils.MessageGenerator(queueName)
+	)
+	pub := pool.NewPublisher(p)
+	defer pub.Close()
+
+	err = pub.Publish(ctx, exchangeName, "", pool.Publishing{
+		ContentType: "text/plain",
+		Body:        []byte(publisherMsgGen()),
+	})
+	assert.ErrorIs(t, err, pool.ErrFlowControl)
+	// FIXME: this test gets stuck when the sessions in the session pool are closed.:
+}
+*/

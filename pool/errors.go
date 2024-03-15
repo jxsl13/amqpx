@@ -21,6 +21,29 @@ var (
 	// ErrNotFound is returned by ExchangeDeclarePassive or QueueDeclarePassive in the case that
 	// the queue was not found.
 	ErrNotFound = errors.New("not found")
+
+	// ErrBlockingFlowControl is returned when the server is under flow control
+	// Your HTTP api may return 503 Service Unavailable or 429 Too Many Requests with a Retry-After header (https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Retry-After)
+	ErrBlockingFlowControl = errors.New("blocking flow control")
+
+	// errBlockingFlowControlClosed is returned when the flow control channel is closed
+	// Specifically interesting when awaiting publish confirms
+	// TODO: make public api after a while
+	errBlockingFlowControlClosed = errors.New("blocking flow control channel closed")
+
+	// ErrReturned is returned when a message is returned by the server when publishing
+	ErrReturned = errors.New("returned")
+
+	// errReturnedClosed
+	errReturnedClosed = errors.New("returned channel closed")
+
+	// ErrReject can be used to reject a specific message
+	// This is a special error that negatively acknowledges messages and does not reuque them.
+	ErrReject = errors.New("message rejected")
+
+	// ErrRejectSingle can be used to reject a specific message
+	// This is a special error that negatively acknowledges messages and does not reuque them
+	ErrRejectSingle = errors.New("single message rejected")
 )
 
 var (
@@ -42,7 +65,24 @@ func recoverable(err error) bool {
 		panic("checking nil error for recoverability")
 	}
 
+	if errors.Is(err, context.Canceled) {
+		return false
+	}
+
+	if errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+
+	if errors.Is(err, ErrClosed) {
+		return false
+	}
+
+	if errors.Is(err, ErrBlockingFlowControl) {
+		return false
+	}
+
 	// invalid usage of the amqp protocol is not recoverable
+	// INFO: this should be checked last.
 	ae := &amqp091.Error{}
 	if errors.As(err, &ae) {
 		switch ae.Code {
@@ -60,12 +100,6 @@ func recoverable(err error) bool {
 			return !ae.Recover
 		}
 	}
-
-	if errors.Is(err, context.Canceled) {
-		return false
-	}
-
-	// TODO: errors.Is(err, context.DeadlineExceeded) also needed?
 
 	// every other unknown error is recoverable
 	return true

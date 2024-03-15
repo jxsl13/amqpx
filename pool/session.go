@@ -15,14 +15,17 @@ const (
 	notImplemented = 540
 )
 
-// Session is
+// Session is a wrapper for an amqp channel.
+// It MUST not be used in a multithreaded context, but only in a single goroutine.
 type Session struct {
-	name        string
-	cached      bool
-	confirmable bool
-	bufferSize  int
+	name           string
+	cached         bool
+	flagged        bool
+	confirmable    bool
+	bufferCapacity int
 
 	channel  *amqp091.Channel
+	returned chan amqp091.Return
 	confirms chan amqp091.Confirmation
 	errors   chan *amqp091.Error
 
@@ -81,10 +84,10 @@ func NewSession(conn *Connection, name string, options ...SessionOption) (*Sessi
 
 	// default values
 	option := sessionOption{
-		Logger:      conn.log, // derive logger form connection
-		Cached:      false,
-		Confirmable: false,
-		BufferSize:  100,
+		Logger:         conn.log, // derive logger form connection
+		Cached:         false,
+		Confirmable:    false,
+		BufferCapacity: 10,
 		// derive context from connection, as we are derived from the connection
 		// so in case the connection is closed, we are closed as well.
 		Ctx:           conn.ctx,
@@ -96,18 +99,20 @@ func NewSession(conn *Connection, name string, options ...SessionOption) (*Sessi
 		o(&option)
 	}
 
-	ctx, cancel := context.WithCancel(option.Ctx)
+	ctx, cc := context.WithCancelCause(option.Ctx)
+	cancel := toCancelFunc(fmt.Errorf("session %w", ErrClosed), cc)
 
 	session := &Session{
-		name:        name,
-		cached:      option.Cached,
-		confirmable: option.Confirmable,
-		bufferSize:  option.BufferSize,
+		name:           name,
+		cached:         option.Cached,
+		confirmable:    option.Confirmable,
+		bufferCapacity: option.BufferCapacity,
 
 		consumers: map[string]bool{},
-		channel:   nil, // will be created below
-		confirms:  nil, // will be created below
-		errors:    nil, // will be created below
+		channel:   nil, // will be created on connect
+		errors:    nil, // will be created on connect
+		confirms:  nil, // will be created on connect
+		returned:  nil, // will be created on connect
 
 		conn:          conn,
 		autoCloseConn: option.AutoCloseConn,
@@ -144,6 +149,26 @@ func NewSession(conn *Connection, name string, options ...SessionOption) (*Sessi
 	return session, nil
 }
 
+// Flag marks the session as flagged.
+// This is useful in case of a connection pool, where the session is returned to the pool
+// and should be recovered by the next user.
+func (s *Session) Flag(err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	flagged := err != nil && recoverable(err)
+	if !s.flagged && flagged {
+		s.flagged = flagged
+	}
+}
+
+// IsFlagged returns whether the session is flagged.
+func (s *Session) IsFlagged() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.flagged
+}
+
 // Close closes the session completely.
 // Do not use this method in case you have acquired the session
 // from a connection pool.
@@ -161,22 +186,44 @@ func (s *Session) Close() (err error) {
 		}
 	}()
 
+	if s.autoCloseConn {
+		defer func() {
+			s.debug("closing session connection...")
+			err = errors.Join(err, s.conn.Close())
+		}()
+	}
+	s.debug("closing session context...")
 	s.cancel()
+	return s.close()
+}
+
+func (s *Session) close() (err error) {
+	defer func() {
+		s.debug("flushing channels...")
+		flush(s.errors)
+		flush(s.confirms)
+		flush(s.returned)
+
+		if s.channel != nil {
+			s.channel = nil
+		}
+	}()
+
 	if s.channel == nil || s.channel.IsClosed() {
 		return nil
 	}
 
-	for consumer := range s.consumers {
-		// ignore error, as at this point we cannot do anything about the error
-		// tell server to cancel consumer deliveries.
-		_ = s.channel.Cancel(consumer, false)
+	if len(s.consumers) > 0 {
+		s.debug("canceling consumers...")
+		for consumer := range s.consumers {
+			// ignore error, as at this point we cannot do anything about the error
+			// tell server to cancel consumer deliveries.
+			cerr := s.channel.Cancel(consumer, false)
+			err = errors.Join(err, cerr)
+		}
 	}
 
-	if s.autoCloseConn {
-		_ = s.channel.Close()
-		return s.conn.Close()
-	}
-
+	s.debug("closing amqp channel...")
 	return s.channel.Close()
 }
 
@@ -192,45 +239,43 @@ func (s *Session) Connect() (err error) {
 }
 
 func (s *Session) connect() (err error) {
+	s.debug("opening session...")
 	defer func() {
 		// reset state in case of an error
 		if err != nil {
-			s.channel = nil
-			s.errors = make(chan *amqp091.Error)
-			s.confirms = make(chan amqp091.Confirmation)
-
-			close(s.errors)
-			close(s.confirms)
-
+			err = errors.Join(err, s.close())
 			s.warn(err, "failed to open session")
 		} else {
 			s.info("opened session")
 		}
 	}()
-	s.debug("opening session...")
 
 	if s.conn.IsClosed() {
 		// do not reconnect connection explicitly
 		return ErrClosed
 	}
 
+	_ = s.close() // close any open rabbitmq channel & cleanup Go channels
+
 	channel, err := s.conn.channel()
 	if err != nil {
 		return fmt.Errorf("%v: %w", ErrConnectionFailed, err)
 	}
 
-	if s.confirmable {
-		s.confirms = make(chan amqp091.Confirmation, s.bufferSize)
-		channel.NotifyPublish(s.confirms)
+	s.errors = make(chan *amqp091.Error, s.bufferCapacity)
+	channel.NotifyClose(s.errors)
 
+	if s.confirmable {
+		s.confirms = make(chan amqp091.Confirmation, s.bufferCapacity)
+		channel.NotifyPublish(s.confirms)
 		err = channel.Confirm(false)
 		if err != nil {
 			return err
 		}
-	}
 
-	s.errors = make(chan *amqp091.Error, s.bufferSize)
-	channel.NotifyClose(s.errors)
+		s.returned = make(chan amqp091.Return, s.bufferCapacity)
+		channel.NotifyReturn(s.returned)
+	}
 
 	// reset consumer tracking upon reconnect
 	s.consumers = map[string]bool{}
@@ -240,28 +285,56 @@ func (s *Session) connect() (err error) {
 
 }
 
-func (s *Session) Recover() error {
+func (s *Session) Recover(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.recover()
+	return s.recover(ctx)
 }
 
-func (s *Session) tryRecover(err error) error {
+func (s *Session) tryRecover(ctx context.Context, err error) error {
 	if err == nil {
 		return nil
 	}
+
 	if !recoverable(err) {
 		return err
 	}
-	return s.recover()
+	return s.recover(ctx)
 }
 
-func (s *Session) recover() error {
+func (s *Session) recover(ctx context.Context) error {
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-s.catchShutdown():
+		return fmt.Errorf("failed to recover session: %w", s.shutdownErr())
+	default:
+		// check if context was closed before starting a recovery.
+	}
+
+	// check if session/channel needs to be recovered
+	err := s.error()
+	if err == nil {
+		return nil
+	}
+	s.warnf(err, "recovering session due to error: %v", err)
+
+	// necessary for cleanup and to cleanup potentially dangling open sessions
+	// already ran into a bug, where recovery spawned infinitely many channels.
+	_ = s.close()
 
 	// tries to recover session forever
 	for try := 0; ; try++ {
 
-		err := s.conn.Recover() // recovers connection with a backoff mechanism
+		if s.recoverCB != nil {
+			// allow a user to hook into the recovery process of a session
+			// this is expected to not be called often, as the connection should be the main cause
+			// of errors and not necessarily the session.
+			s.recoverCB(s.conn.Name(), s.name, try, err)
+		}
+
+		err = s.conn.Recover(ctx) // recovers connection with a backoff mechanism
 		if err != nil {
 			// upon shutdown this will fail
 			return fmt.Errorf("failed to recover session: %w", err)
@@ -271,21 +344,16 @@ func (s *Session) recover() error {
 		// with a backoff. Sessions should be instantly created on a healthy connection
 		err = s.connect() // Creates a new channel and flushes internal buffers automatically.
 		if err == nil {
+			// successfully recovered
+			s.flagged = false
 			return nil
-		}
-
-		if s.conn.recoverCB != nil {
-			// allow a user to hook into the recovery process of a session
-			// this is expected to not be called often, as the connection should be the main cause
-			// of errors and not necessarily the session.
-			s.recoverCB(s.conn.Name(), s.name, try, err)
 		}
 	}
 }
 
 // AwaitConfirm tries to await a confirmation from the broker for a published message
 // You may check for ErrNack in order to see whether the broker rejected the message temporatily.
-// AwaitConfirm cannot be retried in case the channel dies.
+// WARNING: AwaitConfirm cannot be retried in case the channel dies or errors.
 // You must resend your message and attempt to await it again.
 func (s *Session) AwaitConfirm(ctx context.Context, expectedTag uint64) error {
 	s.mu.Lock()
@@ -296,26 +364,45 @@ func (s *Session) AwaitConfirm(ctx context.Context, expectedTag uint64) error {
 	}
 
 	select {
+	// TODO: this might lead to problems when a single session is used
+	// in a multithreaded context. That way we might received out of order confirmations
+	// which could lead to unexpected behavior.
 	case confirm, ok := <-s.confirms:
 		if !ok {
 			err := s.error()
 			if err != nil {
-				return fmt.Errorf("await confirm failed: %w", err)
+				return fmt.Errorf("await confirm failed: confirms channel closed: %w", err)
 			}
 			return fmt.Errorf("await confirm failed: confirms channel %w", ErrClosed)
 		}
 		if !confirm.Ack {
-
-			// in case the server did not accept the message, it might be due to
-			// resource problems.
+			// in case the server did not accept the message, it might be due to resource problems.
 			// TODO: do we want to pause here upon flow control messages
-			s.conn.PauseOnFlowControl()
-			return fmt.Errorf("await confirm failed: %w", ErrNack)
+			err := fmt.Errorf("await confirm failed: %w", ErrNack)
+			return err
 		}
 		if confirm.DeliveryTag != expectedTag {
 			return fmt.Errorf("await confirm failed: %w: expected %d, got %d", ErrDeliveryTagMismatch, expectedTag, confirm.DeliveryTag)
 		}
 		return nil
+	case returned, ok := <-s.returned:
+		if !ok {
+			err := s.error()
+			if err != nil {
+				return fmt.Errorf("await confirm failed: returned channel closed: %w", err)
+			}
+			return fmt.Errorf("await confirm failed: %w", errReturnedClosed)
+		}
+		return fmt.Errorf("await confirm failed: %w: %s", ErrReturned, returned.ReplyText)
+	case blocking, ok := <-s.conn.BlockingFlowControl():
+		if !ok {
+			err := s.error()
+			if err != nil {
+				return fmt.Errorf("await confirm failed: blocking channel closed: %w", err)
+			}
+			return fmt.Errorf("await confirm failed: %w", errBlockingFlowControlClosed)
+		}
+		return fmt.Errorf("await confirm failed: %w: %s", ErrBlockingFlowControl, blocking.Reason)
 	case <-ctx.Done():
 		err := ctx.Err()
 		return fmt.Errorf("await confirm: failed context %w: %w", ErrClosed, err)
@@ -368,7 +455,7 @@ type Publishing struct {
 // The way to ensure that all publishings reach the server is to add a listener to Channel.NotifyPublish and put the channel in confirm mode with Channel.Confirm.
 // Publishing delivery tags and their corresponding confirmations start at 1. Exit when all publishings are confirmed.
 // When Publish does not return an error and the channel is in confirm mode, the internal counter for DeliveryTags with the first confirmation starts at 1.
-func (s *Session) Publish(ctx context.Context, exchange string, routingKey string, msg Publishing) (tag uint64, err error) {
+func (s *Session) Publish(ctx context.Context, exchange string, routingKey string, msg Publishing) (deliveryTag uint64, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -383,10 +470,10 @@ func (s *Session) Publish(ctx context.Context, exchange string, routingKey strin
 		amqpDeliverMode = 2 // persistent (persisted to disk upon arrival in queue)
 	}
 
-	return s.retryPublish(s.publishRetryCB, func() (uint64, error) {
-		tag = 0
+	err = s.retry(ctx, s.publishRetryCB, func() error {
+		deliveryTag = 0
 		if s.confirmable {
-			tag = s.channel.GetNextPublishSeqNo()
+			deliveryTag = s.channel.GetNextPublishSeqNo()
 		}
 
 		err = s.channel.PublishWithContext(
@@ -413,36 +500,22 @@ func (s *Session) Publish(ctx context.Context, exchange string, routingKey strin
 			},
 		)
 		if err != nil {
-			return 0, err
+			return err
 		}
-		return tag, err
+		return nil
 	})
-}
-
-func (s *Session) retryPublish(cb sessionRetryCallback, f func() (uint64, error)) (tag uint64, err error) {
-	for try := 0; ; try++ {
-		tag, err := f()
-		if err == nil {
-			return tag, nil
-		}
-
-		if cb != nil {
-			cb(s.conn.Name(), s.name, try, err)
-		}
-
-		err = s.tryRecover(err)
-		if err != nil {
-			return 0, err
-		}
+	if err != nil {
+		return 0, err
 	}
+	return deliveryTag, nil
 }
 
 // Get is only supposed to be used for testing purposes, do not us eit to poll the queue periodically.
-func (s *Session) Get(queue string, autoAck bool) (msg Delivery, ok bool, err error) {
+func (s *Session) Get(ctx context.Context, queue string, autoAck bool) (msg Delivery, ok bool, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	err = s.retry(s.getRetryCB, func() error {
+	err = s.retry(ctx, s.getRetryCB, func() error {
 		msg, ok, err = s.channel.Get(queue, autoAck)
 		if err != nil {
 			return err
@@ -537,7 +610,7 @@ func (s *Session) Consume(queue string, option ...ConsumeOptions) (<-chan Delive
 		err error
 	)
 	// retries to connect and attempts to start a consumer
-	err = s.retry(s.consumeRetryCB, func() error {
+	err = s.retry(s.ctx, s.consumeRetryCB, func() error {
 		c, err = s.channel.Consume(
 			queue,
 			o.ConsumerTag,
@@ -602,7 +675,7 @@ func (s *Session) ConsumeWithContext(ctx context.Context, queue string, option .
 		err error
 	)
 	// retries to connect and attempts to start a consumer
-	err = s.retry(s.consumeContextRetryCB, func() error {
+	err = s.retry(ctx, s.consumeContextRetryCB, func() error {
 		c, err = s.channel.ConsumeWithContext(
 			ctx,
 			queue,
@@ -626,7 +699,7 @@ func (s *Session) ConsumeWithContext(ctx context.Context, queue string, option .
 	return c, nil
 }
 
-func (s *Session) retry(cb sessionRetryCallback, f func() error) error {
+func (s *Session) retry(ctx context.Context, cb sessionRetryCallback, f func() error) error {
 
 	for try := 0; ; try++ {
 		err := f()
@@ -637,7 +710,7 @@ func (s *Session) retry(cb sessionRetryCallback, f func() error) error {
 		if cb != nil {
 			cb(s.conn.Name(), s.name, try, err)
 		}
-		err = s.tryRecover(err)
+		err = s.tryRecover(ctx, err)
 		if err != nil {
 			return err
 		}
@@ -715,7 +788,7 @@ type ExchangeDeclareOptions struct {
 // how messages are routed through it. Once an exchange is declared, its type
 // cannot be changed.  The common types are "direct", "fanout", "topic" and
 // "headers".
-func (s *Session) ExchangeDeclare(name string, kind ExchangeKind, option ...ExchangeDeclareOptions) error {
+func (s *Session) ExchangeDeclare(ctx context.Context, name string, kind ExchangeKind, option ...ExchangeDeclareOptions) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -731,7 +804,7 @@ func (s *Session) ExchangeDeclare(name string, kind ExchangeKind, option ...Exch
 		o = option[0]
 	}
 
-	return s.retry(s.exchangeDeclareRetryCB, func() error {
+	return s.retry(ctx, s.exchangeDeclareRetryCB, func() error {
 		return s.channel.ExchangeDeclare(
 			name,
 			string(kind),
@@ -749,7 +822,7 @@ func (s *Session) ExchangeDeclare(name string, kind ExchangeKind, option ...Exch
 // exchange is assumed by RabbitMQ to already exist, and attempting to connect to a
 // non-existent exchange will cause RabbitMQ to throw an exception. This function
 // can be used to detect the existence of an exchange.
-func (s *Session) ExchangeDeclarePassive(name string, kind ExchangeKind, option ...ExchangeDeclareOptions) error {
+func (s *Session) ExchangeDeclarePassive(ctx context.Context, name string, kind ExchangeKind, option ...ExchangeDeclareOptions) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -765,7 +838,7 @@ func (s *Session) ExchangeDeclarePassive(name string, kind ExchangeKind, option 
 		o = option[0]
 	}
 
-	err := s.retry(s.exchangeDeclarePassiveRetryCB, func() error {
+	err := s.retry(ctx, s.exchangeDeclarePassiveRetryCB, func() error {
 		return s.channel.ExchangeDeclarePassive(
 			name,
 			string(kind),
@@ -802,7 +875,7 @@ type ExchangeDeleteOptions struct {
 // ExchangeDelete removes the named exchange from the server. When an exchange is
 // deleted all queue bindings on the exchange are also deleted.  If this exchange
 // does not exist, the channel will be closed with an error.
-func (s *Session) ExchangeDelete(name string, option ...ExchangeDeleteOptions) error {
+func (s *Session) ExchangeDelete(ctx context.Context, name string, option ...ExchangeDeleteOptions) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -814,7 +887,7 @@ func (s *Session) ExchangeDelete(name string, option ...ExchangeDeleteOptions) e
 		o = option[0]
 	}
 
-	return s.retry(s.exchangeDeleteRetryCB, func() error {
+	return s.retry(ctx, s.exchangeDeleteRetryCB, func() error {
 		return s.channel.ExchangeDelete(name, o.IfUnused, o.NoWait)
 	})
 }
@@ -886,7 +959,7 @@ type QueueDeclareOptions struct {
 //
 // When the error return value is not nil, you can assume the queue could not be
 // declared with these parameters, and the channel will be closed.
-func (s *Session) QueueDeclare(name string, option ...QueueDeclareOptions) (Queue, error) {
+func (s *Session) QueueDeclare(ctx context.Context, name string, option ...QueueDeclareOptions) (Queue, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -904,7 +977,7 @@ func (s *Session) QueueDeclare(name string, option ...QueueDeclareOptions) (Queu
 		err   error
 		queue amqp091.Queue
 	)
-	err = s.retry(s.queueDeclareRetryCB, func() error {
+	err = s.retry(ctx, s.queueDeclareRetryCB, func() error {
 		queue, err = s.channel.QueueDeclare(
 			name,
 			o.Durable,
@@ -925,7 +998,7 @@ func (s *Session) QueueDeclare(name string, option ...QueueDeclareOptions) (Queu
 // QueueDeclarePassive is functionally and parametrically equivalent to QueueDeclare, except that it sets the "passive" attribute to true.
 // A passive queue is assumed by RabbitMQ to already exist, and attempting to connect to a non-existent queue will cause RabbitMQ to throw an exception.
 // This function can be used to test for the existence of a queue.
-func (s *Session) QueueDeclarePassive(name string, option ...QueueDeclareOptions) (Queue, error) {
+func (s *Session) QueueDeclarePassive(ctx context.Context, name string, option ...QueueDeclareOptions) (Queue, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -944,7 +1017,7 @@ func (s *Session) QueueDeclarePassive(name string, option ...QueueDeclareOptions
 		err   error
 		queue amqp091.Queue
 	)
-	err = s.retry(s.queueDeclarePassiveRetryCB, func() error {
+	err = s.retry(ctx, s.queueDeclarePassiveRetryCB, func() error {
 		queue, err = s.channel.QueueDeclarePassive(
 			name,
 			o.Durable,
@@ -987,7 +1060,7 @@ type QueueDeleteOptions struct {
 // QueueDelete removes the queue from the server including all bindings then
 // purges the messages based on server configuration, returning the number of
 // messages purged.
-func (s *Session) QueueDelete(name string, option ...QueueDeleteOptions) (int, error) {
+func (s *Session) QueueDelete(ctx context.Context, name string, option ...QueueDeleteOptions) (purgedMsgs int, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -1000,32 +1073,19 @@ func (s *Session) QueueDelete(name string, option ...QueueDeleteOptions) (int, e
 		o = option[0]
 	}
 
-	return s.retryQueueDelete(func() (int, error) {
-		return s.channel.QueueDelete(
+	err = s.retry(ctx, s.queueDeleteRetryCB, func() error {
+		purgedMsgs, err = s.channel.QueueDelete(
 			name,
 			o.IfUnused,
 			o.IfEmpty,
 			o.NoWait,
 		)
+		return err
 	})
-}
-
-func (s *Session) retryQueueDelete(f func() (int, error)) (int, error) {
-	for try := 0; ; try++ {
-		i, err := f()
-		if err == nil {
-			return i, nil
-		}
-
-		if s.queueDeleteRetryCB != nil {
-			s.queueDeleteRetryCB(s.conn.Name(), s.name, try, err)
-		}
-
-		err = s.tryRecover(err)
-		if err != nil {
-			return 0, err
-		}
+	if err != nil {
+		return 0, err
 	}
+	return purgedMsgs, nil
 }
 
 type QueueBindOptions struct {
@@ -1074,7 +1134,7 @@ type QueueBindOptions struct {
 //
 // If the binding could not complete, an error will be returned and the channel
 // will be closed.
-func (s *Session) QueueBind(queueName string, routingKey string, exchange string, option ...QueueBindOptions) error {
+func (s *Session) QueueBind(ctx context.Context, queueName string, routingKey string, exchange string, option ...QueueBindOptions) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -1088,7 +1148,7 @@ func (s *Session) QueueBind(queueName string, routingKey string, exchange string
 		o = option[0]
 	}
 
-	return s.retry(s.queueBindRetryCB, func() error {
+	return s.retry(ctx, s.queueBindRetryCB, func() error {
 		return s.channel.QueueBind(
 			queueName,
 			routingKey,
@@ -1103,7 +1163,7 @@ func (s *Session) QueueBind(queueName string, routingKey string, exchange string
 // arguments.
 // It is possible to send and empty string for the exchange name which means to
 // unbind the queue from the default exchange.
-func (s *Session) QueueUnbind(name string, routingKey string, exchange string, arg ...Table) error {
+func (s *Session) QueueUnbind(ctx context.Context, name string, routingKey string, exchange string, arg ...Table) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -1113,7 +1173,7 @@ func (s *Session) QueueUnbind(name string, routingKey string, exchange string, a
 		option = arg[0]
 	}
 
-	return s.retry(s.queueUnbindRetryCB, func() error {
+	return s.retry(ctx, s.queueUnbindRetryCB, func() error {
 		return s.channel.QueueUnbind(name, routingKey, exchange, option)
 	})
 }
@@ -1126,7 +1186,7 @@ type QueuePurgeOptions struct {
 // QueuePurge removes all messages from the named queue which are not waiting to be acknowledged.
 // Messages that have been delivered but have not yet been acknowledged will not be removed.
 // When successful, returns the number of messages purged.
-func (s *Session) QueuePurge(name string, options ...QueuePurgeOptions) (int, error) {
+func (s *Session) QueuePurge(ctx context.Context, name string, options ...QueuePurgeOptions) (int, error) {
 	opt := QueuePurgeOptions{
 		NoWait: false,
 	}
@@ -1139,7 +1199,7 @@ func (s *Session) QueuePurge(name string, options ...QueuePurgeOptions) (int, er
 		err               error
 	)
 
-	err = s.retry(s.queuePurgeRetryCB, func() error {
+	err = s.retry(ctx, s.queuePurgeRetryCB, func() error {
 		numPurgedMessages, err = s.channel.QueuePurge(name, opt.NoWait)
 		if err != nil {
 			return err
@@ -1186,7 +1246,7 @@ type ExchangeBindOptions struct {
 //	-----------------------------------------------
 //	key: AAPL  --> trade ----> MSFT     sell
 //	                     \---> AAPL --> buy
-func (s *Session) ExchangeBind(destination string, routingKey string, source string, option ...ExchangeBindOptions) error {
+func (s *Session) ExchangeBind(ctx context.Context, destination string, routingKey string, source string, option ...ExchangeBindOptions) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -1199,7 +1259,7 @@ func (s *Session) ExchangeBind(destination string, routingKey string, source str
 		o = option[0]
 	}
 
-	return s.retry(s.exchangeBindRetryCB, func() error {
+	return s.retry(ctx, s.exchangeBindRetryCB, func() error {
 		return s.channel.ExchangeBind(
 			destination,
 			routingKey,
@@ -1227,7 +1287,7 @@ type ExchangeUnbindOptions struct {
 // server by removing the routing key between them.  This is the inverse of
 // ExchangeBind.  If the binding does not currently exist, an error will be
 // returned.
-func (s *Session) ExchangeUnbind(destination string, routingKey string, source string, option ...ExchangeUnbindOptions) error {
+func (s *Session) ExchangeUnbind(ctx context.Context, destination string, routingKey string, source string, option ...ExchangeUnbindOptions) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -1239,7 +1299,7 @@ func (s *Session) ExchangeUnbind(destination string, routingKey string, source s
 		o = option[0]
 	}
 
-	return s.retry(s.exchangeUnbindRetryCB, func() error {
+	return s.retry(ctx, s.exchangeUnbindRetryCB, func() error {
 		return s.channel.ExchangeUnbind(
 			destination,
 			routingKey,
@@ -1276,11 +1336,11 @@ greater as described by benchmarks on RabbitMQ.
 
 http://www.rabbitmq.com/blog/2012/04/25/rabbitmq-performance-measurements-part-2/
 */
-func (s *Session) Qos(prefetchCount int, prefetchSize int) error {
+func (s *Session) Qos(ctx context.Context, prefetchCount int, prefetchSize int) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	return s.retry(s.qosRetryCB, func() error {
+	return s.retry(ctx, s.qosRetryCB, func() error {
 		// session quos should not affect new sessions of the same connection
 		return s.channel.Qos(prefetchCount, prefetchSize, false)
 	})
@@ -1307,40 +1367,71 @@ func (s *Session) Qos(prefetchCount int, prefetchSize int) error {
 // Note: RabbitMQ prefers to use TCP push back to control flow for all channels on
 // a connection, so under high volume scenarios, it's wise to open separate
 // Connections for publishings and deliveries.
-func (s *Session) Flow(active bool) error {
+func (s *Session) Flow(ctx context.Context, active bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	return s.retry(s.flowRetryCB, func() error {
+	return s.retry(ctx, s.flowRetryCB, func() error {
 		return s.channel.Flow(active)
 	})
 }
 
-// flushConfirms removes all previous confirmations pending processing.
-// You can use the returned value
-func (s *Session) flushConfirms() []amqp091.Confirmation {
+// Tx puts the channel into transaction mode on the server. All publishings and acknowledgments following this method
+// will be atomically committed or rolled back for a single queue. Call either Channel.TxCommit or Channel.TxRollback
+// to leave this transaction and immediately start a new transaction.
+//
+// The atomicity across multiple queues is not defined as queue declarations and bindings are not included in the transaction.
+//
+// The behavior of publishings that are delivered as mandatory or immediate while the channel is in a transaction is not defined.
+//
+// Once a channel has been put into transaction mode, it cannot be taken out of transaction mode.
+// Use a different channel for non-transactional semantics.
+func (s *Session) Tx() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	confirms := make([]amqp091.Confirmation, 0, len(s.confirms))
-flush:
-	for {
-		// Some weird use case where the Channel is being flooded with confirms after connection disruption
-		// It lead to an infinite loop when this method was called.
-		select {
-		case c, ok := <-s.confirms:
-			if !ok {
-				break flush
-			}
-			// flush confirmations in channel
-			confirms = append(confirms, c)
-		case <-s.catchShutdown():
-			break flush
-		default:
-			break flush
+	return s.channel.Tx()
+}
+
+// TxCommit atomically commits all publishings and acknowledgments for a single queue and immediately start a new transaction.
+//
+// Calling this method without having called Channel.Tx is an error.
+func (s *Session) TxCommit() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.channel.TxCommit()
+}
+
+// TxRollback atomically rolls back all publishings and acknowledgments for a single queue and immediately start a new transaction.
+//
+// Calling this method without having called Channel.Tx is an error.
+func (s *Session) TxRollback() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.channel.TxRollback()
+}
+
+func (s *Session) Do(ctx context.Context, f func() error) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.retry(ctx, nil, func() (err error) {
+		err = s.channel.Tx()
+		if err != nil {
+			return err
 		}
-	}
-	return confirms
+		defer func() {
+			if err != nil {
+				err = errors.Join(err, s.channel.TxRollback())
+			} else {
+				err = s.channel.TxCommit()
+			}
+		}()
+
+		return f()
+	})
 }
 
 // Error returns all errors from the errors channel
@@ -1388,14 +1479,59 @@ func (s *Session) catchShutdown() <-chan struct{} {
 	return s.ctx.Done()
 }
 
+func (s *Session) shutdownErr() error {
+	return s.ctx.Err()
+}
+
+func (s *Session) slog() logging.Logger {
+	return s.log.WithFields(logging.Fields{
+		"connection": s.conn.Name(),
+		"session":    s.name,
+	})
+}
+
 func (s *Session) info(a ...any) {
-	s.log.WithField("connection", s.conn.Name()).WithField("session", s.Name()).Info(a...)
+	s.slog().Info(a...)
 }
 
 func (s *Session) warn(err error, a ...any) {
-	s.log.WithField("connection", s.conn.Name()).WithField("session", s.Name()).WithField("error", err.Error()).Warn(a...)
+	s.slog().WithError(err).Warn(a...)
+}
+
+func (s *Session) warnf(err error, format string, a ...any) {
+	s.slog().WithError(err).Warnf(format, a...)
 }
 
 func (s *Session) debug(a ...any) {
-	s.log.WithField("connection", s.conn.Name()).WithField("session", s.Name()).Debug(a...)
+	s.slog().Debug(a...)
+}
+
+// Flush internal channels.
+func (s *Session) Flush() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	// do not flush the errors channel
+	// as it i sneeded for checking whether a session recovery is needed
+
+	flush(s.errors)
+	flush(s.confirms)
+	flush(s.returned)
+}
+
+// flush is a helper function to flush a channel
+func flush[T any](c <-chan T) []T {
+	var (
+		slice []T
+	)
+	for {
+		select {
+		case e, ok := <-c:
+			if !ok {
+				return slice
+			}
+			slice = append(slice, e)
+		default:
+			return slice
+		}
+	}
 }

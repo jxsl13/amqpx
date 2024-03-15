@@ -1,36 +1,36 @@
 package pool_test
 
 import (
+	"context"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/jxsl13/amqpx"
+	"github.com/jxsl13/amqpx/internal/testutils"
 	"github.com/jxsl13/amqpx/logging"
 	"github.com/jxsl13/amqpx/pool"
 	"github.com/stretchr/testify/assert"
-	"go.uber.org/goleak"
-)
-
-var (
-	connectURL = amqpx.NewURL("localhost", 5672, "admin", "password")
 )
 
 func TestMain(m *testing.M) {
-	goleak.VerifyTestMain(
-		m,
-		goleak.IgnoreTopFunction("internal/poll.runtime_pollWait"),
-		goleak.IgnoreTopFunction("github.com/rabbitmq/amqp091-go.(*Connection).heartbeater"),
-		goleak.IgnoreTopFunction("net/http.(*persistConn).writeLoop"),
-	)
+	testutils.VerifyLeak(m)
 }
 
-func TestNew(t *testing.T) {
-	connections := 2
-	sessions := 10
+func TestNewPool(t *testing.T) {
+	t.Parallel()
+	var (
+		ctx         = context.TODO()
+		poolName    = testutils.FuncName()
+		connections = 2
+		sessions    = 10
+	)
 
-	p, err := pool.New(connectURL, connections, sessions,
-		pool.WithName("TestNew"),
+	p, err := pool.New(
+		ctx,
+		testutils.HealthyConnectURL,
+		connections,
+		sessions,
+		pool.WithName(poolName),
 		pool.WithLogger(logging.NewTestLogger(t)),
 	)
 	if err != nil {
@@ -46,17 +46,19 @@ func TestNew(t *testing.T) {
 		go func() {
 			defer wg.Done()
 
-			session, err := p.GetSession()
+			session, err := p.GetSession(ctx)
 			if err != nil {
 				assert.NoError(t, err)
 				return
 			}
-			time.Sleep(1 * time.Second)
+			time.Sleep(testutils.Jitter(1*time.Second, 3*time.Second))
 
-			p.ReturnSession(session, false)
+			// recovering should not be neccessary
+			assert.NoError(t, session.Recover(ctx))
+
+			p.ReturnSession(session, nil)
 		}()
 	}
 
 	wg.Wait()
-
 }

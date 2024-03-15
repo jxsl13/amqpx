@@ -17,13 +17,17 @@ var (
 )
 
 type (
-	TopologyFunc func(*pool.Topologer) error
+	TopologyFunc func(context.Context, *pool.Topologer) error
 )
 
+func noopCancel() {}
+
 type AMQPX struct {
-	pubPool *pool.Pool
-	pub     *pool.Publisher
-	sub     *pool.Subscriber
+	pubCtx    context.Context
+	pubCancel context.CancelFunc
+	pubPool   *pool.Pool
+	pub       *pool.Publisher
+	sub       *pool.Subscriber
 
 	mu            sync.RWMutex
 	handlers      []*pool.Handler
@@ -40,9 +44,11 @@ type AMQPX struct {
 
 func New() *AMQPX {
 	return &AMQPX{
-		pubPool: nil,
-		pub:     nil,
-		sub:     nil,
+		pubCtx:    context.Background(),
+		pubCancel: noopCancel,
+		pubPool:   nil,
+		pub:       nil,
+		sub:       nil,
 
 		handlers:         make([]*pool.Handler, 0),
 		batchHandlers:    make([]*pool.BatchHandler, 0),
@@ -57,6 +63,8 @@ func (a *AMQPX) Reset() error {
 	defer a.mu.Unlock()
 	err := a.close()
 
+	a.pubCtx = context.Background()
+	a.pubCancel = noopCancel
 	a.pubPool = nil
 	a.pub = nil
 	a.sub = nil
@@ -152,7 +160,7 @@ func (a *AMQPX) RegisterBatchHandler(queue string, handlerFunc pool.BatchHandler
 // settings like publish confirmations or a custom context which can signal an application shutdown.
 // This customcontext does not replace the Close() call. Always defer a Close() call.
 // Start is a non-blocking operation.
-func (a *AMQPX) Start(connectUrl string, options ...Option) (err error) {
+func (a *AMQPX) Start(ctx context.Context, connectUrl string, options ...Option) (err error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -164,7 +172,7 @@ func (a *AMQPX) Start(connectUrl string, options ...Option) (err error) {
 			PublisherOptions:      make([]pool.PublisherOption, 0),
 			PublisherConnections:  1,
 			PublisherSessions:     10,
-			SubscriberConnections: 1,
+			SubscriberConnections: len(a.handlers) + len(a.batchHandlers),
 			CloseTimeout:          15 * time.Second,
 		}
 
@@ -177,7 +185,11 @@ func (a *AMQPX) Start(connectUrl string, options ...Option) (err error) {
 		a.closeTimeout = option.CloseTimeout
 
 		// publisher and subscriber need to have different tcp connections (tcp pushback prevention)
+		// pub pool is only closed when .Close() is called.
+		// This is needed so that we can correctly call the topology deleters.
+		a.pubCtx, a.pubCancel = context.WithCancel(context.Background())
 		a.pubPool, err = pool.New(
+			a.pubCtx,
 			connectUrl,
 			option.PublisherConnections,
 			option.PublisherSessions,
@@ -196,12 +208,11 @@ func (a *AMQPX) Start(connectUrl string, options ...Option) (err error) {
 			topologer := pool.NewTopologer(a.pubPool)
 
 			for _, t := range a.topologies {
-				err = t(topologer)
+				err = t(ctx, topologer)
 				if err != nil {
 					return
 				}
 			}
-
 		}
 
 		// publisher must before subscribers, as subscriber handlers might be using the publisher.
@@ -216,7 +227,7 @@ func (a *AMQPX) Start(connectUrl string, options ...Option) (err error) {
 				connections = requiredHandlers
 			)
 
-			if option.SubscriberConnections > connections {
+			if option.SubscriberConnections >= connections {
 				connections = option.SubscriberConnections
 			}
 
@@ -225,6 +236,7 @@ func (a *AMQPX) Start(connectUrl string, options ...Option) (err error) {
 			// with each other
 			var subPool *pool.Pool
 			subPool, err = pool.New(
+				ctx,
 				connectUrl,
 				connections,
 				sessions,
@@ -244,7 +256,7 @@ func (a *AMQPX) Start(connectUrl string, options ...Option) (err error) {
 			for _, bh := range a.batchHandlers {
 				a.sub.RegisterBatchHandler(bh)
 			}
-			err = a.sub.Start()
+			err = a.sub.Start(ctx)
 			if err != nil {
 				return
 			}
@@ -261,6 +273,7 @@ func (a *AMQPX) Close() error {
 
 func (a *AMQPX) close() (err error) {
 	a.closeOnce.Do(func() {
+		defer a.pubCancel()
 
 		if a.sub != nil {
 			a.sub.Close()
@@ -271,7 +284,7 @@ func (a *AMQPX) close() (err error) {
 		}
 
 		if a.pubPool != nil && len(a.topologyDeleters) > 0 {
-			ctx, cancel := context.WithTimeout(context.Background(), a.closeTimeout)
+			ctx, cancel := context.WithTimeout(a.pubCtx, a.closeTimeout)
 			defer cancel()
 
 			topologer := pool.NewTopologer(
@@ -280,7 +293,7 @@ func (a *AMQPX) close() (err error) {
 				pool.TopologerWithTransientSessions(true),
 			)
 			for _, f := range a.topologyDeleters {
-				err = errors.Join(err, f(topologer))
+				err = errors.Join(err, f(ctx, topologer))
 			}
 		}
 
@@ -295,18 +308,18 @@ func (a *AMQPX) close() (err error) {
 
 // Publish a message to a specific exchange with a given routingKey.
 // You may set exchange to "" and routingKey to your queue name in order to publish directly to a queue.
-func (a *AMQPX) Publish(exchange string, routingKey string, msg pool.Publishing) error {
+func (a *AMQPX) Publish(ctx context.Context, exchange string, routingKey string, msg pool.Publishing) error {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	if a.pub == nil {
 		panic("amqpx package was not started")
 	}
 
-	return a.pub.Publish(exchange, routingKey, msg)
+	return a.pub.Publish(ctx, exchange, routingKey, msg)
 }
 
 // Get is only supposed to be used for testing, do not use get for polling any broker queues.
-func (a *AMQPX) Get(queue string, autoAck bool) (msg pool.Delivery, ok bool, err error) {
+func (a *AMQPX) Get(ctx context.Context, queue string, autoAck bool) (msg pool.Delivery, ok bool, err error) {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	if a.pub == nil {
@@ -314,7 +327,7 @@ func (a *AMQPX) Get(queue string, autoAck bool) (msg pool.Delivery, ok bool, err
 	}
 
 	// publisher is used because this is a testing method for the publisher
-	return a.pub.Get(queue, autoAck)
+	return a.pub.Get(ctx, queue, autoAck)
 }
 
 // RegisterTopology registers a topology creating function that is called upon
@@ -351,8 +364,9 @@ func RegisterBatchHandler(queue string, handlerFunc pool.BatchHandlerFunc, optio
 // settings like publish confirmations or a custom context which can signal an application shutdown.
 // This customcontext does not replace the Close() call. Always defer a Close() call.
 // Start is a non-blocking operation.
-func Start(connectUrl string, options ...Option) (err error) {
-	return amqpx.Start(connectUrl, options...)
+// The startup context may differ from the cancelation context provided via the options.
+func Start(ctx context.Context, connectUrl string, options ...Option) (err error) {
+	return amqpx.Start(ctx, connectUrl, options...)
 }
 
 func Close() error {
@@ -361,13 +375,13 @@ func Close() error {
 
 // Publish a message to a specific exchange with a given routingKey.
 // You may set exchange to "" and routingKey to your queue name in order to publish directly to a queue.
-func Publish(exchange string, routingKey string, msg pool.Publishing) error {
-	return amqpx.Publish(exchange, routingKey, msg)
+func Publish(ctx context.Context, exchange string, routingKey string, msg pool.Publishing) error {
+	return amqpx.Publish(ctx, exchange, routingKey, msg)
 }
 
 // Get is only supposed to be used for testing, do not use get for polling any broker queues.
-func Get(queue string, autoAck bool) (msg pool.Delivery, ok bool, err error) {
-	return amqpx.Get(queue, autoAck)
+func Get(ctx context.Context, queue string, autoAck bool) (msg pool.Delivery, ok bool, err error) {
+	return amqpx.Get(ctx, queue, autoAck)
 }
 
 // Reset closes the current package and resets its state before it was initialized and started.

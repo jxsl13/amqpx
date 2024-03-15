@@ -1,7 +1,6 @@
 package amqpx
 
 import (
-	"context"
 	"crypto/tls"
 	"time"
 
@@ -51,13 +50,6 @@ func WithConnectionTimeout(timeout time.Duration) Option {
 	}
 }
 
-// WithContext allows to set a custom connection timeout, that MUST be >= 1 * time.Second
-func WithContext(ctx context.Context) Option {
-	return func(o *option) {
-		o.PoolOptions = append(o.PoolOptions, pool.WithContext(ctx))
-	}
-}
-
 // WithTLS allows to configure tls connectivity.
 func WithTLS(config *tls.Config) Option {
 	return func(o *option) {
@@ -65,11 +57,11 @@ func WithTLS(config *tls.Config) Option {
 	}
 }
 
-// WithBufferSize allows to configurethe size of
+// WithBufferCapacity allows to configurethe size of
 // the confirmation, error & blocker buffers of all sessions
-func WithBufferSize(size int) Option {
+func WithBufferCapacity(capacity int) Option {
 	return func(o *option) {
-		o.PoolOptions = append(o.PoolOptions, pool.WithBufferSize(size))
+		o.PoolOptions = append(o.PoolOptions, pool.WithBufferCapacity(capacity))
 	}
 }
 
@@ -78,22 +70,6 @@ func WithBufferSize(size int) Option {
 func WithConfirms(requirePublishConfirms bool) Option {
 	return func(o *option) {
 		o.PoolOptions = append(o.PoolOptions, pool.WithConfirms(requirePublishConfirms))
-	}
-}
-
-// WithConfirmTimeout is the timout before another publishing attempt is tried.
-// As the broker did not send any confirmation that our published message arrived.
-func WithConfirmTimeout(timeout time.Duration) Option {
-	return func(o *option) {
-		o.PublisherOptions = append(o.PublisherOptions, pool.PublisherWithConfirmTimeout(timeout))
-	}
-}
-
-// WithPublishTimeout is the timout that we attempt to try sending our message to the broker
-// before aborting. This does not affect the overall time of publishing, as publishing is retried indefinitely.
-func WithPublishTimeout(timeout time.Duration) Option {
-	return func(o *option) {
-		o.PublisherOptions = append(o.PublisherOptions, pool.PublisherWithPublishTimeout(timeout))
 	}
 }
 

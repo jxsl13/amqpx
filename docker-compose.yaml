@@ -4,13 +4,13 @@ services:
   rabbitmq:
     image: docker.io/bitnami/rabbitmq:latest
     ports:
-      - '4369:4369'
-      - '5551:5551'
-      - '5552:5552'
-      #- '5672:5672' # proxied through toxiproxy
-      - '25672:25672'
+      #- '4369:4369'
+      #- '5551:5551'
+      #- '5552:5552'
+      - 127.0.0.1:5671:5672 # healthy rabbitmq
+      #- '25672:25672'
       # user interface
-      - '15672:15672'
+      - '127.0.0.1:15672:15672'
     environment:
       RABBITMQ_NODE_TYPE: stats
       RABBITMQ_USERNAME: admin
@@ -22,14 +22,82 @@ services:
     networks:
       - rabbitnet
 
+  rabbitmq-broken:
+    image: docker.io/bitnami/rabbitmq:latest
+    ports:
+      #- '14369:4369'
+      #- '15551:5551'
+      #- '15552:5552'
+      - 127.0.0.1:5670:5672 # broken rabbitmq
+      #- '35672:25672'
+      # user interface
+      - '127.0.0.1:25672:15672'
+    environment:
+      RABBITMQ_NODE_TYPE: stats
+      RABBITMQ_USERNAME: admin
+      RABBITMQ_PASSWORD: password
+      #RABBITMQ_DISK_FREE_RELATIVE_LIMIT: 100
+      RABBITMQ_VM_MEMORY_HIGH_WATERMARK: 1000
+      # See: https://www.rabbitmq.com/access-control.html#loopback-users
+      RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS: "-rabbit loopback_users []"
+    networks:
+      - rabbitnet
+
   toxiproxy:
-    image: ghcr.io/shopify/toxiproxy:2.5.0
+    image: ghcr.io/shopify/toxiproxy:2.9.0
     command:
       - -host=0.0.0.0
       - -config=/toxiproxy.json
     ports:
-      - 8474:8474
-      - 5672:5672
+      - 127.0.0.1:8474:8474 # toxyproxy port
+      - 127.0.0.1:5672:5672 # rabbitmq-5672
+      - 127.0.0.1:5673:5673 # rabbitmq-5673
+      - 127.0.0.1:5674:5674 # rabbitmq-5674
+      - 127.0.0.1:5675:5675 # rabbitmq-5675
+      - 127.0.0.1:5676:5676 # rabbitmq-5676
+      - 127.0.0.1:5677:5677 # rabbitmq-5677
+      - 127.0.0.1:5678:5678 # rabbitmq-5678
+      - 127.0.0.1:5679:5679 # rabbitmq-5679
+      - 127.0.0.1:5680:5680 # rabbitmq-5680
+      - 127.0.0.1:5681:5681 # rabbitmq-5681
+      - 127.0.0.1:5682:5682 # rabbitmq-5682
+      - 127.0.0.1:5683:5683 # rabbitmq-5683
+      - 127.0.0.1:5684:5684 # rabbitmq-5684
+      - 127.0.0.1:5685:5685 # rabbitmq-5685
+      - 127.0.0.1:5686:5686 # rabbitmq-5686
+      - 127.0.0.1:5687:5687 # rabbitmq-5687
+      - 127.0.0.1:5688:5688 # rabbitmq-5688
+      - 127.0.0.1:5689:5689 # rabbitmq-5689
+      - 127.0.0.1:5690:5690 # rabbitmq-5690
+      - 127.0.0.1:5691:5691 # rabbitmq-5691
+      - 127.0.0.1:5692:5692 # rabbitmq-5692
+      - 127.0.0.1:5693:5693 # rabbitmq-5693
+      - 127.0.0.1:5694:5694 # rabbitmq-5694
+      - 127.0.0.1:5695:5695 # rabbitmq-5695
+      - 127.0.0.1:5696:5696 # rabbitmq-5696
+      - 127.0.0.1:5697:5697 # rabbitmq-5697
+      - 127.0.0.1:5698:5698 # rabbitmq-5698
+      - 127.0.0.1:5699:5699 # rabbitmq-5699
+      - 127.0.0.1:5700:5700 # rabbitmq-5700
+      - 127.0.0.1:5701:5701 # rabbitmq-5701
+      - 127.0.0.1:5702:5702 # rabbitmq-5702
+      - 127.0.0.1:5703:5703 # rabbitmq-5703
+      - 127.0.0.1:5704:5704 # rabbitmq-5704
+      - 127.0.0.1:5705:5705 # rabbitmq-5705
+      - 127.0.0.1:5706:5706 # rabbitmq-5706
+      - 127.0.0.1:5707:5707 # rabbitmq-5707
+      - 127.0.0.1:5708:5708 # rabbitmq-5708
+      - 127.0.0.1:5709:5709 # rabbitmq-5709
+      - 127.0.0.1:5710:5710 # rabbitmq-5710
+      - 127.0.0.1:5711:5711 # rabbitmq-5711
+      - 127.0.0.1:5712:5712 # rabbitmq-5712
+      - 127.0.0.1:5713:5713 # rabbitmq-5713
+      - 127.0.0.1:5714:5714 # rabbitmq-5714
+      - 127.0.0.1:5715:5715 # rabbitmq-5715
+      - 127.0.0.1:5716:5716 # rabbitmq-5716
+      - 127.0.0.1:5717:5717 # rabbitmq-5717
+      - 127.0.0.1:5718:5718 # rabbitmq-5718
+
     networks:
       - rabbitnet
     volumes:

@@ -13,56 +13,9 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func worker(t *testing.T, ctx context.Context, wg *sync.WaitGroup, sc *stateContext) {
-	defer wg.Done()
-
-	log := logging.NewTestLogger(t)
-	defer func() {
-		log.Debug("worker pausing (closing)")
-		sc.Paused()
-		log.Debug("worker paused (closing)")
-		log.Debug("worker closed")
-	}()
-	log.Debug("worker started")
-
-	for {
-		select {
-		case <-ctx.Done():
-			//log.Debug("worker done")
-			return
-		case <-sc.Resuming().Done():
-			//log.Debug("worker resuming")
-			sc.Resumed()
-			go func() {
-				select {
-				case <-ctx.Done():
-					return
-				case <-time.After(time.Second):
-					sc.Pause(ctx) // always have at least one goroutine that triggers the switch back to the other state after a specific time
-				}
-			}()
-			//log.Debug("worker resumed")
-		}
-		select {
-		case <-ctx.Done():
-			return
-		case <-sc.Pausing().Done():
-			//log.Debug("worker pausing")
-			sc.Paused()
-			//log.Debug("worker paused")
-			go func() {
-				select {
-				case <-ctx.Done():
-					return
-				case <-time.After(time.Second):
-					sc.Resume(ctx) // always have at least one goroutine that triggers the switch back to the other state after a specific time
-				}
-			}()
-		}
-	}
-}
-
 func TestStateContextSimpleSynchronized(t *testing.T) {
+	t.Parallel()
+
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, os.Kill)
 	defer cancel()
 
@@ -87,6 +40,8 @@ func TestStateContextSimpleSynchronized(t *testing.T) {
 }
 
 func TestStateContextConcurrentTransitions(t *testing.T) {
+	t.Parallel()
+
 	log := logging.NewTestLogger(t)
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, os.Kill)
 	defer cancel()
@@ -181,4 +136,53 @@ func TestStateContextConcurrentTransitions(t *testing.T) {
 	log.Debugf("active: %d", active.Load())
 	log.Debugf("awaitPaused: %d", awaitPaused.Load())
 	log.Debugf("awaitResumed: %d", awaitResumed.Load())
+}
+
+func worker(t *testing.T, ctx context.Context, wg *sync.WaitGroup, sc *stateContext) {
+	defer wg.Done()
+
+	log := logging.NewTestLogger(t)
+	defer func() {
+		log.Debug("worker pausing (closing)")
+		sc.Paused()
+		log.Debug("worker paused (closing)")
+		log.Debug("worker closed")
+	}()
+	log.Debug("worker started")
+
+	for {
+		select {
+		case <-ctx.Done():
+			//log.Debug("worker done")
+			return
+		case <-sc.Resuming().Done():
+			//log.Debug("worker resuming")
+			sc.Resumed()
+			go func() {
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(time.Second):
+					sc.Pause(ctx) // always have at least one goroutine that triggers the switch back to the other state after a specific time
+				}
+			}()
+			//log.Debug("worker resumed")
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-sc.Pausing().Done():
+			//log.Debug("worker pausing")
+			sc.Paused()
+			//log.Debug("worker paused")
+			go func() {
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(time.Second):
+					sc.Resume(ctx) // always have at least one goroutine that triggers the switch back to the other state after a specific time
+				}
+			}()
+		}
+	}
 }

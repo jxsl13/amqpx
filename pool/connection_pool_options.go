@@ -17,7 +17,7 @@ type connectionPoolOption struct {
 	Name string
 	Ctx  context.Context
 
-	Size int
+	Capacity int
 
 	ConnHeartbeatInterval time.Duration
 	ConnTimeout           time.Duration
@@ -95,16 +95,6 @@ func ConnectionPoolWithConnectionTimeout(timeout time.Duration) ConnectionPoolOp
 	}
 	return func(po *connectionPoolOption) {
 		po.ConnTimeout = timeout
-	}
-}
-
-// ConnectionPoolWithContext allows to set a custom connection timeout, that MUST be >= 1 * time.Second
-func ConnectionPoolWithContext(ctx context.Context) ConnectionPoolOption {
-	if ctx == nil {
-		panic("nil context passed")
-	}
-	return func(po *connectionPoolOption) {
-		po.Ctx = ctx
 	}
 }
 

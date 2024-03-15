@@ -1,6 +1,9 @@
 package pool
 
-import "time"
+import (
+	"context"
+	"time"
+)
 
 // closeTimer should be used as a deferred function
 // in order to cleanly shut down a timer
@@ -29,4 +32,10 @@ func resetTimer(timer *time.Timer, duration time.Duration, drained *bool) {
 	}
 	timer.Reset(duration)
 	*drained = false
+}
+
+func toCancelFunc(err error, ccf context.CancelCauseFunc) context.CancelFunc {
+	return func() {
+		ccf(err)
+	}
 }
