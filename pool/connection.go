@@ -154,12 +154,6 @@ func (ch *Connection) Close() (err error) {
 	return nil
 }
 
-// flush all internal channels
-func (ch *Connection) flush() {
-	flush(ch.errors)
-	flush(ch.blocking)
-}
-
 // Flag flags the connection as broken which must be recovered.
 // A flagged connection implies a closed connection.
 // Flagging of a connectioncan only be undone by Recover-ing the connection.
@@ -228,7 +222,6 @@ func (ch *Connection) connect(ctx context.Context) error {
 func (ch *Connection) BlockingFlowControl() <-chan amqp.Blocking {
 	ch.mu.Lock()
 	defer ch.mu.Unlock()
-
 	return ch.blocking
 }
 
@@ -307,8 +300,6 @@ func (ch *Connection) recover(ctx context.Context) (err error) {
 	if healthy {
 		return nil
 	}
-	// flush all channels after recovery
-	defer ch.flush()
 
 	var (
 		timer   = time.NewTimer(0)
