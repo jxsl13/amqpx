@@ -18,7 +18,9 @@ import (
 
 ]
 */
-func TestGenerateProxyConfig(_ *testing.T) {
+func TestGenerateProxyConfig(t *testing.T) {
+	t.Parallel()
+
 	list := []struct {
 		Name     string `json:"name"`
 		Listen   string `json:"listen"`
@@ -47,7 +49,9 @@ func TestGenerateProxyConfig(_ *testing.T) {
 	fmt.Println(string(data))
 }
 
-func TestGenerateDockerPortForwards(_ *testing.T) {
+func TestGenerateDockerPortForwards(t *testing.T) {
+	t.Parallel()
+
 	nextConnectURL := NewConnectURLGenerator(ExcludedPorts...)
 
 	str := ""

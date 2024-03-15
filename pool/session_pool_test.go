@@ -13,7 +13,7 @@ import (
 )
 
 func TestSingleSessionPool(t *testing.T) {
-
+	t.Parallel()
 	var (
 		poolName    = testutils.FuncName()
 		ctx         = context.TODO()
@@ -55,7 +55,7 @@ func TestSingleSessionPool(t *testing.T) {
 }
 
 func TestNewSessionPool(t *testing.T) {
-
+	t.Parallel()
 	var (
 		poolName    = testutils.FuncName()
 		ctx         = context.TODO()

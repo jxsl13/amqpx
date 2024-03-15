@@ -14,7 +14,7 @@ import (
 )
 
 func TestNewSingleSessionPublishAndConsume(t *testing.T) {
-
+	t.Parallel()
 	var (
 		ctx                     = context.TODO()
 		wg                      sync.WaitGroup
@@ -75,7 +75,7 @@ func TestNewSingleSessionPublishAndConsume(t *testing.T) {
 }
 
 func TestManyNewSessionsPublishAndConsume(t *testing.T) {
-
+	t.Parallel()
 	var (
 		ctx             = context.TODO()
 		wg              sync.WaitGroup
@@ -138,7 +138,7 @@ func TestManyNewSessionsPublishAndConsume(t *testing.T) {
 }
 
 func TestNewSessionQueueDeclarePassive(t *testing.T) {
-
+	t.Parallel()
 	var (
 		ctx             = context.TODO()
 		wg              sync.WaitGroup
@@ -211,7 +211,7 @@ func TestNewSessionQueueDeclarePassive(t *testing.T) {
 }
 
 func TestNewSessionExchangeDeclareWithDisconnect(t *testing.T) {
-
+	t.Parallel()
 	var (
 		ctx                      = context.TODO()
 		proxyName, connectURL, _ = testutils.NextConnectURL()
@@ -263,7 +263,7 @@ func TestNewSessionExchangeDeclareWithDisconnect(t *testing.T) {
 }
 
 func TestNewSessionExchangeDeleteWithDisconnect(t *testing.T) {
-
+	t.Parallel()
 	var (
 		ctx                      = context.TODO()
 		proxyName, connectURL, _ = testutils.NextConnectURL()
@@ -316,7 +316,7 @@ func TestNewSessionExchangeDeleteWithDisconnect(t *testing.T) {
 }
 
 func TestNewSessionQueueDeclareWithDisconnect(t *testing.T) {
-
+	t.Parallel()
 	var (
 		ctx                      = context.TODO()
 		proxyName, connectURL, _ = testutils.NextConnectURL()
@@ -371,7 +371,7 @@ func TestNewSessionQueueDeclareWithDisconnect(t *testing.T) {
 }
 
 func TestNewSessionQueueDeleteWithDisconnect(t *testing.T) {
-
+	t.Parallel()
 	var (
 		ctx                      = context.TODO()
 		proxyName, connectURL, _ = testutils.NextConnectURL()
@@ -424,7 +424,7 @@ func TestNewSessionQueueDeleteWithDisconnect(t *testing.T) {
 }
 
 func TestNewSessionQueueBindWithDisconnect(t *testing.T) {
-
+	t.Parallel()
 	var (
 		ctx                      = context.TODO()
 		proxyName, connectURL, _ = testutils.NextConnectURL()
@@ -497,7 +497,7 @@ func TestNewSessionQueueBindWithDisconnect(t *testing.T) {
 }
 
 func TestNewSessionQueueUnbindWithDisconnect(t *testing.T) {
-
+	t.Parallel()
 	var (
 		ctx                      = context.TODO()
 		proxyName, connectURL, _ = testutils.NextConnectURL()
@@ -573,7 +573,7 @@ func TestNewSessionQueueUnbindWithDisconnect(t *testing.T) {
 }
 
 func TestNewSessionPublishWithDisconnect(t *testing.T) {
-
+	t.Parallel()
 	var (
 		proxyName, connectURL, _ = testutils.NextConnectURL()
 		ctx                      = context.TODO()
@@ -626,7 +626,7 @@ func TestNewSessionPublishWithDisconnect(t *testing.T) {
 }
 
 func TestNewSessionConsumeWithDisconnect(t *testing.T) {
-
+	t.Parallel()
 	var (
 		proxyName, connectURL, _ = testutils.NextConnectURL()
 		ctx                      = context.TODO()
@@ -679,9 +679,9 @@ func TestNewSessionConsumeWithDisconnect(t *testing.T) {
 }
 
 /*
-// FIXME: ou of memory tests are disabled until https://github.com/rabbitmq/amqp091-go/issues/253 is resolved
+// FIXME: out of memory tests are disabled until https://github.com/rabbitmq/amqp091-go/issues/253 is resolved
 func TestChannelFullChainOnOutOfMemoryRabbitMQ(t *testing.T) {
-
+	t.Parallel()
 
 	var (
 		ctx              = context.TODO()
@@ -837,7 +837,7 @@ func TestChannelFullChainOnOutOfMemoryRabbitMQ(t *testing.T) {
 */
 
 func TestChannelCloseWithDisconnect(t *testing.T) {
-
+	t.Parallel()
 	var (
 		proxyName, connectURL, _  = testutils.NextConnectURL()
 		disconnected, reconnected = Disconnect(t, proxyName, 5*time.Second)
@@ -865,7 +865,7 @@ func TestChannelCloseWithDisconnect(t *testing.T) {
 }
 
 func TestNewSingleSessionCloseWithDisconnect(t *testing.T) {
-
+	t.Parallel()
 	var (
 		ctx                       = context.TODO()
 		nextConnName              = testutils.ConnectionNameGenerator()
@@ -914,8 +914,7 @@ func TestNewSingleSessionCloseWithDisconnect(t *testing.T) {
 /*
 // FIXME: out of memory tests are disabled until https://github.com/rabbitmq/amqp091-go/issues/253 is resolved
 func TestNewSingleSessionCloseWithOutOfMemoryRabbitMQ(t *testing.T) {
-
-
+	t.Parallel()
 	var (
 		ctx              = context.TODO()
 		log              = logging.NewTestLogger(t)
@@ -986,7 +985,7 @@ func TestNewSingleSessionCloseWithOutOfMemoryRabbitMQ(t *testing.T) {
 */
 
 func TestNewSingleSessionCloseWithHealthyRabbitMQ(t *testing.T) {
-
+	t.Parallel()
 	var (
 		ctx              = context.TODO()
 		log              = logging.NewTestLogger(t)

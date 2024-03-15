@@ -13,7 +13,7 @@ import (
 )
 
 func TestNewSingleConnectionPool(t *testing.T) {
-	t.Parallel() // can be run in parallel because the connection to the rabbitmq is never broken
+	t.Parallel()
 
 	poolName := testutils.FuncName()
 	ctx := context.TODO()
@@ -49,7 +49,7 @@ func TestNewSingleConnectionPool(t *testing.T) {
 }
 
 func TestNewConnectionPool(t *testing.T) {
-	t.Parallel() // can be run in parallel because the connection to the rabbitmq is never broken
+	t.Parallel()
 
 	poolName := testutils.FuncName()
 

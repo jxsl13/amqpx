@@ -71,7 +71,7 @@ jobs:
       run: docker-compose up -d
 
     - name: Code Coverage
-      run: go test -timeout 900s -race -count=1 -covermode=atomic -coverprofile=coverage.txt ./...
+      run: go test -timeout 900s -race -count=1 -parallel 1 -covermode=atomic -coverprofile=coverage.txt ./...
 
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v4

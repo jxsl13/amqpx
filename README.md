@@ -194,6 +194,9 @@ A `Subscriber` must be `Start()`ed in order for it to create consumer goroutines
 
 ## Development
 
+Tests can all be run in parallel but the parallel testing is disabled for now because of the GitHub runners starting to behave weirdly when under such a load.
+That is why those tests were disabled for the CI pipeline.
+
 Test flags you might want to add:
 ```shell
 go test -v -race -count=1 ./...

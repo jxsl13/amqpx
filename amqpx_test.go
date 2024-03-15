@@ -21,7 +21,7 @@ func TestMain(m *testing.M) {
 }
 
 func TestExchangeDeclarePassive(t *testing.T) {
-
+	t.Parallel()
 	var (
 		amqp             = amqpx.New()
 		ctx              = context.TODO()
@@ -55,7 +55,7 @@ func TestExchangeDeclarePassive(t *testing.T) {
 }
 
 func TestQueueDeclarePassive(t *testing.T) {
-
+	t.Parallel()
 	var (
 		amqp          = amqpx.New()
 		ctx           = context.TODO()
@@ -89,7 +89,7 @@ func TestQueueDeclarePassive(t *testing.T) {
 }
 
 func TestAMQPXPub(t *testing.T) {
-
+	t.Parallel()
 	var (
 		amqp     = amqpx.New()
 		ctx      = context.TODO()
@@ -161,7 +161,7 @@ func TestAMQPXPub(t *testing.T) {
 }
 
 func TestAMQPXSubAndPub(t *testing.T) {
-
+	t.Parallel()
 	var (
 		amqp              = amqpx.New()
 		log               = logging.NewTestLogger(t)
@@ -224,7 +224,7 @@ func TestAMQPXSubAndPub(t *testing.T) {
 }
 
 func TestAMQPXSubAndPubMulti(t *testing.T) {
-
+	t.Parallel()
 	var (
 		amqp              = amqpx.New()
 		log               = logging.NewTestLogger(t)
@@ -319,7 +319,7 @@ func TestAMQPXSubAndPubMulti(t *testing.T) {
 }
 
 func TestAMQPXSubHandler(t *testing.T) {
-
+	t.Parallel()
 	var (
 		amqp              = amqpx.New()
 		log               = logging.NewTestLogger(t)
@@ -384,7 +384,7 @@ func TestAMQPXSubHandler(t *testing.T) {
 }
 
 func TestCreateDeleteTopology(t *testing.T) {
-
+	t.Parallel()
 	var (
 		amqp              = amqpx.New()
 		log               = logging.NewTestLogger(t)
@@ -414,7 +414,7 @@ func TestCreateDeleteTopology(t *testing.T) {
 }
 
 func TestPauseResumeHandlerNoProcessing(t *testing.T) {
-
+	t.Parallel()
 	var (
 		amqp          = amqpx.New()
 		log           = logging.NewTestLogger(t)
@@ -484,7 +484,7 @@ func TestPauseResumeHandlerNoProcessing(t *testing.T) {
 }
 
 func TestHandlerPauseAndResume(t *testing.T) {
-
+	t.Parallel()
 	var wg sync.WaitGroup
 	defer wg.Wait()
 
@@ -647,7 +647,7 @@ func testHandlerPauseAndResume(t *testing.T, i int) {
 }
 
 func TestBatchHandlerPauseAndResume(t *testing.T) {
-
+	t.Parallel()
 	var wg sync.WaitGroup
 	defer wg.Wait()
 	for i := 0; i < 10; i++ {
@@ -808,7 +808,7 @@ func testBatchHandlerPauseAndResume(t *testing.T, i int) {
 }
 
 func TestQueueDeletedConsumerReconnect(t *testing.T) {
-
+	t.Parallel()
 	var (
 		err           error
 		amqp          = amqpx.New()
@@ -882,7 +882,7 @@ func TestQueueDeletedConsumerReconnect(t *testing.T) {
 }
 
 func TestQueueDeletedBatchConsumerReconnect(t *testing.T) {
-
+	t.Parallel()
 	var (
 		err           error
 		amqp          = amqpx.New()
@@ -977,7 +977,7 @@ type handlerStats interface {
 }
 
 func TestHandlerReset(t *testing.T) {
-
+	t.Parallel()
 	for i := 0; i < 5; i++ {
 		testHandlerReset(t, i)
 	}
@@ -1073,7 +1073,7 @@ func testHandlerReset(t *testing.T, i int) {
 }
 
 func TestBatchHandlerReset(t *testing.T) {
-
+	t.Parallel()
 	for i := 0; i < 5; i++ {
 		testBatchHandlerReset(t, i)
 	}

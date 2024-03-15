@@ -14,7 +14,7 @@ import (
 )
 
 func TestNewSingleSubscriber(t *testing.T) {
-
+	t.Parallel()
 	var (
 		ctx          = context.TODO()
 		nextPoolName = testutils.PoolNameGenerator(testutils.FuncName())
@@ -53,7 +53,7 @@ func TestNewSingleSubscriber(t *testing.T) {
 }
 
 func TestNewSingleSubscriberWithDisconnect(t *testing.T) {
-
+	t.Parallel()
 	var (
 		ctx                       = context.TODO()
 		nextPoolName              = testutils.PoolNameGenerator(testutils.FuncName())
@@ -97,7 +97,7 @@ func TestNewSingleSubscriberWithDisconnect(t *testing.T) {
 }
 
 func TestNewSingleBatchSubscriber(t *testing.T) {
-
+	t.Parallel()
 	var (
 		ctx          = context.TODO()
 		nextPoolName = testutils.PoolNameGenerator(testutils.FuncName())

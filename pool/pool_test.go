@@ -17,7 +17,7 @@ func TestMain(m *testing.M) {
 }
 
 func TestNewPool(t *testing.T) {
-
+	t.Parallel()
 	var (
 		ctx         = context.TODO()
 		poolName    = testutils.FuncName()

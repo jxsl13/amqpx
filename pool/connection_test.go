@@ -13,7 +13,7 @@ import (
 )
 
 func TestNewSingleConnection(t *testing.T) {
-
+	t.Parallel()
 	var (
 		ctx      = context.TODO()
 		nextName = testutils.ConnectionNameGenerator()
@@ -36,7 +36,7 @@ func TestNewSingleConnection(t *testing.T) {
 }
 
 func TestManyNewConnection(t *testing.T) {
-
+	t.Parallel()
 	var (
 		ctx         = context.TODO()
 		wg          sync.WaitGroup
@@ -73,6 +73,7 @@ func TestManyNewConnection(t *testing.T) {
 }
 
 func TestNewSingleConnectionWithDisconnect(t *testing.T) {
+	t.Parallel()
 	var (
 		ctx                      = context.TODO()
 		proxyName, connectURL, _ = testutils.NextConnectURL()

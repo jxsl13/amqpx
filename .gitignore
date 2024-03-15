@@ -5,3 +5,4 @@ coverage.txt
 DEBUG.md
 debug.md
 __debug_bin*
+*.log
