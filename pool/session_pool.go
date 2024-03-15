@@ -76,9 +76,9 @@ func newSessionPoolFromOption(pool *ConnectionPool, ctx context.Context, option 
 		pool:              pool,
 		autoCloseConnPool: option.AutoClosePool,
 
-		capacity:       option.Capacity,
 		bufferCapacity: option.BufferCapacity,
 		confirmable:    option.Confirmable,
+		capacity:       option.Capacity,
 		sessions:       make(chan *Session, option.Capacity),
 
 		ctx:    ctx,
@@ -169,7 +169,7 @@ func (sp *SessionPool) Capacity() int {
 
 // GetSession gets a pooled session.
 // blocks until a session is acquired from the pool.
-func (sp *SessionPool) GetSession(ctx context.Context) (*Session, error) {
+func (sp *SessionPool) GetSession(ctx context.Context) (s *Session, err error) {
 	select {
 	case <-sp.catchShutdown():
 		return nil, sp.shutdownErr()
@@ -179,6 +179,13 @@ func (sp *SessionPool) GetSession(ctx context.Context) (*Session, error) {
 		if !ok {
 			return nil, fmt.Errorf("failed to get session: %w", ErrClosed)
 		}
+		defer func() {
+			// it's possible for the recovery to fail
+			// in that case we MUST return the session back to the pool
+			if err != nil {
+				sp.ReturnSession(session, err)
+			}
+		}()
 
 		err := session.Recover(ctx)
 		if err != nil {
@@ -191,14 +198,23 @@ func (sp *SessionPool) GetSession(ctx context.Context) (*Session, error) {
 // GetTransientSession returns a transient session.
 // This method may return an error when the context ha sbeen closed before a session could be obtained.
 // A transient session creates a transient connection under the hood.
-func (sp *SessionPool) GetTransientSession(ctx context.Context) (*Session, error) {
+func (sp *SessionPool) GetTransientSession(ctx context.Context) (s *Session, err error) {
 	conn, err := sp.pool.GetTransientConnection(ctx)
 	if err != nil {
 		return nil, err
 	}
+	defer func() {
+		if err != nil {
+			sp.pool.ReturnConnection(conn, err)
+		}
+	}()
 
 	transientID := atomic.AddInt64(&sp.transientID, 1)
-	return sp.deriveSession(ctx, conn, int(transientID))
+	s, err = sp.deriveSession(ctx, conn, int(transientID))
+	if err != nil {
+		return nil, err
+	}
+	return s, nil
 }
 
 func (sp *SessionPool) deriveSession(ctx context.Context, conn *Connection, id int) (*Session, error) {

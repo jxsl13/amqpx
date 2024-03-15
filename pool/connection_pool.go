@@ -159,17 +159,25 @@ func (cp *ConnectionPool) deriveConnection(ctx context.Context, id int64, cached
 }
 
 // GetConnection only returns an error upon shutdown
-func (cp *ConnectionPool) GetConnection(ctx context.Context) (*Connection, error) {
+func (cp *ConnectionPool) GetConnection(ctx context.Context) (conn *Connection, err error) {
 	select {
 	case conn, ok := <-cp.connections:
 		if !ok {
 			return nil, fmt.Errorf("connection pool %w", ErrClosed)
 		}
-		if conn.IsFlagged() {
-			err := conn.Recover(ctx)
+
+		// recovery may fail, that's why we MUST check for errors
+		// and return the connection back to the pool in case that the recovery failed
+		// due to e.g. the pool being closed, the context being canceled, etc.
+		defer func() {
 			if err != nil {
-				return nil, fmt.Errorf("failed to get connection: %w", err)
+				cp.ReturnConnection(conn, err)
 			}
+		}()
+
+		err = conn.Recover(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get connection: %w", err)
 		}
 
 		return conn, nil
@@ -189,11 +197,16 @@ func (cp *ConnectionPool) nextTransientID() int64 {
 
 // GetTransientConnection may return an error when the context was cancelled before the connection could be obtained.
 // Transient connections may be returned to the pool. The are closed properly upon returning.
-func (cp *ConnectionPool) GetTransientConnection(ctx context.Context) (_ *Connection, err error) {
-	conn, err := cp.deriveConnection(ctx, cp.nextTransientID(), false)
+func (cp *ConnectionPool) GetTransientConnection(ctx context.Context) (conn *Connection, err error) {
+	conn, err = cp.deriveConnection(ctx, cp.nextTransientID(), false)
 	if err == nil {
 		return conn, nil
 	}
+	defer func() {
+		if err != nil {
+			_ = conn.Close()
+		}
+	}()
 
 	// recover until context is closed
 	err = conn.Recover(ctx)
