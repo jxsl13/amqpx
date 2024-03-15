@@ -62,7 +62,7 @@ func TestNewSessionPool(t *testing.T) {
 		poolName    = testutils.FuncName()
 		ctx         = context.TODO()
 		connections = 1
-		sessions    = 10
+		sessions    = 100
 	)
 	p, err := pool.NewConnectionPool(ctx,
 		testutils.HealthyConnectURL,
@@ -74,11 +74,11 @@ func TestNewSessionPool(t *testing.T) {
 		assert.NoError(t, err)
 		return
 	}
+	defer p.Close()
 
 	sp, err := pool.NewSessionPool(
 		p,
 		sessions,
-		pool.SessionPoolWithAutoCloseConnectionPool(true),
 	)
 	if err != nil {
 		assert.NoError(t, err)
@@ -97,7 +97,7 @@ func TestNewSessionPool(t *testing.T) {
 				assert.NoError(t, err)
 				return
 			}
-			time.Sleep(testutils.Jitter(1*time.Second, 5*time.Second))
+			time.Sleep(testutils.Jitter(10*time.Millisecond, 30*time.Millisecond))
 			sp.ReturnSession(s, nil)
 		}()
 	}
