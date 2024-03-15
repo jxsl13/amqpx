@@ -72,7 +72,8 @@ func newSessionPoolFromOption(pool *ConnectionPool, ctx context.Context, option 
 	ctx, cc := context.WithCancelCause(ctx)
 	cancel := toCancelFunc(fmt.Errorf("session pool %w", ErrClosed), cc)
 
-	sp = &SessionPool{
+	// DO NOT rename this variable to sp
+	sessionPool := &SessionPool{
 		pool:              pool,
 		autoCloseConnPool: option.AutoClosePool,
 
@@ -106,21 +107,21 @@ func newSessionPoolFromOption(pool *ConnectionPool, ctx context.Context, option 
 		FlowRetryCallback:                   option.FlowRetryCallback,
 	}
 
-	sp.debug("initializing pool sessions...")
+	sessionPool.debug("initializing pool sessions...")
 	defer func() {
 		if err != nil {
-			sp.error(err, "failed to initialize pool sessions")
+			sessionPool.error(err, "failed to initialize pool sessions")
 		} else {
-			sp.info("initialized")
+			sessionPool.info("initialized")
 		}
 	}()
 
-	err = sp.initCachedSessions()
+	err = sessionPool.initCachedSessions()
 	if err != nil {
 		return nil, err
 	}
 
-	return sp, nil
+	return sessionPool, nil
 }
 
 func (sp *SessionPool) initCachedSessions() error {
