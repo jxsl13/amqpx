@@ -14,7 +14,6 @@ import (
 )
 
 func TestNewSingleSessionPublishAndConsume(t *testing.T) {
-	t.Parallel() // can be run in parallel because the connection to the rabbitmq is never broken
 
 	var (
 		ctx                     = context.TODO()
@@ -76,7 +75,6 @@ func TestNewSingleSessionPublishAndConsume(t *testing.T) {
 }
 
 func TestManyNewSessionsPublishAndConsume(t *testing.T) {
-	t.Parallel() // can be run in parallel because the connection to the rabbitmq is never broken
 
 	var (
 		ctx             = context.TODO()
@@ -140,7 +138,6 @@ func TestManyNewSessionsPublishAndConsume(t *testing.T) {
 }
 
 func TestNewSessionQueueDeclarePassive(t *testing.T) {
-	t.Parallel() // can be run in parallel because the connection to the rabbitmq is never broken
 
 	var (
 		ctx             = context.TODO()
@@ -214,7 +211,6 @@ func TestNewSessionQueueDeclarePassive(t *testing.T) {
 }
 
 func TestNewSessionExchangeDeclareWithDisconnect(t *testing.T) {
-	t.Parallel()
 
 	var (
 		ctx                      = context.TODO()
@@ -267,7 +263,6 @@ func TestNewSessionExchangeDeclareWithDisconnect(t *testing.T) {
 }
 
 func TestNewSessionExchangeDeleteWithDisconnect(t *testing.T) {
-	t.Parallel()
 
 	var (
 		ctx                      = context.TODO()
@@ -321,7 +316,6 @@ func TestNewSessionExchangeDeleteWithDisconnect(t *testing.T) {
 }
 
 func TestNewSessionQueueDeclareWithDisconnect(t *testing.T) {
-	t.Parallel()
 
 	var (
 		ctx                      = context.TODO()
@@ -377,7 +371,6 @@ func TestNewSessionQueueDeclareWithDisconnect(t *testing.T) {
 }
 
 func TestNewSessionQueueDeleteWithDisconnect(t *testing.T) {
-	t.Parallel()
 
 	var (
 		ctx                      = context.TODO()
@@ -431,7 +424,6 @@ func TestNewSessionQueueDeleteWithDisconnect(t *testing.T) {
 }
 
 func TestNewSessionQueueBindWithDisconnect(t *testing.T) {
-	t.Parallel()
 
 	var (
 		ctx                      = context.TODO()
@@ -505,7 +497,6 @@ func TestNewSessionQueueBindWithDisconnect(t *testing.T) {
 }
 
 func TestNewSessionQueueUnbindWithDisconnect(t *testing.T) {
-	t.Parallel()
 
 	var (
 		ctx                      = context.TODO()
@@ -582,7 +573,6 @@ func TestNewSessionQueueUnbindWithDisconnect(t *testing.T) {
 }
 
 func TestNewSessionPublishWithDisconnect(t *testing.T) {
-	t.Parallel()
 
 	var (
 		proxyName, connectURL, _ = testutils.NextConnectURL()
@@ -636,7 +626,6 @@ func TestNewSessionPublishWithDisconnect(t *testing.T) {
 }
 
 func TestNewSessionConsumeWithDisconnect(t *testing.T) {
-	t.Parallel()
 
 	var (
 		proxyName, connectURL, _ = testutils.NextConnectURL()
@@ -692,7 +681,7 @@ func TestNewSessionConsumeWithDisconnect(t *testing.T) {
 /*
 // FIXME: ou of memory tests are disabled until https://github.com/rabbitmq/amqp091-go/issues/253 is resolved
 func TestChannelFullChainOnOutOfMemoryRabbitMQ(t *testing.T) {
-	t.Parallel()
+
 
 	var (
 		ctx              = context.TODO()
@@ -848,7 +837,6 @@ func TestChannelFullChainOnOutOfMemoryRabbitMQ(t *testing.T) {
 */
 
 func TestChannelCloseWithDisconnect(t *testing.T) {
-	t.Parallel()
 
 	var (
 		proxyName, connectURL, _  = testutils.NextConnectURL()
@@ -877,7 +865,6 @@ func TestChannelCloseWithDisconnect(t *testing.T) {
 }
 
 func TestNewSingleSessionCloseWithDisconnect(t *testing.T) {
-	t.Parallel() // can be run in parallel because the connection to the rabbitmq is never broken
 
 	var (
 		ctx                       = context.TODO()
@@ -927,7 +914,7 @@ func TestNewSingleSessionCloseWithDisconnect(t *testing.T) {
 /*
 // FIXME: out of memory tests are disabled until https://github.com/rabbitmq/amqp091-go/issues/253 is resolved
 func TestNewSingleSessionCloseWithOutOfMemoryRabbitMQ(t *testing.T) {
-	t.Parallel() // can be run in parallel because the connection to the rabbitmq is never broken
+
 
 	var (
 		ctx              = context.TODO()
@@ -999,7 +986,6 @@ func TestNewSingleSessionCloseWithOutOfMemoryRabbitMQ(t *testing.T) {
 */
 
 func TestNewSingleSessionCloseWithHealthyRabbitMQ(t *testing.T) {
-	t.Parallel() // can be run in parallel because the connection to the rabbitmq is never broken
 
 	var (
 		ctx              = context.TODO()

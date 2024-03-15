@@ -21,7 +21,6 @@ func TestMain(m *testing.M) {
 }
 
 func TestExchangeDeclarePassive(t *testing.T) {
-	t.Parallel()
 
 	var (
 		amqp             = amqpx.New()
@@ -56,7 +55,6 @@ func TestExchangeDeclarePassive(t *testing.T) {
 }
 
 func TestQueueDeclarePassive(t *testing.T) {
-	t.Parallel()
 
 	var (
 		amqp          = amqpx.New()
@@ -91,7 +89,6 @@ func TestQueueDeclarePassive(t *testing.T) {
 }
 
 func TestAMQPXPub(t *testing.T) {
-	t.Parallel()
 
 	var (
 		amqp     = amqpx.New()
@@ -164,7 +161,6 @@ func TestAMQPXPub(t *testing.T) {
 }
 
 func TestAMQPXSubAndPub(t *testing.T) {
-	t.Parallel()
 
 	var (
 		amqp              = amqpx.New()
@@ -228,7 +224,6 @@ func TestAMQPXSubAndPub(t *testing.T) {
 }
 
 func TestAMQPXSubAndPubMulti(t *testing.T) {
-	t.Parallel()
 
 	var (
 		amqp              = amqpx.New()
@@ -324,7 +319,6 @@ func TestAMQPXSubAndPubMulti(t *testing.T) {
 }
 
 func TestAMQPXSubHandler(t *testing.T) {
-	t.Parallel()
 
 	var (
 		amqp              = amqpx.New()
@@ -390,7 +384,6 @@ func TestAMQPXSubHandler(t *testing.T) {
 }
 
 func TestCreateDeleteTopology(t *testing.T) {
-	t.Parallel()
 
 	var (
 		amqp              = amqpx.New()
@@ -421,7 +414,6 @@ func TestCreateDeleteTopology(t *testing.T) {
 }
 
 func TestPauseResumeHandlerNoProcessing(t *testing.T) {
-	t.Parallel()
 
 	var (
 		amqp          = amqpx.New()
@@ -492,7 +484,6 @@ func TestPauseResumeHandlerNoProcessing(t *testing.T) {
 }
 
 func TestHandlerPauseAndResume(t *testing.T) {
-	t.Parallel()
 
 	var wg sync.WaitGroup
 	defer wg.Wait()
@@ -656,7 +647,6 @@ func testHandlerPauseAndResume(t *testing.T, i int) {
 }
 
 func TestBatchHandlerPauseAndResume(t *testing.T) {
-	t.Parallel()
 
 	var wg sync.WaitGroup
 	defer wg.Wait()
@@ -818,7 +808,6 @@ func testBatchHandlerPauseAndResume(t *testing.T, i int) {
 }
 
 func TestQueueDeletedConsumerReconnect(t *testing.T) {
-	t.Parallel()
 
 	var (
 		err           error
@@ -893,7 +882,6 @@ func TestQueueDeletedConsumerReconnect(t *testing.T) {
 }
 
 func TestQueueDeletedBatchConsumerReconnect(t *testing.T) {
-	t.Parallel()
 
 	var (
 		err           error
@@ -989,7 +977,6 @@ type handlerStats interface {
 }
 
 func TestHandlerReset(t *testing.T) {
-	t.Parallel()
 
 	for i := 0; i < 5; i++ {
 		testHandlerReset(t, i)
@@ -1086,7 +1073,6 @@ func testHandlerReset(t *testing.T, i int) {
 }
 
 func TestBatchHandlerReset(t *testing.T) {
-	t.Parallel()
 
 	for i := 0; i < 5; i++ {
 		testBatchHandlerReset(t, i)
