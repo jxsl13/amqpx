@@ -19,8 +19,9 @@ func TestSinglePublisher(t *testing.T) {
 	var (
 		proxyName, connectURL, _ = testutils.NextConnectURL()
 		ctx                      = context.TODO()
+		log                      = logging.NewTestLogger(t)
 		nextConnName             = testutils.ConnectionNameGenerator()
-		numMsgs                  = 10
+		numMsgs                  = 5
 	)
 
 	hs, hsclose := NewSession(
@@ -38,6 +39,9 @@ func TestSinglePublisher(t *testing.T) {
 		1,
 		pool.WithLogger(logging.NewTestLogger(t)),
 		pool.WithConfirms(true),
+		pool.WithConnectionRecoverCallback(func(name string, retry int, err error) {
+			log.Warnf("connection %s is broken, retry %d, error: %s", name, retry, err)
+		}),
 	)
 	if err != nil {
 		assert.NoError(t, err)

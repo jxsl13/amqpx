@@ -98,6 +98,7 @@ func TestNewConnectionPoolWithDisconnect(t *testing.T) {
 
 	var (
 		ctx                      = context.TODO()
+		log                      = logging.NewTestLogger(t)
 		poolName                 = testutils.FuncName()
 		proxyName, connectURL, _ = testutils.NextConnectURL()
 	)
@@ -109,6 +110,9 @@ func TestNewConnectionPoolWithDisconnect(t *testing.T) {
 		connections,
 		pool.ConnectionPoolWithName(poolName),
 		pool.ConnectionPoolWithLogger(logging.NewTestLogger(t)),
+		pool.ConnectionPoolWithRecoverCallback(func(name string, retry int, err error) {
+			log.Warnf("recovering connection %s, attempt %d, error: %v", name, retry, err)
+		}),
 	)
 	if err != nil {
 		assert.NoError(t, err)
