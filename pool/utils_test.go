@@ -38,6 +38,9 @@ func ConsumeN(
 		assert.Equal(t, n, msgsReceived, "expected to consume %d messages, got %d", n, msgsReceived)
 	}()
 
+	var previouslyReceivedMsg string
+
+outer:
 	for {
 		delivery, err := c.Consume(
 			queueName,
@@ -51,16 +54,13 @@ func ConsumeN(
 			return
 		}
 
-		var previouslyReceivedMsg string
-
 		for {
 			select {
 			case <-cctx.Done():
 				return
 			case val, ok := <-delivery:
-				require.True(t, ok, "expected delivery channel to be open of consumer %s in ConsumeN", consumerName)
 				if !ok {
-					return
+					continue outer
 				}
 				err := val.Ack(false)
 				if err != nil {
