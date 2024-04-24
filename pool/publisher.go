@@ -62,6 +62,31 @@ func NewPublisher(p *Pool, options ...PublisherOption) *Publisher {
 	return pub
 }
 
+// Publishes a batch of messages.
+// Each messages can be published to a different exchange and routing key.
+func (p *Publisher) PublishBatch(ctx context.Context, msgs []BatchPublishing) error {
+	for {
+		err := p.publishBatch(ctx, msgs)
+		switch {
+		case err == nil:
+			return nil
+		case errors.Is(err, ErrNack):
+			return err
+		case errors.Is(err, ErrDeliveryTagMismatch):
+			return err
+		default:
+			if recoverable(err) {
+				for _, msg := range msgs {
+					p.warn(msg.Exchange, msg.RoutingKey, err, "publish failed due to recoverable error, retrying")
+				}
+				// retry
+			} else {
+				return err
+			}
+		}
+	}
+}
+
 // Publish a message to a specific exchange with a given routingKey.
 // You may set exchange to "" and routingKey to your queue name in order to publish directly to a queue.
 func (p *Publisher) Publish(ctx context.Context, exchange string, routingKey string, msg Publishing) error {
@@ -86,6 +111,39 @@ func (p *Publisher) Publish(ctx context.Context, exchange string, routingKey str
 	}
 }
 
+func (p *Publisher) publishBatch(ctx context.Context, msgs []BatchPublishing) (err error) {
+	defer func() {
+		if err != nil {
+			for _, msg := range msgs {
+				p.warn(msg.Exchange, msg.RoutingKey, err, "failed to publish message")
+			}
+		} else {
+			for _, msg := range msgs {
+				p.info(msg.Exchange, msg.RoutingKey, "published a message")
+			}
+		}
+	}()
+
+	s, err := p.pool.GetSession(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		p.pool.ReturnSession(s, err)
+	}()
+
+	confirm, err := s.PublishBatch(ctx, msgs)
+	if err != nil {
+		return err
+	}
+
+	if !s.IsConfirmable() {
+		return nil
+	}
+
+	return confirm.Wait(ctx)
+}
+
 func (p *Publisher) publish(ctx context.Context, exchange string, routingKey string, msg Publishing) (err error) {
 	defer func() {
 		if err != nil {
@@ -103,7 +161,7 @@ func (p *Publisher) publish(ctx context.Context, exchange string, routingKey str
 		p.pool.ReturnSession(s, err)
 	}()
 
-	tag, err := s.Publish(ctx, exchange, routingKey, msg)
+	confirm, err := s.Publish(ctx, exchange, routingKey, msg)
 	if err != nil {
 		return err
 	}
@@ -112,7 +170,7 @@ func (p *Publisher) publish(ctx context.Context, exchange string, routingKey str
 		return nil
 	}
 
-	return s.AwaitConfirm(ctx, tag)
+	return confirm.Wait(ctx)
 }
 
 // Get is only supposed to be used for testing, do not use get for polling any broker queues.

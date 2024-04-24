@@ -26,7 +26,6 @@ type Session struct {
 
 	channel  *amqp091.Channel
 	returned chan amqp091.Return
-	confirms chan amqp091.Confirmation
 	errors   chan *amqp091.Error
 
 	conn          *Connection
@@ -111,7 +110,6 @@ func NewSession(conn *Connection, name string, options ...SessionOption) (*Sessi
 		consumers: map[string]bool{},
 		channel:   nil, // will be created on connect
 		errors:    nil, // will be created on connect
-		confirms:  nil, // will be created on connect
 		returned:  nil, // will be created on connect
 
 		conn:          conn,
@@ -201,7 +199,6 @@ func (s *Session) close() (err error) {
 	defer func() {
 		s.debug("flushing channels...")
 		flush(s.errors)
-		flush(s.confirms)
 		flush(s.returned)
 
 		if s.channel != nil {
@@ -266,8 +263,6 @@ func (s *Session) connect() (err error) {
 	channel.NotifyClose(s.errors)
 
 	if s.confirmable {
-		s.confirms = make(chan amqp091.Confirmation, s.bufferCapacity)
-		channel.NotifyPublish(s.confirms)
 		err = channel.Confirm(false)
 		if err != nil {
 			return err
@@ -351,67 +346,6 @@ func (s *Session) recover(ctx context.Context) error {
 	}
 }
 
-// AwaitConfirm tries to await a confirmation from the broker for a published message
-// You may check for ErrNack in order to see whether the broker rejected the message temporatily.
-// WARNING: AwaitConfirm cannot be retried in case the channel dies or errors.
-// You must resend your message and attempt to await it again.
-func (s *Session) AwaitConfirm(ctx context.Context, expectedTag uint64) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if !s.confirmable {
-		return ErrNoConfirms
-	}
-
-	select {
-	// TODO: this might lead to problems when a single session is used
-	// in a multithreaded context. That way we might received out of order confirmations
-	// which could lead to unexpected behavior.
-	case confirm, ok := <-s.confirms:
-		if !ok {
-			err := s.error()
-			if err != nil {
-				return fmt.Errorf("await confirm failed: confirms channel closed: %w", err)
-			}
-			return fmt.Errorf("await confirm failed: confirms channel %w", ErrClosed)
-		}
-		if !confirm.Ack {
-			// in case the server did not accept the message, it might be due to resource problems.
-			// TODO: do we want to pause here upon flow control messages
-			err := fmt.Errorf("await confirm failed: %w", ErrNack)
-			return err
-		}
-		if confirm.DeliveryTag != expectedTag {
-			return fmt.Errorf("await confirm failed: %w: expected %d, got %d", ErrDeliveryTagMismatch, expectedTag, confirm.DeliveryTag)
-		}
-		return nil
-	case returned, ok := <-s.returned:
-		if !ok {
-			err := s.error()
-			if err != nil {
-				return fmt.Errorf("await confirm failed: returned channel closed: %w", err)
-			}
-			return fmt.Errorf("await confirm failed: %w", errReturnedClosed)
-		}
-		return fmt.Errorf("await confirm failed: %w: %s", ErrReturned, returned.ReplyText)
-	case blocking, ok := <-s.conn.BlockingFlowControl():
-		if !ok {
-			err := s.error()
-			if err != nil {
-				return fmt.Errorf("await confirm failed: blocking channel closed: %w", err)
-			}
-			return fmt.Errorf("await confirm failed: %w", errBlockingFlowControlClosed)
-		}
-		return fmt.Errorf("await confirm failed: %w: %s", ErrBlockingFlowControl, blocking.Reason)
-	case <-ctx.Done():
-		err := ctx.Err()
-		return fmt.Errorf("await confirm: failed context %w: %w", ErrClosed, err)
-	case <-s.ctx.Done():
-		err := ctx.Err()
-		return fmt.Errorf("await confirm failed: session %w: %w", ErrClosed, err)
-	}
-}
-
 // Publishing captures the client message sent to the server.  The fields
 // outside of the Headers table included in this struct mirror the underlying
 // fields in the content frame.  They use native types for convenience and
@@ -447,6 +381,75 @@ type Publishing struct {
 	Immediate bool
 }
 
+// BatchPublishing is a message that is to be published to the server in a batch.
+// Therefore it contains the exchange and routing key to which the message should be published.
+// Normally a slice of BatchPublishing is used to publish multiple messages to the server in a single batch.
+type BatchPublishing struct {
+	Exchange   string
+	RoutingKey string
+	Publishing Publishing
+}
+
+// PublishBatch sends multiple messages to the server blocking for the confirmation in between.
+// Afterwards it returns a BatchConfirmation that can be used to wait for the confirmations of all messages.
+func (s *Session) PublishBatch(ctx context.Context, msgs []BatchPublishing) (confirm *BatchConfirmation, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var confirms []*amqp091.DeferredConfirmation
+	for _, msg := range msgs {
+		// we want to have a persistent messages by default
+		// this allows to even in a disaster case where the rabbitmq node is restarted or crashes
+		// to still have our messages persisted to disk.
+		// https://www.rabbitmq.com/persistence-conf.html#how-it-works
+		var amqpDeliverMode uint8
+		if msg.Publishing.DeliveryMode == 1 {
+			amqpDeliverMode = 1 // transient (purged upon rabbitmq restart)
+		} else {
+			amqpDeliverMode = 2 // persistent (persisted to disk upon arrival in queue)
+		}
+
+		var dc *amqp091.DeferredConfirmation
+		err = s.retry(ctx, s.publishRetryCB, func() error {
+			dc, err = s.channel.PublishWithDeferredConfirmWithContext(
+				ctx,
+				msg.Exchange,
+				msg.RoutingKey,
+				msg.Publishing.Mandatory,
+				msg.Publishing.Immediate,
+				amqp091.Publishing{
+					Headers:         msg.Publishing.Headers,
+					ContentType:     msg.Publishing.ContentType,
+					ContentEncoding: msg.Publishing.ContentEncoding,
+					DeliveryMode:    amqpDeliverMode,
+					Priority:        msg.Publishing.Priority,
+					CorrelationId:   msg.Publishing.CorrelationId,
+					ReplyTo:         msg.Publishing.ReplyTo,
+					Expiration:      msg.Publishing.Expiration,
+					MessageId:       msg.Publishing.MessageId,
+					Timestamp:       msg.Publishing.Timestamp,
+					Type:            msg.Publishing.Type,
+					UserId:          msg.Publishing.UserId,
+					AppId:           msg.Publishing.AppId,
+					Body:            msg.Publishing.Body,
+				},
+			)
+			if err != nil {
+				return err
+			}
+			return nil
+		})
+		if err != nil {
+			return nil, err
+		}
+		confirms = append(confirms, dc)
+	}
+	return &BatchConfirmation{
+		dc: confirms,
+		s:  s,
+	}, nil
+}
+
 // Publish sends a Publishing from the client to an exchange on the server.
 // When you want a single message to be delivered to a single queue, you can publish to the default exchange with the routingKey of the queue name.
 // This is because every declared queue gets an implicit route to the default exchange.
@@ -455,7 +458,7 @@ type Publishing struct {
 // The way to ensure that all publishings reach the server is to add a listener to Channel.NotifyPublish and put the channel in confirm mode with Channel.Confirm.
 // Publishing delivery tags and their corresponding confirmations start at 1. Exit when all publishings are confirmed.
 // When Publish does not return an error and the channel is in confirm mode, the internal counter for DeliveryTags with the first confirmation starts at 1.
-func (s *Session) Publish(ctx context.Context, exchange string, routingKey string, msg Publishing) (deliveryTag uint64, err error) {
+func (s *Session) Publish(ctx context.Context, exchange string, routingKey string, msg Publishing) (confirm *Confirmation, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -470,13 +473,9 @@ func (s *Session) Publish(ctx context.Context, exchange string, routingKey strin
 		amqpDeliverMode = 2 // persistent (persisted to disk upon arrival in queue)
 	}
 
+	var dc *amqp091.DeferredConfirmation
 	err = s.retry(ctx, s.publishRetryCB, func() error {
-		deliveryTag = 0
-		if s.confirmable {
-			deliveryTag = s.channel.GetNextPublishSeqNo()
-		}
-
-		err = s.channel.PublishWithContext(
+		dc, err = s.channel.PublishWithDeferredConfirmWithContext(
 			ctx,
 			exchange,
 			routingKey,
@@ -505,9 +504,12 @@ func (s *Session) Publish(ctx context.Context, exchange string, routingKey strin
 		return nil
 	})
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
-	return deliveryTag, nil
+	return &Confirmation{
+		dc: dc,
+		s:  s,
+	}, nil
 }
 
 // Get is only supposed to be used for testing purposes, do not us eit to poll the queue periodically.
@@ -1514,7 +1516,6 @@ func (s *Session) Flush() {
 	// as it i sneeded for checking whether a session recovery is needed
 
 	flush(s.errors)
-	flush(s.confirms)
 	flush(s.returned)
 }
 

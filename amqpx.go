@@ -318,6 +318,18 @@ func (a *AMQPX) Publish(ctx context.Context, exchange string, routingKey string,
 	return a.pub.Publish(ctx, exchange, routingKey, msg)
 }
 
+// Publishes a batch of messages.
+// Each messages can be published to a different exchange and routing key.
+func (a *AMQPX) PublishBatch(ctx context.Context, msgs []pool.BatchPublishing) error {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	if a.pub == nil {
+		panic("amqpx package was not started")
+	}
+
+	return a.pub.PublishBatch(ctx, msgs)
+}
+
 // Get is only supposed to be used for testing, do not use get for polling any broker queues.
 func (a *AMQPX) Get(ctx context.Context, queue string, autoAck bool) (msg pool.Delivery, ok bool, err error) {
 	a.mu.RLock()
@@ -377,6 +389,12 @@ func Close() error {
 // You may set exchange to "" and routingKey to your queue name in order to publish directly to a queue.
 func Publish(ctx context.Context, exchange string, routingKey string, msg pool.Publishing) error {
 	return amqpx.Publish(ctx, exchange, routingKey, msg)
+}
+
+// Publishes a batch of messages.
+// Each messages can be published to a different exchange and routing key.
+func PublishBatch(ctx context.Context, msgs []pool.BatchPublishing) error {
+	return amqpx.PublishBatch(ctx, msgs)
 }
 
 // Get is only supposed to be used for testing, do not use get for polling any broker queues.
