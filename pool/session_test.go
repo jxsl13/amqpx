@@ -1232,3 +1232,81 @@ func TestNewSingleSessionCloseWithHealthyRabbitMQ(t *testing.T) {
 	err = s.Close()
 	assert.NoError(t, err)
 }
+
+func TestNewSingleSessionPublishWithDisconnects(t *testing.T) {
+	t.Parallel()
+	var (
+		ctx                      = context.TODO()
+		wg                       sync.WaitGroup
+		proxyName, connectURL, _ = testutils.NextConnectURL()
+		nextConnName             = testutils.ConnectionNameGenerator()
+		connName                 = nextConnName()
+		nextSessionName          = testutils.SessionNameGenerator(connName)
+		numMsgs                  = 500
+		numBatches               = 500
+	)
+
+	c, err := pool.NewConnection(
+		ctx,
+		connectURL,
+		connName,
+		pool.ConnectionWithLogger(logging.NewTestLogger(t)),
+		pool.ConnectionWithBackoffPolicy(func(retry int) (sleep time.Duration) {
+			return time.Millisecond * 100
+		}),
+	)
+	if err != nil {
+		assert.NoError(t, err)
+		return
+	}
+	defer func() {
+		assert.NoError(t, c.Close())
+	}()
+
+	var (
+		sessionName        = nextSessionName()
+		nextQueueName      = testutils.QueueNameGenerator(sessionName)
+		queueName          = nextQueueName()
+		nextExchangeName   = testutils.ExchangeNameGenerator(sessionName)
+		exchangeName       = nextExchangeName()
+		publishNextMessage = testutils.MessageGenerator(queueName)
+	)
+
+	s, err := pool.NewSession(
+		c,
+		sessionName,
+		pool.SessionWithConfirms(true),
+	)
+	if err != nil {
+		assert.NoError(t, err)
+		return
+	}
+	defer func() {
+		assert.NoError(t, s.Close())
+	}()
+
+	cleanup := DeclareExchangeQueue(t, ctx, s, exchangeName, queueName)
+	defer cleanup()
+
+	for batch := 0; batch < numBatches; batch++ {
+		PublishBatchAsyncN(t, ctx, &wg, s, exchangeName, publishNextMessage, numMsgs)
+	}
+
+	exitChannel := make(chan struct{})
+	defer close(exitChannel)
+
+	go func() {
+		for {
+			select {
+			case <-exitChannel:
+				return
+			case <-time.After(5 * time.Second):
+				disconnected, reconnected := Disconnect(t, proxyName, 100*time.Millisecond)
+				disconnected()
+				reconnected()
+			}
+		}
+	}()
+
+	wg.Wait()
+}
