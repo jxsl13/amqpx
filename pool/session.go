@@ -396,7 +396,7 @@ func (s *Session) PublishBatch(ctx context.Context, msgs []BatchPublishing) (con
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	var confirms []*amqp091.DeferredConfirmation
+	confirms := make([]*amqp091.DeferredConfirmation, 0, len(msgs))
 	for _, msg := range msgs {
 		// we want to have a persistent messages by default
 		// this allows to even in a disaster case where the rabbitmq node is restarted or crashes
