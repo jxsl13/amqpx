@@ -141,6 +141,31 @@ func PublishN(
 	logging.NewTestLogger(t).Infof("published %d messages, closing publisher", n)
 }
 
+func PublishBatch(
+	t *testing.T,
+	ctx context.Context,
+	p Producer,
+	exchangeName string,
+	publishMessageGenerator func() string,
+	n int,
+) {
+	msgs := make([]pool.BatchPublishing, n)
+	for i := 0; i < n; i++ {
+		message := publishMessageGenerator()
+		msgs[i] = pool.BatchPublishing{
+			Exchange: exchangeName,
+			Publishing: pool.Publishing{
+				ContentType: "text/plain",
+				Body:        []byte(message),
+			},
+		}
+	}
+
+	err := publishBatch(ctx, p, msgs)
+	assert.NoError(t, err)
+	logging.NewTestLogger(t).Infof("published %d messages, closing publisher", n)
+}
+
 func PublishBatchN(
 	t *testing.T,
 	ctx context.Context,
@@ -219,6 +244,22 @@ func PublishAsyncN(
 	go func(wg *sync.WaitGroup, publishMessageGenerator func() string, n int) {
 		defer wg.Done()
 		PublishN(t, ctx, p, exchangeName, publishMessageGenerator, n)
+	}(wg, publishMessageGenerator, n)
+}
+
+func PublishBatchAsync(
+	t *testing.T,
+	ctx context.Context,
+	wg *sync.WaitGroup,
+	p Producer,
+	exchangeName string,
+	publishMessageGenerator func() string,
+	n int,
+) {
+	wg.Add(1)
+	go func(wg *sync.WaitGroup, publishMessageGenerators func() string, n int) {
+		defer wg.Done()
+		PublishBatch(t, ctx, p, exchangeName, publishMessageGenerator, n)
 	}(wg, publishMessageGenerator, n)
 }
 

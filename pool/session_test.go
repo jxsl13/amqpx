@@ -130,7 +130,7 @@ func TestNewSingleSessionPublishBatchAndConsume(t *testing.T) {
 	defer cleanup()
 
 	ConsumeAsyncN(t, ctx, &wg, s, queueName, consumerName, consumeMessageGenerator, numMsgs, true)
-	PublishBatchAsyncN(t, ctx, &wg, s, []string{exchangeName}, []func() string{publishMessageGenerator}, numMsgs)
+	PublishBatchAsync(t, ctx, &wg, s, exchangeName, publishMessageGenerator, numMsgs)
 
 	wg.Wait()
 }
@@ -255,7 +255,7 @@ func TestManyNewSessionsPublishBatchAndConsume(t *testing.T) {
 		defer cleanup()
 
 		ConsumeAsyncN(t, ctx, &wg, s, queueName, consumerName, consumeNextMessage, numMsgs, true)
-		PublishBatchAsyncN(t, ctx, &wg, s, []string{exchangeName}, []func() string{publishNextMessage}, numMsgs)
+		PublishBatchAsync(t, ctx, &wg, s, exchangeName, publishNextMessage, numMsgs)
 	}
 
 	wg.Wait()
@@ -796,7 +796,7 @@ func TestNewSessionPublishBatchWithDisconnect(t *testing.T) {
 	ConsumeAsyncN(t, ctx, &wg, hs, queueName, nextConsumerName(), consumeMsgGen, numMsgs, true)
 
 	disconnected()
-	PublishBatchN(t, ctx, s, []string{exchangeName}, []func() string{publishMsgGen}, numMsgs)
+	PublishBatch(t, ctx, s, exchangeName, publishMsgGen, numMsgs)
 	reconnected()
 
 	wg.Wait()
