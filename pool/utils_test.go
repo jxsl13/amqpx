@@ -145,15 +145,15 @@ func PublishBatchN(
 	t *testing.T,
 	ctx context.Context,
 	p Producer,
-	exchangeName string,
-	publishMessageGenerator func() string,
+	exchangeNames []string,
+	publishMessageGenerators []func() string,
 	n int,
 ) {
 	msgs := make([]pool.BatchPublishing, n)
 	for i := 0; i < n; i++ {
-		message := publishMessageGenerator()
+		message := publishMessageGenerators[i]()
 		msgs[i] = pool.BatchPublishing{
-			Exchange: exchangeName,
+			Exchange: exchangeNames[i],
 			Publishing: pool.Publishing{
 				ContentType: "text/plain",
 				Body:        []byte(message),
@@ -188,16 +188,21 @@ func publish(ctx context.Context, p Producer, exchangeName string, message strin
 }
 
 func publishBatch(ctx context.Context, p Producer, msgs []pool.BatchPublishing) error {
-	confirm, err := p.PublishBatch(ctx, msgs)
-	if err != nil {
-		return fmt.Errorf("expected no error when publishing batch message: %w", err)
-	}
-	if p.IsConfirmable() {
-		err = confirm.Wait(ctx)
+	// loop to retry when confirmation failes
+	for {
+		confirm, err := p.PublishBatch(ctx, msgs)
 		if err != nil {
-			return fmt.Errorf("expected no error when awaiting confirmation: %w", err)
+			return fmt.Errorf("expected no error when publishing batch message: %w", err)
 		}
+		if p.IsConfirmable() {
+			err = confirm.Wait(ctx)
+			if err != nil {
+				continue
+			}
+		}
+		break
 	}
+
 	return nil
 }
 
@@ -222,15 +227,15 @@ func PublishBatchAsyncN(
 	ctx context.Context,
 	wg *sync.WaitGroup,
 	p Producer,
-	exchangeName string,
-	publishMessageGenerator func() string,
+	exchangeNames []string,
+	publishMessageGenerators []func() string,
 	n int,
 ) {
 	wg.Add(1)
-	go func(wg *sync.WaitGroup, publishMessageGenerator func() string, n int) {
+	go func(wg *sync.WaitGroup, publishMessageGenerators []func() string, n int) {
 		defer wg.Done()
-		PublishBatchN(t, ctx, p, exchangeName, publishMessageGenerator, n)
-	}(wg, publishMessageGenerator, n)
+		PublishBatchN(t, ctx, p, exchangeNames, publishMessageGenerators, n)
+	}(wg, publishMessageGenerators, n)
 }
 
 type Topologer interface {

@@ -78,7 +78,7 @@ func (c *Confirmation) Wait(ctx context.Context) error {
 
 // Wait blocks until the server confirms all publishes, the channel/connection is closed, the context is cancelled, or an error occurs.
 func (bc *BatchConfirmation) Wait(ctx context.Context) error {
-	for {
+	for _, dc := range bc.dc {
 		select {
 		case returned, ok := <-bc.s.returned:
 			if !ok {
@@ -102,19 +102,16 @@ func (bc *BatchConfirmation) Wait(ctx context.Context) error {
 			return fmt.Errorf("await confirm: failed context %w: %w", ErrClosed, ctx.Err())
 		case <-bc.s.ctx.Done():
 			return fmt.Errorf("await confirm failed: session %w: %w", ErrClosed, bc.s.ctx.Err())
-		default:
+		case <-dc.Done():
 			err := bc.s.error()
 			if err != nil {
 				return fmt.Errorf("await confirm failed: confirms channel closed: %w", err)
 			}
 
-			for _, dc := range bc.dc {
-				if !dc.Acked() {
-					continue // not all acked yet, keep waiting
-				}
+			if !dc.Acked() {
+				return fmt.Errorf("await confirm failed: %w", ErrNack)
 			}
 		}
-
-		return nil
 	}
+	return nil
 }

@@ -130,7 +130,7 @@ func TestNewSingleSessionPublishBatchAndConsume(t *testing.T) {
 	defer cleanup()
 
 	ConsumeAsyncN(t, ctx, &wg, s, queueName, consumerName, consumeMessageGenerator, numMsgs, true)
-	PublishBatchAsyncN(t, ctx, &wg, s, exchangeName, publishMessageGenerator, numMsgs)
+	PublishBatchAsyncN(t, ctx, &wg, s, []string{exchangeName}, []func() string{publishMessageGenerator}, numMsgs)
 
 	wg.Wait()
 }
@@ -255,7 +255,7 @@ func TestManyNewSessionsPublishBatchAndConsume(t *testing.T) {
 		defer cleanup()
 
 		ConsumeAsyncN(t, ctx, &wg, s, queueName, consumerName, consumeNextMessage, numMsgs, true)
-		PublishBatchAsyncN(t, ctx, &wg, s, exchangeName, publishNextMessage, numMsgs)
+		PublishBatchAsyncN(t, ctx, &wg, s, []string{exchangeName}, []func() string{publishNextMessage}, numMsgs)
 	}
 
 	wg.Wait()
@@ -796,7 +796,7 @@ func TestNewSessionPublishBatchWithDisconnect(t *testing.T) {
 	ConsumeAsyncN(t, ctx, &wg, hs, queueName, nextConsumerName(), consumeMsgGen, numMsgs, true)
 
 	disconnected()
-	PublishBatchN(t, ctx, s, exchangeName, publishMsgGen, numMsgs)
+	PublishBatchN(t, ctx, s, []string{exchangeName}, []func() string{publishMsgGen}, numMsgs)
 	reconnected()
 
 	wg.Wait()
@@ -1241,9 +1241,10 @@ func TestNewSingleSessionPublishWithDisconnects(t *testing.T) {
 		proxyName, connectURL, _ = testutils.NextConnectURL()
 		nextConnName             = testutils.ConnectionNameGenerator()
 		connName                 = nextConnName()
+		connNameHealthy          = nextConnName()
 		nextSessionName          = testutils.SessionNameGenerator(connName)
-		numMsgs                  = 500
-		numBatches               = 500
+		numMsgs                  = 50
+		numBatches               = 1000
 	)
 
 	c, err := pool.NewConnection(
@@ -1252,7 +1253,7 @@ func TestNewSingleSessionPublishWithDisconnects(t *testing.T) {
 		connName,
 		pool.ConnectionWithLogger(logging.NewTestLogger(t)),
 		pool.ConnectionWithBackoffPolicy(func(retry int) (sleep time.Duration) {
-			return time.Millisecond * 100
+			return 100 * time.Millisecond
 		}),
 	)
 	if err != nil {
@@ -1263,13 +1264,25 @@ func TestNewSingleSessionPublishWithDisconnects(t *testing.T) {
 		assert.NoError(t, c.Close())
 	}()
 
+	hc, err := pool.NewConnection(
+		ctx,
+		testutils.HealthyConnectURL,
+		connNameHealthy,
+		pool.ConnectionWithLogger(logging.NewTestLogger(t)),
+	)
+	if err != nil {
+		assert.NoError(t, err)
+		return
+	}
+	defer func() {
+		assert.NoError(t, hc.Close())
+	}()
+
 	var (
 		sessionName        = nextSessionName()
+		sessionNameHealthy = nextSessionName()
 		nextQueueName      = testutils.QueueNameGenerator(sessionName)
-		queueName          = nextQueueName()
 		nextExchangeName   = testutils.ExchangeNameGenerator(sessionName)
-		exchangeName       = nextExchangeName()
-		publishNextMessage = testutils.MessageGenerator(queueName)
 	)
 
 	s, err := pool.NewSession(
@@ -1285,12 +1298,37 @@ func TestNewSingleSessionPublishWithDisconnects(t *testing.T) {
 		assert.NoError(t, s.Close())
 	}()
 
-	cleanup := DeclareExchangeQueue(t, ctx, s, exchangeName, queueName)
-	defer cleanup()
-
-	for batch := 0; batch < numBatches; batch++ {
-		PublishBatchAsyncN(t, ctx, &wg, s, exchangeName, publishNextMessage, numMsgs)
+	hs, err := pool.NewSession(
+		hc,
+		sessionNameHealthy,
+	)
+	if err != nil {
+		assert.NoError(t, err)
+		return
 	}
+	defer func() {
+		assert.NoError(t, hs.Close())
+	}()
+
+	exchangeNames := make([]string, numMsgs)
+	publishNextMessages := make([]func() string, numMsgs)
+	for batch := 0; batch < numMsgs; batch++ {
+		exchangeNames[batch] = nextExchangeName()
+		queueName := nextQueueName()
+		cleanup := DeclareExchangeQueue(t, ctx, hs, exchangeNames[batch], queueName)
+		defer cleanup()
+
+		nextConsumerName := testutils.ConsumerNameGenerator(queueName)
+		consumeNextMessage := testutils.MessageGenerator(queueName)
+		publishNextMessages[batch] = testutils.MessageGenerator(queueName)
+		ConsumeAsyncN(t, ctx, &wg, hs, queueName, nextConsumerName(), consumeNextMessage, numBatches, true)
+	}
+
+	go func() {
+		for batch := 0; batch < numBatches; batch++ {
+			PublishBatchN(t, ctx, s, exchangeNames, publishNextMessages, numMsgs)
+		}
+	}()
 
 	exitChannel := make(chan struct{})
 	defer close(exitChannel)
