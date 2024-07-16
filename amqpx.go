@@ -320,6 +320,7 @@ func (a *AMQPX) Publish(ctx context.Context, exchange string, routingKey string,
 
 // Publishes a batch of messages.
 // Each messages can be published to a different exchange and routing key.
+// Due to the asynchronicity, order of messages is not guaranteed when sending multiple messages to the same queue.
 func (a *AMQPX) PublishBatch(ctx context.Context, msgs []pool.BatchPublishing) error {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
@@ -393,6 +394,7 @@ func Publish(ctx context.Context, exchange string, routingKey string, msg pool.P
 
 // Publishes a batch of messages.
 // Each messages can be published to a different exchange and routing key.
+// Due to the asynchronicity, order of messages is not guaranteed when sending multiple messages to the same queue.
 func PublishBatch(ctx context.Context, msgs []pool.BatchPublishing) error {
 	return amqpx.PublishBatch(ctx, msgs)
 }

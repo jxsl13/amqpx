@@ -64,6 +64,7 @@ func NewPublisher(p *Pool, options ...PublisherOption) *Publisher {
 
 // Publishes a batch of messages.
 // Each messages can be published to a different exchange and routing key.
+// Due to the asynchronicity, order of messages is not guaranteed when sending multiple messages to the same queue.
 func (p *Publisher) PublishBatch(ctx context.Context, msgs []BatchPublishing) error {
 	for {
 		err := p.publishBatch(ctx, msgs)

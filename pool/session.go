@@ -392,6 +392,7 @@ type BatchPublishing struct {
 
 // PublishBatch sends multiple messages to the server blocking for the confirmation in between.
 // Afterwards it returns a BatchConfirmation that can be used to wait for the confirmations of all messages.
+// Due to the asynchronicity, order of messages is not guaranteed when sending multiple messages to the same queue.
 func (s *Session) PublishBatch(ctx context.Context, msgs []BatchPublishing) (confirm *BatchConfirmation, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
