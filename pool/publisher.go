@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jxsl13/amqpx/logging"
 )
@@ -11,6 +12,7 @@ import (
 type Publisher struct {
 	pool          *Pool
 	autoClosePool bool
+	backoff       BackoffFunc
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -39,7 +41,8 @@ func NewPublisher(p *Pool, options ...PublisherOption) *Publisher {
 		Ctx: p.Context(),
 
 		AutoClosePool: false,
-		Logger:        p.sp.log, // derive logger from session pool
+		BackoffPolicy: newDefaultBackoffPolicy(1*time.Millisecond, 5*time.Second), // currently only affects publishing with confirms
+		Logger:        p.sp.log,                                                   // derive logger from session pool
 	}
 
 	for _, o := range options {
@@ -52,6 +55,7 @@ func NewPublisher(p *Pool, options ...PublisherOption) *Publisher {
 	pub := &Publisher{
 		pool:          p,
 		autoClosePool: option.AutoClosePool,
+		backoff:       option.BackoffPolicy,
 		ctx:           ctx,
 		cancel:        cancel,
 
@@ -65,25 +69,22 @@ func NewPublisher(p *Pool, options ...PublisherOption) *Publisher {
 // Publish a message to a specific exchange with a given routingKey.
 // You may set exchange to "" and routingKey to your queue name in order to publish directly to a queue.
 func (p *Publisher) Publish(ctx context.Context, exchange string, routingKey string, msg Publishing) error {
-
-	for {
-		err := p.publish(ctx, exchange, routingKey, msg)
+	return p.retry(ctx, func() (cont bool, err error) {
+		err = p.publish(ctx, exchange, routingKey, msg)
 		switch {
 		case err == nil:
-			return nil
+			return false, nil
 		case errors.Is(err, ErrNack):
-			return err
-		case errors.Is(err, ErrDeliveryTagMismatch):
-			return err
+			return false, err
+		case !recoverable(err):
+			// not recoverable
+			return false, err
 		default:
-			if recoverable(err) {
-				p.warn(exchange, routingKey, err, "publish failed due to recoverable error, retrying")
-				// retry
-			} else {
-				return err
-			}
+			// ErrDeliveryTagMismatch + all other unknown errors
+			p.warn(exchange, routingKey, err, "publish failed due to recoverable error, retrying")
+			return true, nil
 		}
-	}
+	})
 }
 
 func (p *Publisher) publish(ctx context.Context, exchange string, routingKey string, msg Publishing) (err error) {
@@ -113,6 +114,51 @@ func (p *Publisher) publish(ctx context.Context, exchange string, routingKey str
 	}
 
 	return s.AwaitConfirm(ctx, tag)
+}
+
+func (p *Publisher) retry(ctx context.Context, f func() (cont bool, err error)) error {
+	// fast path
+	cont, err := f()
+	if err != nil {
+		return err
+	}
+	if !cont {
+		return nil
+	}
+
+	// continue second try with backoff timer overhead
+	var (
+		retry   = 1
+		timer   = time.NewTimer(p.backoff(retry))
+		drained = false
+	)
+	defer closeTimer(timer, &drained)
+
+	for {
+
+		select {
+		case <-timer.C:
+			// at this point we know that the timer channel has been drained
+			drained = true
+
+			// try again
+			cont, err = f()
+			if err != nil {
+				return err
+			}
+			if !cont {
+				return nil
+			}
+
+			retry++
+			resetTimer(timer, p.backoff(retry), &drained)
+
+		case <-ctx.Done():
+			return errors.Join(err, ctx.Err())
+		case <-p.ctx.Done():
+			return errors.Join(err, p.ctx.Err())
+		}
+	}
 }
 
 // Get is only supposed to be used for testing, do not use get for polling any broker queues.
