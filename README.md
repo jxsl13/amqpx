@@ -226,6 +226,7 @@ docker compose up -d
 The test environment looks like this:
 
 Web interfaces:
+ - username: `admin` and password: `password`
  - [rabbitmq management interface: http://127.0.0.1:15672 -> rabbitmq:15672](http://127.0.0.1:15672)
  - [out of memory rabbitmq management interface: http://127.0.0.1:25672 -> rabbitmq-broken:15672](http://127.0.0.1:25672)
 
