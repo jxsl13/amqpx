@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jxsl13/amqpx/logging"
+	"github.com/rabbitmq/amqp091-go"
 )
 
 type Subscriber struct {
@@ -442,23 +443,58 @@ func (s *Subscriber) batchConsume(h *BatchHandler) (err error) {
 	// preallocate memory for batch
 	batch := make([]Delivery, 0, maxi(1, opts.MaxBatchSize))
 	defer func() {
-		if len(batch) > 0 && errors.Is(err, ErrClosed) {
-			// requeue all not yet processed messages in batch slice
-			// we can only nack these message sin case the session has not been closed
-			// Its does not make sense to use session.Nack at this point because in case the sessison dies
-			// the delivery tags also die with it.
-			// There is no way to recover form this state in case an error is returned from the Nack call.
-			nackErr := batch[len(batch)-1].Nack(true, true)
-			if nackErr != nil {
-				s.warnBatchHandler(
-					opts.ConsumerTag,
-					opts.Queue,
-					opts.MaxBatchSize,
-					opts.MaxBatchBytes,
-					err,
-					"failed to nack and requeue batch upon shutdown",
-				)
+		if len(batch) > 0 {
+			if errors.Is(err, ErrClosed) {
+				// requeue all not yet processed messages in batch slice
+				// we can only nack these message sin case the session has not been closed
+				// Its does not make sense to use session.Nack at this point because in case the sessison dies
+				// the delivery tags also die with it.
+				// There is no way to recover form this state in case an error is returned from the Nack call.
+
+				nackErr := nackOrderedBatch(batch)
+				if nackErr != nil {
+					s.warnBatchHandler(
+						opts.ConsumerTag,
+						opts.Queue,
+						opts.MaxBatchSize,
+						opts.MaxBatchBytes,
+						err,
+						"failed to nack and requeue batch upon shutdown",
+					)
+				} else {
+					s.infoBatchHandlerf(
+						opts.ConsumerTag,
+						opts.Queue,
+						opts.MaxBatchSize,
+						opts.MaxBatchBytes,
+						"requeued %d batch messages upon shutdown",
+						len(batch),
+					)
+				}
+			} else if errors.Is(err, ErrDeliveryClosed) && isContextClosed(h.pausing()) {
+				nackErr := nackOrderedBatch(batch)
+				if nackErr != nil {
+					s.warnBatchHandlerf(
+						opts.ConsumerTag,
+						opts.Queue,
+						opts.MaxBatchSize,
+						opts.MaxBatchBytes,
+						err,
+						"failed to nack and requeue %d batch messages upon pausing",
+						len(batch),
+					)
+				} else {
+					s.infoBatchHandlerf(
+						opts.ConsumerTag,
+						opts.Queue,
+						opts.MaxBatchSize,
+						opts.MaxBatchBytes,
+						"requeued %d batch messages upon pausing",
+						len(batch),
+					)
+				}
 			}
+
 		}
 	}()
 
@@ -552,6 +588,15 @@ func (s *Subscriber) batchConsume(h *BatchHandler) (err error) {
 				return poolErr
 			}
 		}
+	}
+}
+
+func isContextClosed(ctx context.Context) bool {
+	select {
+	case <-ctx.Done():
+		return true
+	default:
+		return false
 	}
 }
 
@@ -668,6 +713,18 @@ func (s *Subscriber) shutdownErr() error {
 	return s.ctx.Err()
 }
 
+func nackOrderedBatch(batch []amqp091.Delivery) error {
+	var err error
+	for i, msg := range batch {
+		// nack one by one in order to keep the order of the messages
+		nackErr := msg.Nack(false, true)
+		if nackErr != nil {
+			err = errors.Join(err, fmt.Errorf("failed to nack batch message %d/%d: %w", i, len(batch), nackErr))
+		}
+	}
+	return err
+}
+
 func (s *Subscriber) infoBatchHandler(consumer, queue string, batchSize, batchBytes int, a ...any) {
 	s.log.WithFields(withConsumerIfSet(consumer,
 		map[string]any{
@@ -678,6 +735,16 @@ func (s *Subscriber) infoBatchHandler(consumer, queue string, batchSize, batchBy
 		})).Info(a...)
 }
 
+func (s *Subscriber) infoBatchHandlerf(consumer, queue string, batchSize, batchBytes int, msg string, a ...any) {
+	s.log.WithFields(withConsumerIfSet(consumer,
+		map[string]any{
+			"batchSize":  batchSize,
+			"batchBytes": batchBytes,
+			"subscriber": s.pool.Name(),
+			"queue":      queue,
+		})).Infof(msg, a...)
+}
+
 func (s *Subscriber) warnBatchHandler(consumer, queue string, batchSize, batchBytes int, err error, a ...any) {
 	s.log.WithFields(withConsumerIfSet(consumer, map[string]any{
 		"batchSize":  batchSize,
@@ -686,6 +753,16 @@ func (s *Subscriber) warnBatchHandler(consumer, queue string, batchSize, batchBy
 		"queue":      queue,
 		"error":      err,
 	})).Warn(a...)
+}
+
+func (s *Subscriber) warnBatchHandlerf(consumer, queue string, batchSize, batchBytes int, err error, msg string, a ...any) {
+	s.log.WithFields(withConsumerIfSet(consumer, map[string]any{
+		"batchSize":  batchSize,
+		"batchBytes": batchBytes,
+		"subscriber": s.pool.Name(),
+		"queue":      queue,
+		"error":      err,
+	})).Warnf(msg, a...)
 }
 
 func (s *Subscriber) errorBatchHandler(consumer, queue string, batchSize, batchBytes int, err error, a ...any) {
