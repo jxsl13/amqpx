@@ -8,7 +8,7 @@ down:
 	docker compose down
 
 test:
-	go test -timeout 600ss -v -race -count=1 ./... > parallel.test.log
+	go test -timeout 600s -v -race -count=1 ./... > parallel.test.log
 
 test-sequentially:
 	go test -timeout 900s -v -race -parallel 1 -count=1 ./... > sequential.test.log
