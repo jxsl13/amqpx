@@ -202,6 +202,7 @@ func (ch *Connection) connect(ctx context.Context) error {
 			},
 		})
 	if err != nil {
+		ch.log.Error(err.Error())
 		// wrap the underlying amqp091 error
 		return fmt.Errorf("%v: %w", ErrConnectionFailed, err)
 	}
