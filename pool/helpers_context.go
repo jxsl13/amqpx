@@ -252,7 +252,7 @@ func (sc *stateContext) Pause(ctx context.Context) error {
 
 	select {
 	case <-sc.paused.Done():
-		// waid until paused
+		// wait until paused
 		return nil
 	case <-ctx.Done():
 		return fmt.Errorf("%w: %v", ErrPauseFailed, ctx.Err())

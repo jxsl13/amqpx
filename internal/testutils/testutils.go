@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"runtime"
+	"strings"
 )
 
 func FilePath(relative string, up ...int) string {
@@ -90,4 +91,48 @@ func CallerFileLine(up ...int) string {
 	}
 	file, line := f.FileLine(pc)
 	return fmt.Sprintf("%s:%d", file, line)
+}
+
+var MaxStackDepth = 32
+
+func Stack(up ...int) []string {
+	offset := 1
+	if len(up) > 0 && up[0] > 0 {
+		offset += up[0]
+	}
+
+	pc := make([]uintptr, MaxStackDepth)
+	n := runtime.Callers(offset, pc)
+	if n == 0 {
+		// No PCs available. This can happen if the first argument to
+		// runtime.Callers is large.
+		//
+		// Return now to avoid processing the zero Frame that would
+		// otherwise be returned by frames.Next below.
+		return []string{}
+	}
+
+	pc = pc[:n] // pass only valid pcs to runtime.CallersFrames
+	frames := runtime.CallersFrames(pc)
+
+	// Loop to get frames.
+	// A fixed number of PCs can expand to an indefinite number of Frames.
+	stack := make([]string, 0, n)
+	for {
+		frame, more := frames.Next()
+
+		funcName := frame.Func.Name()
+		if strings.HasPrefix(funcName, "testing.tRunner") || strings.HasPrefix(funcName, "runtime.goexit") {
+			break
+		}
+
+		stack = append(stack, fmt.Sprintf("%s (%s:%d)", funcName, frame.File, frame.Line))
+
+		// Check whether there are more frames to process after this one.
+		if !more {
+			break
+		}
+	}
+
+	return stack
 }

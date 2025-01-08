@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 type generatorOptions struct {
@@ -253,12 +256,13 @@ func NewExchangeQueueGenerator(funcName string) func() ExchangeQueue {
 
 func NewExchangeQueue(exchange, queue, routingKey string) ExchangeQueue {
 	return ExchangeQueue{
-		Exchange:    exchange,
-		Queue:       queue,
-		RoutingKey:  routingKey,
-		ConsumerTag: ConsumerNameGenerator(queue)(), // generate one consumer name
-		NextPubMsg:  MessageGenerator(exchange),
-		NextSubMsg:  MessageGenerator(exchange),
+		Exchange:        exchange,
+		Queue:           queue,
+		RoutingKey:      routingKey,
+		assertEqualFunc: assert.Equal,
+		ConsumerTag:     ConsumerNameGenerator(queue)(), // generate one consumer name
+		NextPubMsg:      MessageGenerator(exchange),
+		NextSubMsg:      MessageGenerator(exchange),
 	}
 }
 
@@ -271,4 +275,26 @@ type ExchangeQueue struct {
 
 	NextPubMsg func() string
 	NextSubMsg func() string
+
+	assertEqualFunc    func(t assert.TestingT, expected any, actual any, msgAndArgs ...any) bool
+	lastAssertedSubMsg string
+	assertionStarted   bool
+}
+
+func (eq *ExchangeQueue) AssertNextSubMsg(t *testing.T, msg string) bool {
+	if !eq.assertionStarted {
+		eq.assertionStarted = true
+		eq.lastAssertedSubMsg = eq.NextSubMsg()
+		return eq.assertEqualFunc(t, eq.lastAssertedSubMsg, msg)
+	}
+
+	// the new message is either the previous message due to connection problems and re-delivery
+	// or a new message
+
+	if eq.lastAssertedSubMsg == msg {
+		return eq.assertEqualFunc(t, eq.lastAssertedSubMsg, msg)
+	}
+
+	eq.lastAssertedSubMsg = eq.NextSubMsg()
+	return eq.assertEqualFunc(t, eq.lastAssertedSubMsg, msg)
 }
