@@ -1341,7 +1341,7 @@ func (s *Session) Qos(ctx context.Context, prefetchCount int, prefetchSize int) 
 	defer s.mu.Unlock()
 
 	return s.retry(ctx, s.qosRetryCB, func() error {
-		// session quos should not affect new sessions of the same connection
+		// session Qos should not affect new sessions of the same connection
 		return s.channel.Qos(prefetchCount, prefetchSize, false)
 	})
 }
@@ -1506,15 +1506,17 @@ func (s *Session) debug(a ...any) {
 	s.slog().Debug(a...)
 }
 
-// Flush internal channels.
-func (s *Session) Flush() {
+// Flush confirms channel
+func (s *Session) FlushConfirms() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	// do not flush the errors channel
-	// as it i sneeded for checking whether a session recovery is needed
-
-	flush(s.errors)
 	flush(s.confirms)
+}
+
+// FlushReturned publish	 channel
+func (s *Session) FlushReturned() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	flush(s.returned)
 }
 
