@@ -151,11 +151,6 @@ func (s *Subscriber) RegisterBatchHandlerFunc(queue string, hf BatchHandlerFunc,
 // The passed batch handler may be derived from a different parent context.
 func (s *Subscriber) RegisterBatchHandler(handler *BatchHandler) {
 
-	// TODO: do we want to introduce a BatchSizeLimit
-	// which would keep track of accumulated payload memory limits
-	// of all the messages of a batch and process the messages
-	// in case we hit that memory limit within the current batch.
-
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.batchHandlers = append(s.batchHandlers, handler)
@@ -194,8 +189,8 @@ func (s *Subscriber) Start(ctx context.Context) (err error) {
 	}()
 
 	s.debugSimple(fmt.Sprintf("starting %d handler routine(s)", len(s.handlers)))
+	s.wg.Add(len(s.handlers))
 	for _, h := range s.handlers {
-		s.wg.Add(1)
 		go s.consumer(h, &s.wg)
 		err = h.awaitResumed(ctx)
 		if err != nil {
@@ -204,10 +199,11 @@ func (s *Subscriber) Start(ctx context.Context) (err error) {
 	}
 
 	s.debugSimple(fmt.Sprintf("starting %d batch handler routine(s)", len(s.batchHandlers)))
+	s.wg.Add(len(s.batchHandlers))
 	for _, bh := range s.batchHandlers {
-		s.wg.Add(1)
 		go s.batchConsumer(bh, &s.wg)
 
+		// wait for consumer to have started.
 		err = bh.awaitResumed(ctx)
 		if err != nil {
 			return fmt.Errorf("failed to start batch consumer for queue %s: %w", bh.Queue(), err)
@@ -389,9 +385,9 @@ func (s *Subscriber) batchConsumer(h *BatchHandler, wg *sync.WaitGroup) {
 	defer wg.Done()
 	defer h.close()
 
-	var err error
 	// initialize all handler contexts
 	// to be in state resuming
+	// INFO: h.start is intentionally called twice, here and in the consumer!
 	opts, err := h.start(s.ctx)
 	if err != nil {
 		s.error(opts.ConsumerTag, opts.Queue, err, "failed to start batch handler consumer")
@@ -409,6 +405,8 @@ func (s *Subscriber) batchConsumer(h *BatchHandler, wg *sync.WaitGroup) {
 }
 
 func (s *Subscriber) batchConsume(h *BatchHandler) (err error) {
+	// INFO: h.start is intentionally called twice, because we migh have a changed
+	// handler after pausing the processing.
 	opts, err := h.start(s.ctx)
 	if err != nil {
 		return err
@@ -426,6 +424,16 @@ func (s *Subscriber) batchConsume(h *BatchHandler) (err error) {
 		s.returnSession(h, session, err)
 	}()
 
+	if !opts.ConsumeOptions.AutoAck {
+		// prevent out of order queues when nacking full batches
+		// INFO: currently setting prefetch_size != 0 is not supported by RabbitMQ
+		// which is why we only set the prefetch_count here.
+		err = session.Qos(s.ctx, opts.MaxBatchSize, 0)
+		if err != nil {
+			return fmt.Errorf("failed to set QoS for batch consumer: %w", err)
+		}
+	}
+
 	// got a working session
 	delivery, err := session.ConsumeWithContext(
 		h.pausing(),
@@ -442,13 +450,20 @@ func (s *Subscriber) batchConsume(h *BatchHandler) (err error) {
 	// preallocate memory for batch
 	batch := make([]Delivery, 0, maxi(1, opts.MaxBatchSize))
 	defer func() {
-		if len(batch) > 0 && errors.Is(err, ErrClosed) {
+		if len(batch) == 0 {
+			return
+		}
+
+		lastDeliveryTag := batch[len(batch)-1].DeliveryTag
+
+		if errors.Is(err, ErrClosed) {
 			// requeue all not yet processed messages in batch slice
-			// we can only nack these message sin case the session has not been closed
-			// Its does not make sense to use session.Nack at this point because in case the sessison dies
+			// we can only nack these messages in case the session has not been closed
+			// Its does not make sense to use session.Nack at this point because in case that the sessison dies
 			// the delivery tags also die with it.
 			// There is no way to recover form this state in case an error is returned from the Nack call.
-			nackErr := batch[len(batch)-1].Nack(true, true)
+
+			nackErr := session.Nack(lastDeliveryTag, true, true)
 			if nackErr != nil {
 				s.warnBatchHandler(
 					opts.ConsumerTag,
@@ -458,8 +473,40 @@ func (s *Subscriber) batchConsume(h *BatchHandler) (err error) {
 					err,
 					"failed to nack and requeue batch upon shutdown",
 				)
+			} else {
+				s.infoBatchHandlerf(
+					opts.ConsumerTag,
+					opts.Queue,
+					opts.MaxBatchSize,
+					opts.MaxBatchBytes,
+					"requeued %d batch messages upon shutdown",
+					len(batch),
+				)
+			}
+		} else if errors.Is(err, ErrDeliveryClosed) && isContextClosed(h.pausing()) {
+			nackErr := session.Nack(lastDeliveryTag, true, true)
+			if nackErr != nil {
+				s.warnBatchHandlerf(
+					opts.ConsumerTag,
+					opts.Queue,
+					opts.MaxBatchSize,
+					opts.MaxBatchBytes,
+					err,
+					"failed to nack and requeue %d batch messages upon pausing",
+					len(batch),
+				)
+			} else {
+				s.infoBatchHandlerf(
+					opts.ConsumerTag,
+					opts.Queue,
+					opts.MaxBatchSize,
+					opts.MaxBatchBytes,
+					"requeued %d batch messages upon pausing",
+					len(batch),
+				)
 			}
 		}
+
 	}()
 
 	var (
@@ -552,6 +599,71 @@ func (s *Subscriber) batchConsume(h *BatchHandler) (err error) {
 				return poolErr
 			}
 		}
+	}
+}
+
+// we expect that at this point the prefetch_count of Qos is set to the MaxBatchSize,
+// which is why once we change the Qos setting, we have to reset it back to the previous value
+// batchBytes is only used for logging purposes
+// This requeue works with the assumption that it is not possible to (n)ack messages of partial batches whose size is smaller than the prefetch_count without
+// changing the prefetch_count of the Qos setting.
+func (s *Subscriber) requeueBatch(opts BatchHandlerConfig, session *Session, batch []Delivery) (err error) {
+	batchSize := len(batch)
+	if batchSize == 0 {
+		return
+	}
+	defer func() {
+		if err != nil {
+			err = fmt.Errorf("failed to requeue batch of %d messages: %w", batchSize, err)
+		}
+	}()
+
+	lastDeliveryTag := batch[batchSize-1].DeliveryTag
+	if batchSize == opts.MaxBatchSize {
+		err = session.Nack(lastDeliveryTag, true, true)
+		if err != nil {
+			// cannot do anything at this point
+			return fmt.Errorf("failed to nack and requeue full batch: %w", err)
+		}
+		s.debugConsumer(opts.ConsumerTag, "requeued full batch")
+		return
+	}
+
+	// we need to change the qos before nack & requeue, because the broker does not expect a (n)ack, yet.
+	// INFO: currently setting prefetch_size != 0 is not supported by RabbitMQ
+	err = session.Qos(s.ctx, batchSize, 0)
+	if err != nil {
+		// messages are lost
+		return fmt.Errorf("failed to set QoS prefetch_count to %d for batch consumer requeue: %w", batchSize, err)
+	}
+	s.debugfConsumer(opts.ConsumerTag, "updated Qos prefetch_count to %d before requeue", batchSize)
+	defer func() {
+		// reset Qos to previous value
+		// INFO: setting prefetch_size != 0 is not supported by RabbitMQ
+		resetErr := session.Qos(s.ctx, opts.MaxBatchSize, 0)
+		if resetErr != nil {
+			err = errors.Join(err, fmt.Errorf("failed to reset QoS prefetch_count to %d for batch consumer requeue: %w", opts.MaxBatchSize, err))
+		} else {
+			s.debugfConsumer(opts.ConsumerTag, "reset Qos prefetch_count to %d after requeue", opts.MaxBatchSize)
+		}
+	}()
+
+	// nack & requeue
+	err = session.Nack(lastDeliveryTag, true, true)
+	if err != nil {
+		return fmt.Errorf("failed to nack and requeue partial batch: %w", err)
+	}
+	s.debugfConsumer(opts.ConsumerTag, "requeued partial batch of %d messages", batchSize)
+
+	return nil
+}
+
+func isContextClosed(ctx context.Context) bool {
+	select {
+	case <-ctx.Done():
+		return true
+	default:
+		return false
 	}
 }
 
@@ -678,6 +790,16 @@ func (s *Subscriber) infoBatchHandler(consumer, queue string, batchSize, batchBy
 		})).Info(a...)
 }
 
+func (s *Subscriber) infoBatchHandlerf(consumer, queue string, batchSize, batchBytes int, msg string, a ...any) {
+	s.log.WithFields(withConsumerIfSet(consumer,
+		map[string]any{
+			"batchSize":  batchSize,
+			"batchBytes": batchBytes,
+			"subscriber": s.pool.Name(),
+			"queue":      queue,
+		})).Infof(msg, a...)
+}
+
 func (s *Subscriber) warnBatchHandler(consumer, queue string, batchSize, batchBytes int, err error, a ...any) {
 	s.log.WithFields(withConsumerIfSet(consumer, map[string]any{
 		"batchSize":  batchSize,
@@ -686,6 +808,16 @@ func (s *Subscriber) warnBatchHandler(consumer, queue string, batchSize, batchBy
 		"queue":      queue,
 		"error":      err,
 	})).Warn(a...)
+}
+
+func (s *Subscriber) warnBatchHandlerf(consumer, queue string, batchSize, batchBytes int, err error, msg string, a ...any) {
+	s.log.WithFields(withConsumerIfSet(consumer, map[string]any{
+		"batchSize":  batchSize,
+		"batchBytes": batchBytes,
+		"subscriber": s.pool.Name(),
+		"queue":      queue,
+		"error":      err,
+	})).Warnf(msg, a...)
 }
 
 func (s *Subscriber) errorBatchHandler(consumer, queue string, batchSize, batchBytes int, err error, a ...any) {
@@ -744,6 +876,12 @@ func (s *Subscriber) debugConsumer(consumer string, a ...any) {
 	s.log.WithFields(withConsumerIfSet(consumer, map[string]any{
 		"subscriber": s.pool.Name(),
 	})).Debug(a...)
+}
+
+func (s *Subscriber) debugfConsumer(consumer string, format string, a ...any) {
+	s.log.WithFields(withConsumerIfSet(consumer, map[string]any{
+		"subscriber": s.pool.Name(),
+	})).Debugf(format, a...)
 }
 
 func (s *Subscriber) warnConsumer(consumer string, err error, a ...any) {

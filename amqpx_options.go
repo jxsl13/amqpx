@@ -100,8 +100,10 @@ func WithPublisherSessions(sessions int) Option {
 // sessions share.
 // Meaning, if you have registered 10 handlers and define 5 connections, every connection
 // has two sessions that are multiplexed over it.
-// If youhave 1 connection, all consumers will derive sessions from that connection in order to consume from the
+// If you have 1 connection, all consumers will derive sessions from that connection in order to consume from the
 // specified queue.
+// You cannot have less than one connection, nor can you havemore connections than handlers, as there can at most be
+// one (tcp) connection with one session per handler.
 func WithSubscriberConnections(connections int) Option {
 	if connections < 1 {
 		connections = 1
