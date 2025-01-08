@@ -227,7 +227,9 @@ func (a *AMQPX) Start(ctx context.Context, connectUrl string, options ...Option)
 				connections = requiredHandlers
 			)
 
-			if option.SubscriberConnections >= connections {
+			if 0 < option.SubscriberConnections && option.SubscriberConnections <= connections {
+				// you may decrease the number of tcp connections
+				// between one connection with N sessions or N connections with one session each
 				connections = option.SubscriberConnections
 			}
 
@@ -238,8 +240,8 @@ func (a *AMQPX) Start(ctx context.Context, connectUrl string, options ...Option)
 			subPool, err = pool.New(
 				ctx,
 				connectUrl,
-				connections,
-				sessions,
+				connections, // one connection per handler
+				sessions,    // one session per handler
 				append([]pool.Option{
 					pool.WithNameSuffix("-sub"),
 				}, option.PoolOptions...)..., // allow the user to overwrite the defaults.
@@ -247,8 +249,9 @@ func (a *AMQPX) Start(ctx context.Context, connectUrl string, options ...Option)
 			if err != nil {
 				return
 			}
-			a.sub = pool.NewSubscriber(subPool,
-				pool.SubscriberWithAutoClosePool(true),
+			a.sub = pool.NewSubscriber(
+				subPool,
+				pool.SubscriberWithAutoClosePool(true), // pass pool ownership to subscriber
 			)
 			for _, h := range a.handlers {
 				a.sub.RegisterHandler(h)
