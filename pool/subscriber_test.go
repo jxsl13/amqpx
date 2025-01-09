@@ -296,213 +296,259 @@ func testBatchSubscriberMaxBytes(t *testing.T, funcName string, maxBatchBytes in
 
 func TestLowLevelConsumeBatchOK(t *testing.T) {
 
-	t.Parallel()
 	var (
-		log               = logging.NewTestLogger(t)
-		ctx, cancel       = context.WithCancel(context.TODO())
-		funcName          = testutils.FuncName()
-		nextExchangeQueue = testutils.NewExchangeQueueGenerator(funcName)
-		eq1               = nextExchangeQueue()
-		exchangeName      = eq1.Exchange
-		queueName         = eq1.Queue
-
-		messageCount = 10
-		batchSize    = messageCount * 2
-		batchTimeout = 500 * time.Millisecond
-		chDone       = make(chan struct{})
-		chAck        = make(chan struct{})
+		funcName = testutils.FuncName()
 	)
-	log.SetLevel(0)
-	defer cancel()
 
-	// open connection
-	conn, err := amqp.Dial(testutils.HealthyConnectURL)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer conn.Close()
-
-	// open channel
-	ch, err := conn.Channel()
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer ch.Close()
-
-	// declare queue
-	err = ch.ExchangeDeclare(exchangeName, string(pool.ExchangeKindFanOut), true, false, false, false, nil)
-	if err != nil {
-		assert.NoError(t, err)
-		return
-	}
-	defer ch.ExchangeDelete(exchangeName, false, false)
-
-	q, err := ch.QueueDeclare(queueName, true, false, false, true, nil)
-	if err != nil {
-		assert.NoError(t, err)
-		return
-	}
-	defer ch.QueueDelete(q.Name, false, false, true)
-
-	// publish message
-	for i := 0; i < messageCount; i++ {
-		err = ch.PublishWithContext(ctx, "", q.Name, false, false, amqp.Publishing{
-			ContentType: "text/plain",
-			Body:        []byte(eq1.NextPubMsg()),
-		})
-		if err != nil {
-			assert.NoError(t, err)
-			return
-		}
+	tests := []struct {
+		Name         string
+		MessageCount int
+		BatchSize    int
+		BatchTimeout time.Duration
+	}{
+		{"#1", 10, 2, 100 * time.Millisecond},
+		{"#2", 10, 20, 100 * time.Millisecond},
+		{"#3", 10, 2, 500 * time.Millisecond},
+		{"#4", 10, 20, 500 * time.Millisecond},
 	}
 
-	var wg sync.WaitGroup
+	for _, test := range tests {
 
-	// consume message in batch but do not acknowledge
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		consume(log, batchSize, batchTimeout, chDone, chAck, conn, queueName, messageCount, func(batch []*amqp.Delivery) {
-			for i, d := range batch {
-				log.Infof("Processing nack message: %d: %s", i, string(d.Body))
+		test := test
+		t.Run(test.Name, func(t *testing.T) {
+			t.Parallel()
+
+			var (
+				log               = logging.NewTestLogger(t)
+				ctx, cancel       = context.WithCancel(context.TODO())
+				nextExchangeQueue = testutils.NewExchangeQueueGenerator(fmt.Sprintf("%s_%s", funcName, test.Name))
+				eq                = nextExchangeQueue()
+				exchangeName      = eq.Exchange
+				queueName         = eq.Queue
+
+				messageCount = test.MessageCount
+				batchSize    = test.BatchSize
+				batchTimeout = test.BatchTimeout
+				chDone       = make(chan struct{})
+				chAck        = make(chan struct{})
+			)
+
+			log.SetLevel(0)
+			defer cancel()
+
+			// open connection
+			conn, err := amqp.Dial(testutils.HealthyConnectURL)
+			if err != nil {
+				log.Fatal(err)
+			}
+			defer conn.Close()
+
+			// open channel
+			ch, err := conn.Channel()
+			if err != nil {
+				log.Fatal(err)
+			}
+			defer ch.Close()
+
+			// declare queue
+			err = ch.ExchangeDeclare(exchangeName, string(pool.ExchangeKindFanOut), true, false, false, false, nil)
+			if err != nil {
+				assert.NoError(t, err)
+				return
+			}
+			defer ch.ExchangeDelete(exchangeName, false, false)
+
+			q, err := ch.QueueDeclare(queueName, true, false, false, true, nil)
+			if err != nil {
+				assert.NoError(t, err)
+				return
+			}
+			defer ch.QueueDelete(q.Name, false, false, true)
+
+			// publish message
+			for i := 0; i < messageCount; i++ {
+				err = ch.PublishWithContext(ctx, "", q.Name, false, false, amqp.Publishing{
+					ContentType: "text/plain",
+					Body:        []byte(eq.NextPubMsg()),
+				})
+				if err != nil {
+					assert.NoError(t, err)
+					return
+				}
+			}
+
+			var wg sync.WaitGroup
+
+			// consume message in batch but do not acknowledge
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				consume(log, batchSize, batchTimeout, chDone, chAck, conn, queueName, messageCount, func(batch []*amqp.Delivery) {
+					for i, d := range batch {
+						log.Infof("Processing nack message: %d: %s", i, string(d.Body))
+					}
+				})
+			}()
+
+			// let it run for a while
+			time.Sleep(4200 * time.Millisecond)
+
+			// close the consumer
+			close(chDone)
+			wg.Wait()
+
+			// re-open the consumer, this time acknowledge the messages
+			chDone = make(chan struct{})
+			close(chAck)
+
+			// consume message one by one
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				consume(log, 1, batchTimeout, chDone, chAck, conn, queueName, messageCount, func(batch []*amqp.Delivery) {
+					for i, d := range batch {
+						log.Infof("Processing ack message: %d: %s", i, string(d.Body))
+						eq.AssertNextSubMsg(t, string(d.Body))
+					}
+				})
+			}()
+
+			select {
+			case <-chDone:
+				log.Info("consumed successfully")
+			case <-time.After(time.Duration(test.MessageCount) * 300 * time.Millisecond):
+				t.Error("failed to consume all messages: timeout reached")
 			}
 		})
-	}()
-
-	// let it run for a while
-	time.Sleep(4200 * time.Millisecond)
-
-	// close the consumer
-	close(chDone)
-	wg.Wait()
-
-	// re-open the consumer, this time acknowledge the messages
-	chDone = make(chan struct{})
-	close(chAck)
-
-	// consume message one by one
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		consume(log, 1, batchTimeout, chDone, chAck, conn, queueName, messageCount, func(batch []*amqp.Delivery) {
-			for i, d := range batch {
-				log.Infof("Processing ack message: %d: %s", i, string(d.Body))
-				eq1.AssertNextSubMsg(t, string(d.Body))
-			}
-		})
-	}()
-
-	select {
-	case <-chDone:
-		log.Info("consumed successfully")
-	case <-time.After(10 * time.Second):
-		t.Error("failed to consume all messeges: timeout reached")
 	}
+
 }
 
 func TestLowLevelConsumeBatchOK_2(t *testing.T) {
 
-	t.Parallel()
 	var (
-		log               = logging.NewTestLogger(t)
-		ctx, cancel       = context.WithCancel(context.TODO())
-		funcName          = testutils.FuncName()
-		nextExchangeQueue = testutils.NewExchangeQueueGenerator(funcName)
-		eq1               = nextExchangeQueue()
-		exchangeName      = eq1.Exchange
-		queueName         = eq1.Queue
-
-		messageCount = 10
-		batchSize    = messageCount * 2
-		batchTimeout = 500 * time.Millisecond
-		chDone       = make(chan struct{})
-		chAck        = make(chan struct{})
+		funcName = testutils.FuncName()
 	)
-	log.SetLevel(0)
-	defer cancel()
 
-	// open connection
-	conn, err := amqp.Dial(testutils.HealthyConnectURL)
-	if err != nil {
-		log.Fatal(err)
+	tests := []struct {
+		Name         string
+		MessageCount int
+		BatchSize    int
+		BatchTimeout time.Duration
+	}{
+		{"#1", 10, 2, 50 * time.Millisecond},
+		{"#2", 10, 20, 100 * time.Millisecond},
+		{"#3", 10, 2, 500 * time.Millisecond},
+		{"#4", 10, 20, 500 * time.Millisecond},
 	}
-	defer conn.Close()
 
-	// open channel
-	ch, err := conn.Channel()
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer ch.Close()
+	for _, test := range tests {
 
-	// declare queue
-	err = ch.ExchangeDeclare(exchangeName, string(pool.ExchangeKindFanOut), true, false, false, false, nil)
-	if err != nil {
-		assert.NoError(t, err)
-		return
-	}
-	defer ch.ExchangeDelete(exchangeName, false, false)
+		test := test
+		t.Run(test.Name, func(t *testing.T) {
+			t.Parallel()
 
-	q, err := ch.QueueDeclare(queueName, true, false, false, true, nil)
-	if err != nil {
-		assert.NoError(t, err)
-		return
-	}
-	defer ch.QueueDelete(q.Name, false, false, true)
+			var (
+				log               = logging.NewTestLogger(t)
+				ctx, cancel       = context.WithCancel(context.TODO())
+				nextExchangeQueue = testutils.NewExchangeQueueGenerator(fmt.Sprintf("%s_%s", funcName, test.Name))
+				eq                = nextExchangeQueue()
+				exchangeName      = eq.Exchange
+				queueName         = eq.Queue
 
-	var wg sync.WaitGroup
+				messageCount = test.MessageCount
+				batchSize    = test.BatchSize
+				batchTimeout = test.BatchTimeout
+				chDone       = make(chan struct{})
+				chAck        = make(chan struct{})
+			)
 
-	// consume message in batch but do not acknowledge
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		consume(log, batchSize, batchTimeout, chDone, chAck, conn, queueName, messageCount, func(batch []*amqp.Delivery) {
-			for i, d := range batch {
-				log.Infof("Processing nack message: %d: %s", i, string(d.Body))
+			log.SetLevel(0)
+			defer cancel()
+
+			// open connection
+			conn, err := amqp.Dial(testutils.HealthyConnectURL)
+			if err != nil {
+				log.Fatal(err)
+			}
+			defer conn.Close()
+
+			// open channel
+			ch, err := conn.Channel()
+			if err != nil {
+				log.Fatal(err)
+			}
+			defer ch.Close()
+
+			// declare queue
+			err = ch.ExchangeDeclare(exchangeName, string(pool.ExchangeKindFanOut), true, false, false, false, nil)
+			if err != nil {
+				assert.NoError(t, err)
+				return
+			}
+			defer ch.ExchangeDelete(exchangeName, false, false)
+
+			q, err := ch.QueueDeclare(queueName, true, false, false, true, nil)
+			if err != nil {
+				assert.NoError(t, err)
+				return
+			}
+			defer ch.QueueDelete(q.Name, false, false, true)
+
+			var wg sync.WaitGroup
+
+			// consume message in batch but do not acknowledge
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				consume(log, batchSize, batchTimeout, chDone, chAck, conn, queueName, messageCount, func(batch []*amqp.Delivery) {
+					for i, d := range batch {
+						log.Infof("Processing nack message: %d: %s", i, string(d.Body))
+					}
+				})
+			}()
+
+			// publish message
+			for i := 0; i < messageCount; i++ {
+				err = ch.PublishWithContext(ctx, "", q.Name, false, false, amqp.Publishing{
+					ContentType: "text/plain",
+					Body:        []byte(eq.NextPubMsg()),
+				})
+				if err != nil {
+					assert.NoError(t, err)
+					return
+				}
+			}
+			// let it run for a while
+			time.Sleep(4200 * time.Millisecond)
+
+			// close the consumer
+			close(chDone)
+			wg.Wait()
+
+			// re-open the consumer, this time acknowledge the messages
+			chDone = make(chan struct{})
+			close(chAck)
+
+			// consume message one by one
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				consume(log, 1, batchTimeout, chDone, chAck, conn, queueName, messageCount, func(batch []*amqp.Delivery) {
+					for i, d := range batch {
+						log.Infof("Processing ack message: %d: %s", i, string(d.Body))
+						eq.AssertNextSubMsg(t, string(d.Body))
+					}
+				})
+			}()
+
+			select {
+			case <-chDone:
+				log.Info("consumed successfully")
+			case <-time.After(time.Duration(test.MessageCount) * 300 * time.Millisecond):
+				t.Error("failed to consume all messages: timeout reached")
 			}
 		})
-	}()
-
-	// publish message
-	for i := 0; i < messageCount; i++ {
-		err = ch.PublishWithContext(ctx, "", q.Name, false, false, amqp.Publishing{
-			ContentType: "text/plain",
-			Body:        []byte(eq1.NextPubMsg()),
-		})
-		if err != nil {
-			assert.NoError(t, err)
-			return
-		}
-	}
-
-	// let it run for a while
-	time.Sleep(4200 * time.Millisecond)
-
-	// close the consumer
-	close(chDone)
-	wg.Wait()
-
-	// re-open the consumer, this time acknowledge the messages
-	chDone = make(chan struct{})
-	close(chAck)
-
-	// consume message one by one
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		consume(log, 1, batchTimeout, chDone, chAck, conn, queueName, messageCount, func(batch []*amqp.Delivery) {
-			for i, d := range batch {
-				log.Infof("Processing ack message: %d: %s", i, string(d.Body))
-				eq1.AssertNextSubMsg(t, string(d.Body))
-			}
-		})
-	}()
-
-	select {
-	case <-chDone:
-		log.Info("consumed successfully")
-	case <-time.After(10 * time.Second):
-		t.Error("failed to consume all messeges: timeout reached")
 	}
 }
 
