@@ -6,5 +6,11 @@ import (
 )
 
 func Jitter(min, max time.Duration) time.Duration {
-	return min + time.Duration(rand.Int63n(int64(max-min)))
+	diff := int64(max - min)
+	if diff < 0 {
+		diff = -diff
+		min = max
+	}
+
+	return min + time.Duration(rand.Int63n(diff))
 }
