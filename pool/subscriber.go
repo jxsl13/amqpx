@@ -601,7 +601,7 @@ func (s *Subscriber) ackBatch(opts BatchHandlerConfig, session *Session, batch [
 			// cannot do anything at this point
 			return fmt.Errorf("failed to ack full batch: %w", err)
 		}
-		s.infoConsumer(opts.ConsumerTag, "acked full batch")
+		s.infofConsumer(opts.ConsumerTag, "acked full batch with delivery tag %d", lastDeliveryTag)
 		return nil
 	}
 
@@ -630,7 +630,7 @@ func (s *Subscriber) ackBatch(opts BatchHandlerConfig, session *Session, batch [
 	if err != nil {
 		return fmt.Errorf("failed to ack partial batch: %w", err)
 	}
-	s.infofConsumer(opts.ConsumerTag, "ackeded partial batch of %d messages", batchSize)
+	s.infofConsumer(opts.ConsumerTag, "ackeded partial batch of %d messages with delivery tag %d", batchSize, lastDeliveryTag)
 
 	return nil
 }
@@ -665,9 +665,9 @@ func (s *Subscriber) nackBatch(opts BatchHandlerConfig, session *Session, batch 
 		}
 	}()
 
-	lastDeliveryTag := batch[batchSize-1].DeliveryTag
+	firstDeliveryTag := batch[0].DeliveryTag
 	if batchSize == opts.MaxBatchSize {
-		err = session.Nack(lastDeliveryTag, true, true)
+		err = session.Nack(firstDeliveryTag, true, true)
 		if err != nil {
 			// cannot do anything at this point
 			return fmt.Errorf("failed to nack full batch: %w", err)
@@ -698,7 +698,7 @@ func (s *Subscriber) nackBatch(opts BatchHandlerConfig, session *Session, batch 
 	}()
 
 	// nack & requeue
-	err = session.Nack(lastDeliveryTag, true, true)
+	err = session.Nack(firstDeliveryTag, true, true)
 	if err != nil {
 		return fmt.Errorf("failed to %s partial batch: %w", mode, err)
 	}
