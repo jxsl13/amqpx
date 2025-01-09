@@ -282,6 +282,8 @@ type ExchangeQueue struct {
 }
 
 func (eq *ExchangeQueue) AssertNextSubMsg(t *testing.T, msg string) bool {
+	t.Helper()
+
 	if !eq.assertionStarted {
 		eq.assertionStarted = true
 		eq.lastAssertedSubMsg = eq.NextSubMsg()
