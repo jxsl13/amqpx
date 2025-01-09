@@ -753,7 +753,7 @@ func TestHandlerPauseAndResumeInFlightSmallWindowNackSubscriber(t *testing.T) {
 	var (
 		publish          = 10
 		initialBatchSize = 2
-		// initialBatchSize       = 2 * publish
+		//initialBatchSize       = 2 * publish
 		processingFinshed      = make(chan struct{})
 		subscriberFlushTimeout = 500 * time.Millisecond
 		finalBatchSize         = 1
@@ -763,7 +763,7 @@ func TestHandlerPauseAndResumeInFlightSmallWindowNackSubscriber(t *testing.T) {
 	amqp.RegisterTopologyDeleter(deleteTopology(log, eq1))
 
 	handler := amqp.RegisterBatchHandler(eq1.Queue, func(hctx context.Context, msgs []pool.Delivery) (err error) {
-		return fmt.Errorf("%w: rejected %d messages", pool.ErrReject, len(msgs))
+		return fmt.Errorf("requeue %d messages", len(msgs))
 	},
 		pool.WithMaxBatchSize(initialBatchSize),
 		pool.WithBatchFlushTimeout(subscriberFlushTimeout),
