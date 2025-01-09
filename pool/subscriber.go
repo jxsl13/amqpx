@@ -334,7 +334,7 @@ func (s *Subscriber) consume(h *Handler) (err error) {
 					s.infoHandler(opts.ConsumerTag, msg.Exchange, msg.RoutingKey, opts.Queue, "processed message")
 				}
 			} else {
-				poolErr := s.postProcessing(msg.DeliveryTag, session, err)
+				poolErr := s.postProcessing(opts, msg.DeliveryTag, session, err)
 				if poolErr != nil {
 					return poolErr
 				}
@@ -344,15 +344,32 @@ func (s *Subscriber) consume(h *Handler) (err error) {
 }
 
 // (n)ack delivery and signal that message was processed by the service
-func (s *Subscriber) postProcessing(deliveryTag uint64, session *Session, handlerErr error) (err error) {
+func (s *Subscriber) postProcessing(opts HandlerConfig, deliveryTag uint64, session *Session, handlerErr error) (err error) {
 	if handlerErr == nil {
-		return session.Ack(deliveryTag, false)
+		err = session.Ack(deliveryTag, false)
+		if err != nil {
+			// cannot do anything at this point
+			return fmt.Errorf("failed to ack message: %w", err)
+		}
+		s.infoConsumer(opts.ConsumerTag, "acked message")
+		return nil
 	} else if errors.Is(handlerErr, ErrReject) {
-		return session.Nack(deliveryTag, false, false)
+		err = session.Nack(deliveryTag, false, false)
+		if err != nil {
+			// cannot do anything at this point
+			return fmt.Errorf("failed to reject message: %w", err)
+		}
+		s.infoConsumer(opts.ConsumerTag, "rejected message")
+		return nil
 	}
 	// requeue message if possible
-	return session.Nack(deliveryTag, false, true)
+	err = session.Nack(deliveryTag, false, true)
+	if err != nil {
 
+		return fmt.Errorf("failed to requeue message: %w", err)
+	}
+	s.infoConsumer(opts.ConsumerTag, "requeued message")
+	return nil
 }
 
 func (s *Subscriber) batchConsumer(h *BatchHandler, wg *sync.WaitGroup) {
@@ -584,14 +601,14 @@ func (s *Subscriber) ackBatch(opts BatchHandlerConfig, session *Session, batch [
 			// cannot do anything at this point
 			return fmt.Errorf("failed to ack full batch: %w", err)
 		}
-		s.debugConsumer(opts.ConsumerTag, "acked full batch")
+		s.infoConsumer(opts.ConsumerTag, "acked full batch")
 		return nil
 	}
 
 	// we need to change the qos before ack, because the broker does not expect a (n)ack, yet.
 	// INFO: currently setting prefetch_size != 0 is not supported by RabbitMQ
-	//prefetchCount := batchSize
-	prefetchCount := 0
+	prefetchCount := batchSize
+	//prefetchCount := 0
 	err = session.Qos(s.ctx, prefetchCount, 0)
 	if err != nil {
 		// messages are lost
@@ -613,7 +630,7 @@ func (s *Subscriber) ackBatch(opts BatchHandlerConfig, session *Session, batch [
 	if err != nil {
 		return fmt.Errorf("failed to ack partial batch: %w", err)
 	}
-	s.debugfConsumer(opts.ConsumerTag, "ackeded partial batch of %d messages", batchSize)
+	s.infofConsumer(opts.ConsumerTag, "ackeded partial batch of %d messages", batchSize)
 
 	return nil
 }
@@ -637,7 +654,7 @@ func (s *Subscriber) nackBatch(opts BatchHandlerConfig, session *Session, batch 
 		return
 	}
 
-	mode := "nack"
+	mode := "reject"
 	if requeue {
 		mode = "requeue"
 	}
@@ -655,14 +672,14 @@ func (s *Subscriber) nackBatch(opts BatchHandlerConfig, session *Session, batch 
 			// cannot do anything at this point
 			return fmt.Errorf("failed to nack full batch: %w", err)
 		}
-		s.debugConsumer(opts.ConsumerTag, "nacked full batch")
+		s.infoConsumer(opts.ConsumerTag, "nacked full batch")
 		return nil
 	}
 
 	// we need to change the qos before nack & requeue, because the broker does not expect a (n)ack, yet.
 	// INFO: currently setting prefetch_size != 0 is not supported by RabbitMQ
-	//prefetchCount := batchSize
-	prefetchCount := 0
+	prefetchCount := batchSize
+	//prefetchCount := 0
 	err = session.Qos(s.ctx, prefetchCount, 0)
 	if err != nil {
 		// messages are lost
@@ -685,7 +702,7 @@ func (s *Subscriber) nackBatch(opts BatchHandlerConfig, session *Session, batch 
 	if err != nil {
 		return fmt.Errorf("failed to %s partial batch: %w", mode, err)
 	}
-	s.debugfConsumer(opts.ConsumerTag, "%sed partial batch of %d messages", mode, batchSize)
+	s.infofConsumer(opts.ConsumerTag, "%sed partial batch of %d messages", mode, batchSize)
 
 	return nil
 }
@@ -864,6 +881,12 @@ func (s *Subscriber) infoConsumer(consumer string, a ...any) {
 	s.log.WithFields(withConsumerIfSet(consumer, map[string]any{
 		"subscriber": s.pool.Name(),
 	})).Info(a...)
+}
+
+func (s *Subscriber) infofConsumer(consumer string, format string, a ...any) {
+	s.log.WithFields(withConsumerIfSet(consumer, map[string]any{
+		"subscriber": s.pool.Name(),
+	})).Infof(format, a...)
 }
 
 func withConsumerIfSet(consumer string, m map[string]any) map[string]any {
