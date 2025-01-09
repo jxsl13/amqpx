@@ -133,6 +133,10 @@ func NewConnection(ctx context.Context, connectUrl, name string, options ...Conn
 }
 
 func (ch *Connection) Close() (err error) {
+	if ch == nil {
+		return nil
+	}
+
 	ch.mu.Lock()
 	defer ch.mu.Unlock()
 
