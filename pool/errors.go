@@ -40,10 +40,6 @@ var (
 	// ErrReject can be used to reject a specific message
 	// This is a special error that negatively acknowledges messages and does not reuque them.
 	ErrReject = errors.New("message rejected")
-
-	// ErrRejectSingle can be used to reject a specific message
-	// This is a special error that negatively acknowledges messages and does not reuque them
-	ErrRejectSingle = errors.New("single message rejected")
 )
 
 var (
@@ -77,9 +73,7 @@ func recoverable(err error) bool {
 		return false
 	}
 
-	if errors.Is(err, ErrBlockingFlowControl) {
-		return false
-	}
+	// flow control errors are recoverable
 
 	// invalid usage of the amqp protocol is not recoverable
 	// INFO: this should be checked last.

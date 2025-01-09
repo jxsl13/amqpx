@@ -355,7 +355,12 @@ func (s *Session) recover(ctx context.Context) error {
 // You may check for ErrNack in order to see whether the broker rejected the message temporatily.
 // WARNING: AwaitConfirm cannot be retried in case the channel dies or errors.
 // You must resend your message and attempt to await it again.
-func (s *Session) AwaitConfirm(ctx context.Context, expectedTag uint64) error {
+func (s *Session) AwaitConfirm(ctx context.Context, expectedTag uint64) (err error) {
+	defer func() {
+		if err != nil {
+			err = fmt.Errorf("await confirm failed: %w", err)
+		}
+	}()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -364,51 +369,50 @@ func (s *Session) AwaitConfirm(ctx context.Context, expectedTag uint64) error {
 	}
 
 	select {
-	// TODO: this might lead to problems when a single session is used
+	// TODO: WARNING: this might lead to problems when a single session is used
 	// in a multithreaded context. That way we might received out of order confirmations
 	// which could lead to unexpected behavior.
 	case confirm, ok := <-s.confirms:
 		if !ok {
 			err := s.error()
 			if err != nil {
-				return fmt.Errorf("await confirm failed: confirms channel closed: %w", err)
+				return fmt.Errorf("confirms channel closed: %w", err)
 			}
-			return fmt.Errorf("await confirm failed: confirms channel %w", ErrClosed)
+			return fmt.Errorf("confirms channel %w", ErrClosed)
+		}
+		if confirm.DeliveryTag != expectedTag {
+			// https://www.rabbitmq.com/docs/confirms#publisher-confirms-latency
+			return fmt.Errorf("%w: expected %d, got %d", ErrDeliveryTagMismatch, expectedTag, confirm.DeliveryTag)
 		}
 		if !confirm.Ack {
 			// in case the server did not accept the message, it might be due to resource problems.
 			// TODO: do we want to pause here upon flow control messages
-			err := fmt.Errorf("await confirm failed: %w", ErrNack)
-			return err
+			return ErrNack
 		}
-		if confirm.DeliveryTag != expectedTag {
-			return fmt.Errorf("await confirm failed: %w: expected %d, got %d", ErrDeliveryTagMismatch, expectedTag, confirm.DeliveryTag)
-		}
+		// confirmed by broker
 		return nil
 	case returned, ok := <-s.returned:
 		if !ok {
 			err := s.error()
 			if err != nil {
-				return fmt.Errorf("await confirm failed: returned channel closed: %w", err)
+				return fmt.Errorf("returned channel closed: %w", err)
 			}
-			return fmt.Errorf("await confirm failed: %w", errReturnedClosed)
+			return fmt.Errorf("%w", errReturnedClosed)
 		}
-		return fmt.Errorf("await confirm failed: %w: %s", ErrReturned, returned.ReplyText)
+		return fmt.Errorf("%w: %s", ErrReturned, returned.ReplyText)
 	case blocking, ok := <-s.conn.BlockingFlowControl():
 		if !ok {
 			err := s.error()
 			if err != nil {
-				return fmt.Errorf("await confirm failed: blocking channel closed: %w", err)
+				return fmt.Errorf("blocking channel closed: %w", err)
 			}
-			return fmt.Errorf("await confirm failed: %w", errBlockingFlowControlClosed)
+			return fmt.Errorf("%w", errBlockingFlowControlClosed)
 		}
-		return fmt.Errorf("await confirm failed: %w: %s", ErrBlockingFlowControl, blocking.Reason)
+		return fmt.Errorf("%w: %s", ErrBlockingFlowControl, blocking.Reason)
 	case <-ctx.Done():
-		err := ctx.Err()
-		return fmt.Errorf("await confirm: failed context %w: %w", ErrClosed, err)
+		return fmt.Errorf("await confirm: failed context %w: %w", ErrClosed, ctx.Err())
 	case <-s.ctx.Done():
-		err := ctx.Err()
-		return fmt.Errorf("await confirm failed: session %w: %w", ErrClosed, err)
+		return fmt.Errorf("session %w: %w", ErrClosed, ctx.Err())
 	}
 }
 

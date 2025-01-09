@@ -126,8 +126,7 @@ func TestPublishAwaitFlowControl(t *testing.T) {
 		pool.WithLogger(logging.NewTestLogger(t)),
 		pool.WithConfirms(true),
 	)
-	if err != nil {
-		assert.NoError(t, err)
+	if !assert.NoError(t, err) {
 		return
 	}
 	defer func() {
@@ -140,8 +139,7 @@ func TestPublishAwaitFlowControl(t *testing.T) {
 		queueName        = nextQueueName()
 	)
 	ts, err := p.GetTransientSession(ctx)
-	if err != nil {
-		assert.NoError(t, err)
+	if !assert.NoError(t, err) {
 		return
 	}
 	defer func() {
@@ -156,11 +154,16 @@ func TestPublishAwaitFlowControl(t *testing.T) {
 	pub := pool.NewPublisher(p)
 	defer pub.Close()
 
-	err = pub.Publish(ctx, exchangeName, "", pool.Publishing{
+	tctx, tcancel := context.WithTimeout(ctx, 10*time.Second)
+	defer tcancel()
+
+	err = pub.Publish(tctx, exchangeName, "", pool.Publishing{
 		ContentType: "text/plain",
 		Body:        []byte(publisherMsgGen()),
 	})
-	assert.ErrorIs(t, err, pool.ErrFlowControl)
+	if !assert.ErrorIs(t, err, context.DeadlineExceeded) {
+		t.Fatal("expected context deadline exceeded error")
+	}
 	// FIXME: this test gets stuck when the sessions in the session pool are closed.:
 }
 */
