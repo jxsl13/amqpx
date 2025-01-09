@@ -294,22 +294,28 @@ func testBatchSubscriberMaxBytes(t *testing.T, funcName string, maxBatchBytes in
 	wg.Wait()
 }
 
+// This test proofs that Qos and prefetch_count are not required when consuming batches.
 func TestLowLevelConsumeBatchOK(t *testing.T) {
-
+	t.Parallel()
 	var (
 		funcName = testutils.FuncName()
 	)
 
 	tests := []struct {
 		Name         string
+		Qos          bool
 		MessageCount int
 		BatchSize    int
 		BatchTimeout time.Duration
 	}{
-		{"#1", 10, 2, 100 * time.Millisecond},
-		{"#2", 10, 20, 100 * time.Millisecond},
-		{"#3", 10, 2, 500 * time.Millisecond},
-		{"#4", 10, 20, 500 * time.Millisecond},
+		{"#1", true, 10, 2, 100 * time.Millisecond},
+		{"#2", true, 10, 20, 100 * time.Millisecond},
+		{"#3", true, 10, 2, 500 * time.Millisecond},
+		{"#4", true, 10, 20, 500 * time.Millisecond},
+		{"#5", false, 10, 2, 100 * time.Millisecond},
+		{"#6", false, 10, 20, 100 * time.Millisecond},
+		{"#7", false, 10, 2, 500 * time.Millisecond},
+		{"#8", false, 10, 20, 500 * time.Millisecond},
 	}
 
 	for _, test := range tests {
@@ -383,7 +389,7 @@ func TestLowLevelConsumeBatchOK(t *testing.T) {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				consume(log, batchSize, batchTimeout, chDone, chAck, conn, queueName, messageCount, func(batch []*amqp.Delivery) {
+				consume(log, test.Qos, batchSize, batchTimeout, chDone, chAck, conn, queueName, messageCount, func(batch []*amqp.Delivery) {
 					for i, d := range batch {
 						log.Infof("Processing nack message: %d: %s", i, string(d.Body))
 					}
@@ -405,7 +411,7 @@ func TestLowLevelConsumeBatchOK(t *testing.T) {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				consume(log, 1, batchTimeout, chDone, chAck, conn, queueName, messageCount, func(batch []*amqp.Delivery) {
+				consume(log, test.Qos, 1, batchTimeout, chDone, chAck, conn, queueName, messageCount, func(batch []*amqp.Delivery) {
 					for i, d := range batch {
 						log.Infof("Processing ack message: %d: %s", i, string(d.Body))
 						eq.AssertNextSubMsg(t, string(d.Body))
@@ -424,22 +430,28 @@ func TestLowLevelConsumeBatchOK(t *testing.T) {
 
 }
 
+// This test proofs that Qos and prefetch_count are not required when consuming batches.
 func TestLowLevelConsumeBatchOK_2(t *testing.T) {
-
+	t.Parallel()
 	var (
 		funcName = testutils.FuncName()
 	)
 
 	tests := []struct {
 		Name         string
+		Qos          bool
 		MessageCount int
 		BatchSize    int
 		BatchTimeout time.Duration
 	}{
-		{"#1", 10, 2, 50 * time.Millisecond},
-		{"#2", 10, 20, 100 * time.Millisecond},
-		{"#3", 10, 2, 500 * time.Millisecond},
-		{"#4", 10, 20, 500 * time.Millisecond},
+		{"#1", true, 10, 2, 50 * time.Millisecond},
+		{"#2", true, 10, 20, 100 * time.Millisecond},
+		{"#3", true, 10, 2, 500 * time.Millisecond},
+		{"#4", true, 10, 20, 500 * time.Millisecond},
+		{"#5", false, 10, 2, 50 * time.Millisecond},
+		{"#6", false, 10, 20, 100 * time.Millisecond},
+		{"#7", false, 10, 2, 500 * time.Millisecond},
+		{"#8", false, 10, 20, 500 * time.Millisecond},
 	}
 
 	for _, test := range tests {
@@ -501,7 +513,7 @@ func TestLowLevelConsumeBatchOK_2(t *testing.T) {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				consume(log, batchSize, batchTimeout, chDone, chAck, conn, queueName, messageCount, func(batch []*amqp.Delivery) {
+				consume(log, test.Qos, batchSize, batchTimeout, chDone, chAck, conn, queueName, messageCount, func(batch []*amqp.Delivery) {
 					for i, d := range batch {
 						log.Infof("Processing nack message: %d: %s", i, string(d.Body))
 					}
@@ -534,7 +546,7 @@ func TestLowLevelConsumeBatchOK_2(t *testing.T) {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				consume(log, 1, batchTimeout, chDone, chAck, conn, queueName, messageCount, func(batch []*amqp.Delivery) {
+				consume(log, test.Qos, 1, batchTimeout, chDone, chAck, conn, queueName, messageCount, func(batch []*amqp.Delivery) {
 					for i, d := range batch {
 						log.Infof("Processing ack message: %d: %s", i, string(d.Body))
 						eq.AssertNextSubMsg(t, string(d.Body))
@@ -552,7 +564,7 @@ func TestLowLevelConsumeBatchOK_2(t *testing.T) {
 	}
 }
 
-func consume(log logging.Logger, batchSize int, batchTimeout time.Duration, chDone chan struct{}, chAck chan struct{}, conn *amqp.Connection, queueName string, messageCount int, process func(batch []*amqp.Delivery)) {
+func consume(log logging.Logger, qos bool, batchSize int, batchTimeout time.Duration, chDone chan struct{}, chAck chan struct{}, conn *amqp.Connection, queueName string, messageCount int, process func(batch []*amqp.Delivery)) {
 	defer func() {
 		log.Info("consumer closed")
 	}()
@@ -565,11 +577,13 @@ func consume(log logging.Logger, batchSize int, batchTimeout time.Duration, chDo
 	}
 	defer ch.Close()
 
-	// consume message
-	err = ch.Qos(batchSize, 0, false)
-	if err != nil {
-		log.Error(err)
-		return
+	if qos {
+		// consume message
+		err = ch.Qos(batchSize, 0, false)
+		if err != nil {
+			log.Error(err)
+			return
+		}
 	}
 
 	msgs, err := ch.Consume(queueName, "", false, false, false, false, nil)
