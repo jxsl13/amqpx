@@ -334,7 +334,7 @@ func (s *Subscriber) consume(h *Handler) (err error) {
 					s.infoHandler(opts.ConsumerTag, msg.Exchange, msg.RoutingKey, opts.Queue, "processed message")
 				}
 			} else {
-				poolErr := s.ackPostHandle(opts, msg.DeliveryTag, msg.Exchange, msg.RoutingKey, session, err)
+				poolErr := s.postProcessing(msg.DeliveryTag, session, err)
 				if poolErr != nil {
 					return poolErr
 				}
@@ -344,41 +344,15 @@ func (s *Subscriber) consume(h *Handler) (err error) {
 }
 
 // (n)ack delivery and signal that message was processed by the service
-func (s *Subscriber) ackPostHandle(opts HandlerConfig, deliveryTag uint64, exchange, routingKey string, session *Session, handlerErr error) (err error) {
-	var ackErr error
+func (s *Subscriber) postProcessing(deliveryTag uint64, session *Session, handlerErr error) (err error) {
 	if handlerErr == nil {
-		ackErr = session.Ack(deliveryTag, false)
-	} else if errors.Is(handlerErr, ErrReject) || errors.Is(handlerErr, ErrRejectSingle) {
-		ackErr = session.Nack(deliveryTag, false, false)
-	} else {
-		// requeue message if possible
-		ackErr = session.Nack(deliveryTag, false, true)
+		return session.Ack(deliveryTag, false)
+	} else if errors.Is(handlerErr, ErrReject) {
+		return session.Nack(deliveryTag, false, false)
 	}
+	// requeue message if possible
+	return session.Nack(deliveryTag, false, true)
 
-	if ackErr == nil {
-		// (n)acked or rejected successfully
-		if handlerErr == nil {
-			s.infoHandler(opts.ConsumerTag, exchange, routingKey, opts.Queue, "acked message")
-		} else if errors.Is(handlerErr, ErrReject) {
-			s.infoHandler(opts.ConsumerTag, exchange, routingKey, opts.Queue, "rejected message")
-		} else {
-			s.infoHandler(opts.ConsumerTag, exchange, routingKey, opts.Queue, "nacked message")
-		}
-		return nil
-	}
-
-	// if (n)ack fails, we know that the connection died
-	// potentially before processing already.
-	s.warnHandler(opts.ConsumerTag, exchange, routingKey, opts.Queue, ackErr, "(n)ack failed")
-	poolErr := session.Recover(s.ctx)
-	if poolErr != nil {
-		// only returns an error upon shutdown
-		return poolErr
-	}
-
-	// do not retry, because the broker will requeue the un(n)acked message
-	// after a timeout of (by default) 30 minutes.
-	return nil
 }
 
 func (s *Subscriber) batchConsumer(h *BatchHandler, wg *sync.WaitGroup) {
@@ -450,28 +424,19 @@ func (s *Subscriber) batchConsume(h *BatchHandler) (err error) {
 	// preallocate memory for batch
 	batch := make([]Delivery, 0, maxi(1, opts.MaxBatchSize))
 	defer func() {
-		if len(batch) == 0 {
-			return
-		}
-
-		lastDeliveryTag := batch[len(batch)-1].DeliveryTag
-
 		if errors.Is(err, ErrClosed) {
 			// requeue all not yet processed messages in batch slice
 			// we can only nack these messages in case the session has not been closed
 			// Its does not make sense to use session.Nack at this point because in case that the sessison dies
 			// the delivery tags also die with it.
 			// There is no way to recover form this state in case an error is returned from the Nack call.
-
-			nackErr := session.Nack(lastDeliveryTag, true, true)
-			if nackErr != nil {
-				s.warnBatchHandler(
-					opts.ConsumerTag,
+			reqErr := s.requeueBatch(opts, session, batch)
+			if reqErr != nil {
+				s.errorBatchHandler(opts.ConsumerTag,
 					opts.Queue,
 					opts.MaxBatchSize,
 					opts.MaxBatchBytes,
-					err,
-					"failed to nack and requeue batch upon shutdown",
+					fmt.Errorf("failed to requeue batch upon shutdown: %w", reqErr),
 				)
 			} else {
 				s.infoBatchHandlerf(
@@ -483,17 +448,15 @@ func (s *Subscriber) batchConsume(h *BatchHandler) (err error) {
 					len(batch),
 				)
 			}
+
 		} else if errors.Is(err, ErrDeliveryClosed) && isContextClosed(h.pausing()) {
-			nackErr := session.Nack(lastDeliveryTag, true, true)
-			if nackErr != nil {
-				s.warnBatchHandlerf(
-					opts.ConsumerTag,
+			reqErr := s.requeueBatch(opts, session, batch)
+			if reqErr != nil {
+				s.errorBatchHandler(opts.ConsumerTag,
 					opts.Queue,
 					opts.MaxBatchSize,
 					opts.MaxBatchBytes,
-					err,
-					"failed to nack and requeue %d batch messages upon pausing",
-					len(batch),
+					fmt.Errorf("failed to requeue batch upon pausing: %w", reqErr),
 				)
 			} else {
 				s.infoBatchHandlerf(
@@ -510,12 +473,12 @@ func (s *Subscriber) batchConsume(h *BatchHandler) (err error) {
 	}()
 
 	var (
-		timer   = time.NewTimer(opts.FlushTimeout)
-		drained = false
+		timer      = time.NewTimer(opts.FlushTimeout)
+		drained    = false
+		batchBytes = 0
 	)
 	defer closeTimer(timer, &drained)
 
-	var batchBytes = 0
 	for {
 		// reset batch slice
 		// reuse memory
@@ -568,17 +531,17 @@ func (s *Subscriber) batchConsume(h *BatchHandler) (err error) {
 
 		// at this point we have a batch to work with
 		var (
-			batchSize       = len(batch)
-			lastDeliveryTag = batch[len(batch)-1].DeliveryTag
+			batchSize = len(batch)
 		)
 
 		s.infoBatchHandler(opts.ConsumerTag, opts.Queue, batchSize, batchBytes, "received batch")
 		err = opts.HandlerFunc(h.pausing(), batch)
-		// no acks required
 		if opts.AutoAck {
+			// no acks required
 			if err != nil {
 				// we cannot really do anything to recover from a processing error in this case
-				s.errorBatchHandler(opts.ConsumerTag,
+				s.errorBatchHandler(
+					opts.ConsumerTag,
 					opts.Queue,
 					batchSize,
 					batchBytes,
@@ -594,7 +557,7 @@ func (s *Subscriber) batchConsume(h *BatchHandler) (err error) {
 				)
 			}
 		} else {
-			poolErr := s.ackBatchPostHandle(opts, lastDeliveryTag, batchSize, batchBytes, session, err)
+			poolErr := s.batchPostProcessing(opts, session, batch, err)
 			if poolErr != nil {
 				return poolErr
 			}
@@ -602,19 +565,86 @@ func (s *Subscriber) batchConsume(h *BatchHandler) (err error) {
 	}
 }
 
+func (s *Subscriber) ackBatch(opts BatchHandlerConfig, session *Session, batch []Delivery) (err error) {
+	batchSize := len(batch)
+	if batchSize == 0 {
+		return nil
+	}
+
+	defer func() {
+		if err != nil {
+			err = fmt.Errorf("failed to ack batch of %d messages: %w", batchSize, err)
+		}
+	}()
+
+	lastDeliveryTag := batch[batchSize-1].DeliveryTag
+	if batchSize == opts.MaxBatchSize {
+		err = session.Ack(lastDeliveryTag, true)
+		if err != nil {
+			// cannot do anything at this point
+			return fmt.Errorf("failed to ack full batch: %w", err)
+		}
+		s.debugConsumer(opts.ConsumerTag, "acked full batch")
+		return nil
+	}
+
+	// we need to change the qos before ack, because the broker does not expect a (n)ack, yet.
+	// INFO: currently setting prefetch_size != 0 is not supported by RabbitMQ
+	//prefetchCount := batchSize
+	prefetchCount := 0
+	err = session.Qos(s.ctx, prefetchCount, 0)
+	if err != nil {
+		// messages are lost
+		return fmt.Errorf("failed to set QoS prefetch_count to %d before batch ack: %w", prefetchCount, err)
+	}
+	s.debugfConsumer(opts.ConsumerTag, "updated Qos prefetch_count to %d before batch ack", prefetchCount)
+	defer func() {
+		// reset Qos to previous value
+		// INFO: setting prefetch_size != 0 is not supported by RabbitMQ
+		resetErr := session.Qos(s.ctx, opts.MaxBatchSize, 0)
+		if resetErr != nil {
+			err = errors.Join(err, fmt.Errorf("failed to reset QoS prefetch_count to %d after batch ack: %w", opts.MaxBatchSize, err))
+		} else {
+			s.debugfConsumer(opts.ConsumerTag, "reset Qos prefetch_count to %d after batch ack", opts.MaxBatchSize)
+		}
+	}()
+
+	err = session.Ack(lastDeliveryTag, true)
+	if err != nil {
+		return fmt.Errorf("failed to ack partial batch: %w", err)
+	}
+	s.debugfConsumer(opts.ConsumerTag, "ackeded partial batch of %d messages", batchSize)
+
+	return nil
+}
+
+func (s *Subscriber) requeueBatch(opts BatchHandlerConfig, session *Session, batch []Delivery) error {
+	return s.nackBatch(opts, session, batch, true)
+}
+
+func (s *Subscriber) rejectBatch(opts BatchHandlerConfig, session *Session, batch []Delivery) error {
+	return s.nackBatch(opts, session, batch, false)
+}
+
 // we expect that at this point the prefetch_count of Qos is set to the MaxBatchSize,
 // which is why once we change the Qos setting, we have to reset it back to the previous value
 // batchBytes is only used for logging purposes
 // This requeue works with the assumption that it is not possible to (n)ack messages of partial batches whose size is smaller than the prefetch_count without
 // changing the prefetch_count of the Qos setting.
-func (s *Subscriber) requeueBatch(opts BatchHandlerConfig, session *Session, batch []Delivery) (err error) {
+func (s *Subscriber) nackBatch(opts BatchHandlerConfig, session *Session, batch []Delivery, requeue bool) (err error) {
 	batchSize := len(batch)
 	if batchSize == 0 {
 		return
 	}
+
+	mode := "nack"
+	if requeue {
+		mode = "requeue"
+	}
+
 	defer func() {
 		if err != nil {
-			err = fmt.Errorf("failed to requeue batch of %d messages: %w", batchSize, err)
+			err = fmt.Errorf("failed to %s batch of %d messages: %w", mode, batchSize, err)
 		}
 	}()
 
@@ -623,37 +653,39 @@ func (s *Subscriber) requeueBatch(opts BatchHandlerConfig, session *Session, bat
 		err = session.Nack(lastDeliveryTag, true, true)
 		if err != nil {
 			// cannot do anything at this point
-			return fmt.Errorf("failed to nack and requeue full batch: %w", err)
+			return fmt.Errorf("failed to nack full batch: %w", err)
 		}
-		s.debugConsumer(opts.ConsumerTag, "requeued full batch")
-		return
+		s.debugConsumer(opts.ConsumerTag, "nacked full batch")
+		return nil
 	}
 
 	// we need to change the qos before nack & requeue, because the broker does not expect a (n)ack, yet.
 	// INFO: currently setting prefetch_size != 0 is not supported by RabbitMQ
-	err = session.Qos(s.ctx, batchSize, 0)
+	//prefetchCount := batchSize
+	prefetchCount := 0
+	err = session.Qos(s.ctx, prefetchCount, 0)
 	if err != nil {
 		// messages are lost
-		return fmt.Errorf("failed to set QoS prefetch_count to %d for batch consumer requeue: %w", batchSize, err)
+		return fmt.Errorf("failed to set QoS prefetch_count to %d before batch %s: %w", prefetchCount, mode, err)
 	}
-	s.debugfConsumer(opts.ConsumerTag, "updated Qos prefetch_count to %d before requeue", batchSize)
+	s.debugfConsumer(opts.ConsumerTag, "updated Qos prefetch_count to %d before batch %s", prefetchCount, mode)
 	defer func() {
 		// reset Qos to previous value
 		// INFO: setting prefetch_size != 0 is not supported by RabbitMQ
 		resetErr := session.Qos(s.ctx, opts.MaxBatchSize, 0)
 		if resetErr != nil {
-			err = errors.Join(err, fmt.Errorf("failed to reset QoS prefetch_count to %d for batch consumer requeue: %w", opts.MaxBatchSize, err))
+			err = errors.Join(err, fmt.Errorf("failed to reset QoS prefetch_count to %d after batch %s: %w", opts.MaxBatchSize, mode, err))
 		} else {
-			s.debugfConsumer(opts.ConsumerTag, "reset Qos prefetch_count to %d after requeue", opts.MaxBatchSize)
+			s.debugfConsumer(opts.ConsumerTag, "reset Qos prefetch_count to %d after batch %s", opts.MaxBatchSize, mode)
 		}
 	}()
 
 	// nack & requeue
 	err = session.Nack(lastDeliveryTag, true, true)
 	if err != nil {
-		return fmt.Errorf("failed to nack and requeue partial batch: %w", err)
+		return fmt.Errorf("failed to %s partial batch: %w", mode, err)
 	}
-	s.debugfConsumer(opts.ConsumerTag, "requeued partial batch of %d messages", batchSize)
+	s.debugfConsumer(opts.ConsumerTag, "%sed partial batch of %d messages", mode, batchSize)
 
 	return nil
 }
@@ -667,80 +699,17 @@ func isContextClosed(ctx context.Context) bool {
 	}
 }
 
-func (s *Subscriber) ackBatchPostHandle(opts BatchHandlerConfig, lastDeliveryTag uint64, currentBatchSize, currentBatchBytes int, session *Session, handlerErr error) (err error) {
-	var ackErr error
+func (s *Subscriber) batchPostProcessing(opts BatchHandlerConfig, session *Session, batch []Delivery, handlerErr error) (err error) {
+
 	// processing failed
 	if handlerErr == nil {
-		// ack last and all previous messages
-		ackErr = session.Ack(lastDeliveryTag, true)
+		return s.ackBatch(opts, session, batch)
 	} else if errors.Is(handlerErr, ErrReject) {
 		// reject multiple
-		ackErr = session.Nack(lastDeliveryTag, true, false)
-	} else if errors.Is(handlerErr, ErrRejectSingle) {
-		// reject single
-		ackErr = session.Nack(lastDeliveryTag, false, false)
-	} else {
-		// requeue message if possible & nack all previous messages
-		ackErr = session.Nack(lastDeliveryTag, true, true)
+		return s.rejectBatch(opts, session, batch)
 	}
-
-	if ackErr == nil {
-		if handlerErr == nil {
-			s.infoBatchHandler(
-				opts.ConsumerTag,
-				opts.Queue,
-				currentBatchSize,
-				currentBatchBytes,
-				"acked batch",
-			)
-		} else if errors.Is(handlerErr, ErrReject) {
-			s.infoBatchHandler(
-				opts.ConsumerTag,
-				opts.Queue,
-				currentBatchSize,
-				currentBatchBytes,
-				"rejected batch",
-			)
-		} else if errors.Is(handlerErr, ErrRejectSingle) {
-			s.infoBatchHandler(
-				opts.ConsumerTag,
-				opts.Queue,
-				currentBatchSize,
-				currentBatchBytes,
-				"rejected single message in batch",
-			)
-		} else {
-			s.infoBatchHandler(
-				opts.ConsumerTag,
-				opts.Queue,
-				currentBatchSize,
-				currentBatchBytes,
-				"nacked batch",
-			)
-		}
-		// successfully handled message
-		return nil
-	}
-
-	// if (n)ack fails, we know that the connection died
-	// potentially before processing already.
-	s.warnBatchHandler(
-		opts.ConsumerTag,
-		opts.Queue,
-		currentBatchSize,
-		currentBatchBytes,
-		ackErr,
-		"batch (n)ack failed",
-	)
-	poolErr := session.Recover(s.ctx)
-	if poolErr != nil {
-		// only returns an error upon shutdown
-		return poolErr
-	}
-
-	// do not retry, because the broker will requeue the un(n)acked message
-	// after a timeout of by default 30 minutes.
-	return nil
+	// requeue message if possible & nack all previous messages
+	return s.requeueBatch(opts, session, batch)
 }
 
 type handler interface {
