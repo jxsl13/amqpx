@@ -751,12 +751,11 @@ func TestHandlerPauseAndResumeInFlightSmallWindowNackSubscriber(t *testing.T) {
 	}()
 
 	var (
-		publish          = 10
-		initialBatchSize = 2
-		//initialBatchSize       = 2 * publish
-		processingFinshed      = make(chan struct{})
+		publish                = 10 // explicitly this combination of values causes the out of order issue of the batch handler
+		initialBatchSize       = 2
 		subscriberFlushTimeout = 500 * time.Millisecond
 		finalBatchSize         = 1
+		processingFinshed      = make(chan struct{})
 	)
 
 	amqp.RegisterTopologyCreator(createTopology(log, eq1))
