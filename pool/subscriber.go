@@ -605,27 +605,6 @@ func (s *Subscriber) ackBatch(opts BatchHandlerConfig, session *Session, batch [
 		return nil
 	}
 
-	// we need to change the qos before ack, because the broker does not expect a (n)ack, yet.
-	// INFO: currently setting prefetch_size != 0 is not supported by RabbitMQ
-	prefetchCount := batchSize
-	//prefetchCount := 0
-	err = session.Qos(s.ctx, prefetchCount, 0)
-	if err != nil {
-		// messages are lost
-		return fmt.Errorf("failed to set QoS prefetch_count to %d before batch ack: %w", prefetchCount, err)
-	}
-	s.debugfConsumer(opts.ConsumerTag, "updated Qos prefetch_count to %d before batch ack", prefetchCount)
-	defer func() {
-		// reset Qos to previous value
-		// INFO: setting prefetch_size != 0 is not supported by RabbitMQ
-		resetErr := session.Qos(s.ctx, opts.MaxBatchSize, 0)
-		if resetErr != nil {
-			err = errors.Join(err, fmt.Errorf("failed to reset QoS prefetch_count to %d after batch ack: %w", opts.MaxBatchSize, err))
-		} else {
-			s.debugfConsumer(opts.ConsumerTag, "reset Qos prefetch_count to %d after batch ack", opts.MaxBatchSize)
-		}
-	}()
-
 	err = session.Ack(lastDeliveryTag, true)
 	if err != nil {
 		return fmt.Errorf("failed to ack partial batch: %w", err)
@@ -665,9 +644,9 @@ func (s *Subscriber) nackBatch(opts BatchHandlerConfig, session *Session, batch 
 		}
 	}()
 
-	firstDeliveryTag := batch[0].DeliveryTag
+	lastDeliveryTag := batch[batchSize-1].DeliveryTag
 	if batchSize == opts.MaxBatchSize {
-		err = session.Nack(firstDeliveryTag, true, true)
+		err = session.Nack(lastDeliveryTag, true, true)
 		if err != nil {
 			// cannot do anything at this point
 			return fmt.Errorf("failed to nack full batch: %w", err)
@@ -676,29 +655,8 @@ func (s *Subscriber) nackBatch(opts BatchHandlerConfig, session *Session, batch 
 		return nil
 	}
 
-	// we need to change the qos before nack & requeue, because the broker does not expect a (n)ack, yet.
-	// INFO: currently setting prefetch_size != 0 is not supported by RabbitMQ
-	prefetchCount := batchSize
-	//prefetchCount := 0
-	err = session.Qos(s.ctx, prefetchCount, 0)
-	if err != nil {
-		// messages are lost
-		return fmt.Errorf("failed to set QoS prefetch_count to %d before batch %s: %w", prefetchCount, mode, err)
-	}
-	s.debugfConsumer(opts.ConsumerTag, "updated Qos prefetch_count to %d before batch %s", prefetchCount, mode)
-	defer func() {
-		// reset Qos to previous value
-		// INFO: setting prefetch_size != 0 is not supported by RabbitMQ
-		resetErr := session.Qos(s.ctx, opts.MaxBatchSize, 0)
-		if resetErr != nil {
-			err = errors.Join(err, fmt.Errorf("failed to reset QoS prefetch_count to %d after batch %s: %w", opts.MaxBatchSize, mode, err))
-		} else {
-			s.debugfConsumer(opts.ConsumerTag, "reset Qos prefetch_count to %d after batch %s", opts.MaxBatchSize, mode)
-		}
-	}()
-
 	// nack & requeue
-	err = session.Nack(firstDeliveryTag, true, true)
+	err = session.Nack(lastDeliveryTag, true, true)
 	if err != nil {
 		return fmt.Errorf("failed to %s partial batch: %w", mode, err)
 	}
