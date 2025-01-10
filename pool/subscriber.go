@@ -398,7 +398,7 @@ func (s *Subscriber) batchConsumer(h *BatchHandler, wg *sync.WaitGroup) {
 func (s *Subscriber) batchConsume(h *BatchHandler) (err error) {
 	// INFO: h.start is intentionally called twice, because we migh have a changed
 	// handler after pausing the processing.
-	opts, err := h.start(s.ctx)
+	opts, err := h.start(s.ctx) // initialize all contexts to be in state resuming with parent context s.ctx
 	if err != nil {
 		return err
 	}
@@ -416,10 +416,10 @@ func (s *Subscriber) batchConsume(h *BatchHandler) (err error) {
 	}()
 
 	if !opts.ConsumeOptions.AutoAck {
-		// prevent out of order queues when nacking full batches
 		// INFO: currently setting prefetch_size != 0 is not supported by RabbitMQ
 		// which is why we only set the prefetch_count here.
-		err = session.Qos(s.ctx, opts.MaxBatchSize, 0)
+		// batch size after which rabbtmq can expect a nack or ack
+		err = session.Qos(h.pausing(), opts.MaxBatchSize, 0)
 		if err != nil {
 			return fmt.Errorf("failed to set QoS for batch consumer: %w", err)
 		}
@@ -435,7 +435,7 @@ func (s *Subscriber) batchConsume(h *BatchHandler) (err error) {
 		return err
 	}
 
-	h.resumed()
+	h.resumed() // the connection was established successfully at this point, the caller of resume may proceed his execution.
 	s.infoConsumer(opts.ConsumerTag, "started")
 
 	// preallocate memory for batch
