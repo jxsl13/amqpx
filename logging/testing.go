@@ -22,9 +22,6 @@ func NewTestLogger(t *testing.T) *TestLogger {
 }
 
 func newTestLoggerWithFields(l *TestLogger, fields Fields) *TestLogger {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
 	n := &TestLogger{
 		t:      l.t,
 		fields: make(map[string]any, len(fields)+len(l.fields)),
@@ -124,21 +121,77 @@ func (l *TestLogger) Panic(args ...any) {
 }
 
 func (l *TestLogger) WithError(err error) Logger {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
 	l.t.Helper()
 	return newTestLoggerWithFields(l, map[string]any{"error": err})
 }
 func (l *TestLogger) WithField(key string, value any) Logger {
-	return newTestLoggerWithFields(l, map[string]any{key: value})
-}
-func (l *TestLogger) WithFields(fields Fields) Logger {
-	return newTestLoggerWithFields(l, fields)
-}
-
-func (l *TestLogger) fieldsMsg(level, msg string) string {
-
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
+	return newTestLoggerWithFields(l, map[string]any{key: value})
+}
+func (l *TestLogger) WithFields(fields Fields) Logger {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	return newTestLoggerWithFields(l, fields)
+}
+
+// logf is use din all xxxf methods to log a message with a format string.
+func (l *TestLogger) logf(prefix string, lvl int, format string, args ...any) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	msg, ok := l.msgf(prefix, lvl, format, args...)
+	if !ok {
+		return
+	}
+	l.t.Helper()
+	l.t.Log(msg)
+}
+
+// log is used in all xxx methods to log a message without a format string.
+func (l *TestLogger) log(prefix string, lvl int, args ...any) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	if lvl < l.lvl {
+		return
+	}
+	msg, ok := l.msg(prefix, lvl, "%v", args...)
+	if !ok {
+		return
+	}
+
+	l.t.Helper()
+	l.t.Log(msg)
+}
+
+func (l *TestLogger) msg(prefix string, lvl int, format string, args ...any) (string, bool) {
+	if lvl < l.lvl {
+		return "", false
+	}
+	l.t.Helper()
+	arg := fmt.Sprintf(format, args...)
+
+	msg := l.fieldsMsg(prefix, arg)
+	return msg, true
+}
+
+func (l *TestLogger) msgf(prefix string, lvl int, format string, args ...any) (string, bool) {
+	if lvl < l.lvl {
+		return "", false
+	}
+	arg := fmt.Sprintf(format, args...)
+
+	msg := l.fieldsMsg(prefix, arg)
+	return msg, true
+}
+
+func (l *TestLogger) fieldsMsg(level, msg string) string {
 	size := len(l.fields) + 1
 	if level != "" {
 		size += 1
@@ -189,47 +242,4 @@ func (l *TestLogger) fieldsMsg(level, msg string) string {
 	result += sb.String()
 
 	return result
-}
-
-func (l *TestLogger) msg(prefix string, lvl int, format string, args ...any) (string, bool) {
-	if lvl < l.lvl {
-		return "", false
-	}
-	l.t.Helper()
-	arg := fmt.Sprintf(format, args...)
-
-	msg := l.fieldsMsg(prefix, arg)
-	return msg, true
-}
-
-func (l *TestLogger) msgf(prefix string, lvl int, format string, args ...any) (string, bool) {
-	if lvl < l.lvl {
-		return "", false
-	}
-	arg := fmt.Sprintf(format, args...)
-
-	msg := l.fieldsMsg(prefix, arg)
-	return msg, true
-}
-
-func (l *TestLogger) logf(prefix string, lvl int, format string, args ...any) {
-	msg, ok := l.msgf(prefix, lvl, format, args...)
-	if !ok {
-		return
-	}
-	l.t.Helper()
-	l.t.Log(msg)
-}
-
-func (l *TestLogger) log(prefix string, lvl int, args ...any) {
-	if lvl < l.lvl {
-		return
-	}
-	msg, ok := l.msg(prefix, lvl, "%v", args...)
-	if !ok {
-		return
-	}
-
-	l.t.Helper()
-	l.t.Log(msg)
 }
