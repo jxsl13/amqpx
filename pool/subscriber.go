@@ -602,7 +602,7 @@ func (s *Subscriber) ackBatch(opts BatchHandlerConfig, session *Session, batch [
 			// cannot do anything at this point
 			return fmt.Errorf("failed to ack full batch: %w", err)
 		}
-		s.infofConsumer(opts.ConsumerTag, "acked full batch with delivery tag %d", lastDeliveryTag)
+		s.infoConsumer(opts.ConsumerTag, "acked full batch")
 		return nil
 	}
 
@@ -610,7 +610,7 @@ func (s *Subscriber) ackBatch(opts BatchHandlerConfig, session *Session, batch [
 	if err != nil {
 		return fmt.Errorf("failed to ack partial batch: %w", err)
 	}
-	s.infofConsumer(opts.ConsumerTag, "ackeded partial batch of %d messages with delivery tag %d", batchSize, lastDeliveryTag)
+	s.infofConsumer(opts.ConsumerTag, "ackeded partial batch of %d messages", batchSize)
 
 	return nil
 }
