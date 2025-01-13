@@ -184,7 +184,7 @@ type Topologer interface {
 	QueueDeclare(ctx context.Context, name string, option ...pool.QueueDeclareOptions) (pool.Queue, error)
 	QueueDelete(ctx context.Context, name string, option ...pool.QueueDeleteOptions) (purgedMsgs int, err error)
 	QueueBind(ctx context.Context, queueName string, routingKey string, exchange string, option ...pool.QueueBindOptions) error
-	QueueUnbind(ctx context.Context, name string, routingKey string, exchange string, arg ...amqp091.Table) error
+	QueueUnbind(ctx context.Context, name string, routingKey string, exchange string, arg ...pool.Table) error
 }
 
 // DeclareExchangeQueue declares an exchange and a queue and binds them together.

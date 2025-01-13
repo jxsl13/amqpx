@@ -396,9 +396,10 @@ func (s *Subscriber) batchConsumer(h *BatchHandler, wg *sync.WaitGroup) {
 }
 
 func (s *Subscriber) batchConsume(h *BatchHandler) (err error) {
-	// INFO: h.start is intentionally called twice, because we migh have a changed
-	// handler after pausing the processing.
-	opts, err := h.start(s.ctx) // initialize all contexts to be in state resuming with parent context s.ctx
+	// INFO: h.start is intentionally called twice, here and in the consumer!
+	// initialize all contexts to be in state resuming with parent context s.ctx .
+	// opts is an immutable copy until the next call to h.start, which can only be achieved by pausing and resuming the handler.
+	opts, err := h.start(s.ctx)
 	if err != nil {
 		return err
 	}

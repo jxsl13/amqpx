@@ -666,7 +666,7 @@ func TestHandlerPauseAndResumeInFlightNackSubscriber(t *testing.T) {
 			return fmt.Errorf("we don't want the message to be processed, yet")
 		}
 
-		// TODO: at this point the order is seemingly somewhat broken.
+		// at this point the order is not supposed to be.
 		// The bigger the batch, the more data we loose
 		for _, msg := range msgs {
 			assert.Equal(t, eq1.NextSubMsg(), string(msg.Body))
@@ -732,7 +732,10 @@ func TestHandlerPauseAndResumeInFlightNackSubscriber(t *testing.T) {
 	}
 }
 
-func TestHandlerPauseAndResumeInFlightSmallWindowNackSubscriberSimple(t *testing.T) {
+// This test tests that the requeued messages preserve their order until the requeue limit is reached.
+func TestRequeueLimitPreserveOrderOK(t *testing.T) {
+	// we test that an event is requeued to the front of the queue as many times as it was defined.
+	// https://www.rabbitmq.com/docs/quorum-queues#repeated-requeues
 	t.Parallel()
 	var (
 		log               = logging.NewTestLogger(t)
@@ -750,6 +753,12 @@ func TestHandlerPauseAndResumeInFlightSmallWindowNackSubscriberSimple(t *testing
 		initialBatchSize       = 2
 		subscriberFlushTimeout = 500 * time.Millisecond
 		finalBatchSize         = 1
+
+		// in case that this value is changed to a higher value, the test will fail, which is when the number of allowed requeues is exceeded.
+		// aftet that requeue limit is reached, messages are not returned back to the front of the queue but at the end.
+		// This prevents the raft log from growing indefinitely.
+		redeliveryLimit        = pool.DefaultQueueDeliveryLimit - 1
+		nackProcessingFinished = make(chan struct{})
 		processingFinshed      = make(chan struct{})
 	)
 
@@ -786,9 +795,38 @@ func TestHandlerPauseAndResumeInFlightSmallWindowNackSubscriberSimple(t *testing
 
 	time.Sleep(2 * time.Second)
 
-	// creat esubscriber & start consuming messages but fail to process them which results in teh being requeued
+	// create subscriber & start consuming messages but fail to process them which results in them being requeued
 	sub := amqpx.New()
-	handler := sub.RegisterBatchHandler(eq1.Queue, func(_ context.Context, msgs []pool.Delivery) (err error) {
+
+	redeliveryCounter := 0
+	done := false
+	handler := sub.RegisterBatchHandler(eq1.Queue, func(bctx context.Context, msgs []pool.Delivery) (err error) {
+
+		if done && redeliveryCounter == redeliveryLimit {
+			log.Info("blocking processing")
+			<-bctx.Done()
+			log.Info("unblocking processing")
+
+			return bctx.Err() // reject & requeue, additional redelivery that is still supposed to have the correct order.
+		}
+
+		// make sure that all were redelivered
+		redelivered := false
+		for _, msg := range msgs {
+			redelivered = redelivered || msg.Redelivered
+		}
+
+		// if all redelivered, increment counter
+		if redelivered {
+			redeliveryCounter++
+		}
+
+		// do this only once
+		if !done && redeliveryCounter == redeliveryLimit {
+			close(nackProcessingFinished)
+			done = true
+		}
+
 		return fmt.Errorf("requeue %d messages", len(msgs))
 	},
 		pool.WithMaxBatchSize(initialBatchSize),
@@ -810,7 +848,13 @@ func TestHandlerPauseAndResumeInFlightSmallWindowNackSubscriberSimple(t *testing
 		assert.NoError(t, sub.Close())
 	}()
 
-	time.Sleep(4 * time.Second)
+	select {
+	case <-nackProcessingFinished:
+		log.Info("nack processing finished")
+	case <-time.After(10 * time.Second):
+		t.Errorf("nack test timeout after 10 seconds")
+		return
+	}
 
 	// pause, reduce batch size and resume and start processing the messages properly
 	reconnectTimeout := 2 * time.Minute
@@ -834,11 +878,12 @@ func TestHandlerPauseAndResumeInFlightSmallWindowNackSubscriberSimple(t *testing
 			// process
 		}
 
-		// TODO: at this point the order is seemingly somewhat broken.
+		// At this point the order is NOT is not supposed to be broken.
 		// The bigger the batch, the more data we loose
 		for _, msg := range msgs {
-			eq1.AssertNextSubMsg(t, string(msg.Body))
 			log.Printf("received message: %s", string(msg.Body))
+			err := eq1.ValidateNextSubMsg(t, string(msg.Body))
+			assert.NoError(t, err)
 		}
 
 		cnt += len(msgs)
@@ -862,7 +907,197 @@ func TestHandlerPauseAndResumeInFlightSmallWindowNackSubscriberSimple(t *testing
 	case <-time.After(publishFinishTimeout):
 		close(processingFinshed)
 		<-processingFinshed
-		t.Errorf("timeout after %s: received %d / %d messages", publishFinishTimeout, cnt, publish)
+		t.Errorf("ack timeout after %s: received %d / %d messages", publishFinishTimeout, cnt, publish)
+	case <-processingFinshed:
+		log.Info("processing finished successfully")
+	}
+}
+
+// This test tests that the requeued messaged loose their order after the requeue limit is reached, because they are requeued at the end of the queue.
+func TestRequeueLimitPreserveOrderFail(t *testing.T) {
+	// we test that an event is requeued to the front of the queue as many times as it was defined.
+	// https://www.rabbitmq.com/docs/quorum-queues#repeated-requeues
+	t.Parallel()
+	var (
+		log               = logging.NewTestLogger(t)
+		cctx, cancel      = context.WithCancel(context.TODO())
+		funcName          = testutils.FuncName()
+		nextExchangeQueue = testutils.NewExchangeQueueGenerator(funcName)
+		eq1               = nextExchangeQueue()
+	)
+	log.SetLevel(0)
+
+	defer cancel()
+
+	var (
+		publish                = 10 // explicitly this combination of values causes the out of order issue of the batch handler
+		initialBatchSize       = 2
+		subscriberFlushTimeout = 500 * time.Millisecond
+		finalBatchSize         = 1
+
+		// exceed the requeue limit
+		redeliveryLimit        = pool.DefaultQueueDeliveryLimit // this requeues limit +1 times
+		nackProcessingFinished = make(chan struct{})
+		processingFinshed      = make(chan struct{})
+	)
+
+	// create publisher, create topology & publish messages
+	pub := amqpx.New()
+
+	pub.RegisterTopologyCreator(createTopology(log, eq1))
+	pub.RegisterTopologyDeleter(deleteTopology(log, eq1))
+
+	err := pub.Start(
+		cctx,
+		testutils.HealthyConnectURL,
+		amqpx.WithLogger(log),
+		amqpx.WithPublisherConnections(1),
+		amqpx.WithPublisherSessions(1),
+	)
+	if !assert.NoError(t, err) {
+		return
+	}
+	defer func() {
+		log.Info("closing publisher")
+		assert.NoError(t, pub.Close())
+	}()
+
+	for i := 0; i < publish; i++ {
+		err := pub.Publish(cctx, eq1.Exchange, eq1.RoutingKey, pool.Publishing{
+			ContentType: "text/plain",
+			Body:        []byte(eq1.NextPubMsg()),
+		})
+		if !assert.NoError(t, err) {
+			return
+		}
+	}
+
+	time.Sleep(2 * time.Second)
+
+	// create subscriber & start consuming messages but fail to process them which results in them being requeued
+	sub := amqpx.New()
+
+	redeliveryCounter := 0
+	done := false
+	handler := sub.RegisterBatchHandler(eq1.Queue, func(bctx context.Context, msgs []pool.Delivery) (err error) {
+
+		if done && redeliveryCounter == redeliveryLimit {
+			log.Info("blocking processing")
+			<-bctx.Done()
+			log.Info("unblocking processing")
+
+			return bctx.Err() // reject & requeue, additional redelivery that is still supposed to have the correct order.
+		}
+
+		// make sure that all were redelivered
+		redelivered := false
+		for _, msg := range msgs {
+			redelivered = redelivered || msg.Redelivered
+		}
+
+		// if all redelivered, increment counter
+		if redelivered {
+			redeliveryCounter++
+		}
+
+		// do this only once
+		if !done && redeliveryCounter == redeliveryLimit {
+			close(nackProcessingFinished)
+			done = true
+		}
+
+		return fmt.Errorf("requeue %d messages", len(msgs))
+	},
+		pool.WithMaxBatchSize(initialBatchSize),
+		pool.WithBatchFlushTimeout(subscriberFlushTimeout),
+	)
+
+	err = sub.Start(
+		cctx,
+		testutils.HealthyConnectURL,
+		amqpx.WithLogger(log),
+		amqpx.WithPublisherConnections(0), // subscriber only pool
+		amqpx.WithPublisherSessions(0),    // subscriber only pool
+	)
+	if !assert.NoError(t, err) {
+		return
+	}
+	defer func() {
+		log.Info("closing subscriber")
+		assert.NoError(t, sub.Close())
+	}()
+
+	select {
+	case <-nackProcessingFinished:
+		log.Info("nack processing finished")
+	case <-time.After(10 * time.Second):
+		t.Errorf("nack test timeout after 10 seconds")
+		return
+	}
+
+	// pause, reduce batch size and resume and start processing the messages properly
+	reconnectTimeout := 2 * time.Minute
+
+	pauseCtx, cancel := context.WithTimeout(cctx, reconnectTimeout)
+	err = handler.Pause(pauseCtx)
+	cancel()
+	if !assert.NoError(t, err) {
+		return
+	}
+
+	time.Sleep(1 * time.Second)
+
+	mu := sync.Mutex{}
+	cnt := 0
+	handler.SetMaxBatchSize(finalBatchSize)
+	handler.SetHandlerFunc(func(hctx context.Context, msgs []pool.Delivery) error {
+		select {
+		case <-hctx.Done():
+			return fmt.Errorf("handler context canceled before processing: %w", hctx.Err())
+		default:
+			// process
+		}
+
+		// At this point the order is NOT is not supposed to be broken.
+		// The bigger the batch, the more data we loose
+		atLeastOneError := false
+		for _, msg := range msgs {
+			log.Printf("received message: %s", string(msg.Body))
+			err := eq1.ValidateNextSubMsg(t, string(msg.Body))
+			if err != nil {
+				atLeastOneError = atLeastOneError || true
+			}
+		}
+		assert.True(t, atLeastOneError, "at least one message should have been out of order")
+
+		mu.Lock()
+		defer mu.Unlock()
+		cnt += len(msgs)
+		if cnt == publish {
+			close(processingFinshed)
+		}
+
+		return nil
+	})
+
+	resumeCtx, cancel := context.WithTimeout(cctx, reconnectTimeout)
+	err = handler.Resume(resumeCtx)
+	cancel()
+	if !assert.NoError(t, err) {
+		return
+	}
+
+	// await for subscriber to consume all messages before finishing test
+	publishFinishTimeout := time.Duration(publish) * time.Second // max one second per message
+	select {
+	case <-time.After(publishFinishTimeout):
+		close(processingFinshed)
+		<-processingFinshed
+
+		// lock for cnt
+		mu.Lock()
+		defer mu.Unlock()
+		t.Errorf("ack timeout after %s: received %d / %d messages", publishFinishTimeout, cnt, publish)
 	case <-processingFinshed:
 		log.Info("processing finished successfully")
 	}

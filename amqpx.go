@@ -184,19 +184,25 @@ func (a *AMQPX) Start(ctx context.Context, connectUrl string, options ...Option)
 		// which stops deleting or reconnecting after the timeout
 		a.closeTimeout = option.CloseTimeout
 
+		pubPoolOptions := make([]pool.Option, 0, 2+len(option.PoolOptions))
+		pubPoolOptions = append(pubPoolOptions,
+			pool.WithNameSuffix("-pub"),
+			pool.WithConfirms(true), // the more secure option in order to prevent message loss
+		)
+
+		// allow the user to overwrite previous options
+		pubPoolOptions = append(pubPoolOptions, option.PoolOptions...)
+
 		// publisher and subscriber need to have different tcp connections (tcp pushback prevention)
 		// pub pool is only closed when .Close() is called.
-		// This is needed so that we can correctly call the topology deleters.
+		// This context.Background() is needed so that we can correctly call the topology deleters.
 		a.pubCtx, a.pubCancel = context.WithCancel(context.Background())
 		a.pubPool, err = pool.New(
 			a.pubCtx,
 			connectUrl,
 			option.PublisherConnections,
 			option.PublisherSessions,
-			append([]pool.Option{
-				pool.WithNameSuffix("-pub"),
-				pool.WithConfirms(true),
-			}, option.PoolOptions...)..., // allow to overwrite defaults
+			pubPoolOptions..., // allow to overwrite defaults
 		)
 		if err != nil {
 			return
@@ -233,6 +239,14 @@ func (a *AMQPX) Start(ctx context.Context, connectUrl string, options ...Option)
 				connections = option.SubscriberConnections
 			}
 
+			subPoolOptions := make([]pool.Option, 0, 1+len(option.PoolOptions))
+
+			// overwritable options
+			subPoolOptions = append(subPoolOptions, pool.WithNameSuffix("-sub"))
+
+			// overwriting or additional options
+			subPoolOptions = append(subPoolOptions, option.PoolOptions...)
+
 			// subscriber needs as many channels as there are handler functions
 			// because we do not want subscriber connections to interfere
 			// with each other
@@ -240,11 +254,9 @@ func (a *AMQPX) Start(ctx context.Context, connectUrl string, options ...Option)
 			subPool, err = pool.New(
 				ctx,
 				connectUrl,
-				connections, // one connection per handler
-				sessions,    // one session per handler
-				append([]pool.Option{
-					pool.WithNameSuffix("-sub"),
-				}, option.PoolOptions...)..., // allow the user to overwrite the defaults.
+				connections,       // one connection per handler
+				sessions,          // one session per handler
+				subPoolOptions..., // allow the user to overwrite the defaults EXCEPT for the confirms setting
 			)
 			if err != nil {
 				return

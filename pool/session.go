@@ -13,6 +13,11 @@ import (
 
 const (
 	notImplemented = 540
+
+	// In order to prevent the broker from requeuing the message to th end of the queue, we need to set this limit in order for at least the
+	// first N requeues to be requeued to the front of the queue.
+	// https://www.rabbitmq.com/docs/quorum-queues#repeated-requeues
+	DefaultQueueDeliveryLimit = 10
 )
 
 // Session is a wrapper for an amqp channel.
@@ -487,7 +492,7 @@ func (s *Session) Publish(ctx context.Context, exchange string, routingKey strin
 			msg.Mandatory,
 			msg.Immediate,
 			amqp091.Publishing{
-				Headers:         msg.Headers,
+				Headers:         msg.Headers.toAMQPTable(),
 				ContentType:     msg.ContentType,
 				ContentEncoding: msg.ContentEncoding,
 				DeliveryMode:    amqpDeliverMode,
@@ -622,7 +627,7 @@ func (s *Session) Consume(queue string, option ...ConsumeOptions) (<-chan Delive
 			o.Exclusive,
 			o.NoLocal,
 			o.NoWait,
-			o.Args,
+			o.Args.toAMQPTable(),
 		)
 		if err != nil {
 			return err
@@ -688,7 +693,7 @@ func (s *Session) ConsumeWithContext(ctx context.Context, queue string, option .
 			o.Exclusive,
 			o.NoLocal,
 			o.NoWait,
-			o.Args,
+			o.Args.toAMQPTable(),
 		)
 		if err != nil {
 			return err
@@ -816,7 +821,7 @@ func (s *Session) ExchangeDeclare(ctx context.Context, name string, kind Exchang
 			o.AutoDelete,
 			o.Internal,
 			o.NoWait,
-			o.Args,
+			o.Args.toAMQPTable(),
 		)
 	})
 }
@@ -850,7 +855,7 @@ func (s *Session) ExchangeDeclarePassive(ctx context.Context, name string, kind 
 			o.AutoDelete,
 			o.Internal,
 			o.NoWait,
-			o.Args,
+			o.Args.toAMQPTable(),
 		)
 	})
 
@@ -972,7 +977,8 @@ func (s *Session) QueueDeclare(ctx context.Context, name string, option ...Queue
 		AutoDelete: false,
 		Exclusive:  false,
 		NoWait:     false,
-		Args:       QuorumQueue,
+		Args: QuorumQueue.
+			WithDeliveryLimit(DefaultQueueDeliveryLimit), // https://www.rabbitmq.com/docs/quorum-queues#repeated-requeues
 	}
 	if len(option) > 0 {
 		o = option[0]
@@ -988,7 +994,7 @@ func (s *Session) QueueDeclare(ctx context.Context, name string, option ...Queue
 			o.AutoDelete,
 			o.Exclusive,
 			o.NoWait,
-			o.Args,
+			o.Args.toAMQPTable(),
 		)
 		return err
 	})
@@ -1011,7 +1017,8 @@ func (s *Session) QueueDeclarePassive(ctx context.Context, name string, option .
 		AutoDelete: false,
 		Exclusive:  false,
 		NoWait:     false,
-		Args:       QuorumQueue,
+		Args: QuorumQueue.
+			WithDeliveryLimit(DefaultQueueDeliveryLimit), // https://www.rabbitmq.com/docs/quorum-queues#repeated-requeues
 	}
 	if len(option) > 0 {
 		o = option[0]
@@ -1028,7 +1035,7 @@ func (s *Session) QueueDeclarePassive(ctx context.Context, name string, option .
 			o.AutoDelete,
 			o.Exclusive,
 			o.NoWait,
-			o.Args,
+			o.Args.toAMQPTable(),
 		)
 		return err
 	})
@@ -1158,7 +1165,7 @@ func (s *Session) QueueBind(ctx context.Context, queueName string, routingKey st
 			routingKey,
 			exchange,
 			o.NoWait,
-			o.Args,
+			o.Args.toAMQPTable(),
 		)
 	})
 }
@@ -1178,7 +1185,7 @@ func (s *Session) QueueUnbind(ctx context.Context, name string, routingKey strin
 	}
 
 	return s.retry(ctx, s.queueUnbindRetryCB, func() error {
-		return s.channel.QueueUnbind(name, routingKey, exchange, option)
+		return s.channel.QueueUnbind(name, routingKey, exchange, option.toAMQPTable())
 	})
 }
 
@@ -1269,7 +1276,7 @@ func (s *Session) ExchangeBind(ctx context.Context, destination string, routingK
 			routingKey,
 			source,
 			o.NoWait,
-			o.Args,
+			o.Args.toAMQPTable(),
 		)
 	})
 }
@@ -1309,7 +1316,7 @@ func (s *Session) ExchangeUnbind(ctx context.Context, destination string, routin
 			routingKey,
 			source,
 			o.NoWait,
-			o.Args,
+			o.Args.toAMQPTable(),
 		)
 	})
 }
