@@ -87,12 +87,17 @@ func (a *AMQPX) Reset() error {
 // password:    e.g. password
 // vhost:       e.g. "" or "/"
 func NewURL(hostname string, port int, username, password string, vhost ...string) string {
-	vhoststr := ""
+	vhoststr := "/"
 	if len(vhost) > 0 {
-		vhoststr = strings.TrimLeft(vhost[0], "/")
+		first := vhost[0]
+		if strings.HasPrefix(first, "/") {
+			vhoststr = first
+		} else {
+			vhoststr = "/" + first
+		}
 	}
 
-	return fmt.Sprintf("amqp://%s:%s@%s:%d/%s", username, password, hostname, port, vhoststr)
+	return fmt.Sprintf("amqp://%s:%s@%s:%d%s", username, password, hostname, port, vhoststr)
 }
 
 // RegisterTopology registers a topology creating function that is called upon
