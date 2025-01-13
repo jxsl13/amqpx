@@ -661,8 +661,12 @@ func (s *Subscriber) nackBatch(opts BatchHandlerConfig, session *Session, batch 
 	if err != nil {
 		return fmt.Errorf("failed to %s partial batch: %w", mode, err)
 	}
-	s.infofConsumer(opts.ConsumerTag, "%sed partial batch of %d messages", mode, batchSize)
 
+	if requeue {
+		s.infofConsumer(opts.ConsumerTag, "requeued partial batch of %d messages", batchSize)
+	} else {
+		s.infofConsumer(opts.ConsumerTag, "rejected partial batch of %d messages", batchSize)
+	}
 	return nil
 }
 
