@@ -1,7 +1,7 @@
 package testutils
 
 import (
-	"math/rand"
+	"math/rand/v2"
 	"time"
 )
 
@@ -12,5 +12,5 @@ func Jitter(min, max time.Duration) time.Duration {
 		min = max
 	}
 
-	return min + time.Duration(rand.Int63n(diff))
+	return min + time.Duration(rand.Int64N(diff))
 }
