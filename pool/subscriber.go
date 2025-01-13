@@ -457,7 +457,7 @@ func (s *Subscriber) batchConsume(h *BatchHandler) (err error) {
 			// Its does not make sense to use session.Nack at this point because in case that the sessison dies
 			// the delivery tags also die with it.
 			// There is no way to recover form this state in case an error is returned from the Nack call.
-			reqErr := s.requeueBatch(opts, session, batch)
+			reqErr := s.requeueBatch(opts, session, batch, batchBytes)
 			if reqErr != nil {
 				s.errorBatchHandler(
 					opts,
@@ -473,7 +473,7 @@ func (s *Subscriber) batchConsume(h *BatchHandler) (err error) {
 			}
 
 		} else if errors.Is(err, ErrDeliveryClosed) && isContextClosed(h.pausing()) {
-			reqErr := s.requeueBatch(opts, session, batch)
+			reqErr := s.requeueBatch(opts, session, batch, batchBytes)
 			if reqErr != nil {
 				s.errorBatchHandler(
 					opts,
@@ -563,7 +563,7 @@ func (s *Subscriber) batchConsume(h *BatchHandler) (err error) {
 				s.debugfBatchHandler(opts, "processed batch with %d messages and %d bytes", batchSize, batchBytes)
 			}
 		} else {
-			poolErr := s.batchPostProcessing(opts, session, batch, err)
+			poolErr := s.batchPostProcessing(opts, session, batch, batchBytes, err)
 			if poolErr != nil {
 				return poolErr
 			}
@@ -604,12 +604,12 @@ func (s *Subscriber) ackBatch(opts BatchHandlerConfig, session *Session, batch [
 	return nil
 }
 
-func (s *Subscriber) requeueBatch(opts BatchHandlerConfig, session *Session, batch []Delivery) error {
-	return s.nackBatch(opts, session, batch, true)
+func (s *Subscriber) requeueBatch(opts BatchHandlerConfig, session *Session, batch []Delivery, bytes int) error {
+	return s.nackBatch(opts, session, batch, bytes, true)
 }
 
-func (s *Subscriber) rejectBatch(opts BatchHandlerConfig, session *Session, batch []Delivery) error {
-	return s.nackBatch(opts, session, batch, false)
+func (s *Subscriber) rejectBatch(opts BatchHandlerConfig, session *Session, batch []Delivery, bytes int) error {
+	return s.nackBatch(opts, session, batch, bytes, false)
 }
 
 // we expect that at this point the prefetch_count of Qos is set to the MaxBatchSize,
@@ -617,35 +617,28 @@ func (s *Subscriber) rejectBatch(opts BatchHandlerConfig, session *Session, batc
 // batchBytes is only used for logging purposes
 // This requeue works with the assumption that it is not possible to (n)ack messages of partial batches whose size is smaller than the prefetch_count without
 // changing the prefetch_count of the Qos setting.
-func (s *Subscriber) nackBatch(opts BatchHandlerConfig, session *Session, batch []Delivery, requeue bool) (err error) {
+func (s *Subscriber) nackBatch(opts BatchHandlerConfig, session *Session, batch []Delivery, bytes int, requeue bool) (err error) {
 	batchSize := len(batch)
 	if batchSize == 0 {
 		return
 	}
-
-	mode := "reject"
-	if requeue {
-		mode = "requeue"
-	}
-
-	defer func() {
-		if err != nil {
-			err = fmt.Errorf("failed to %s batch of %d messages: %w", mode, batchSize, err)
-		}
-	}()
 
 	lastDeliveryTag := batch[batchSize-1].DeliveryTag
 	if batchSize == opts.MaxBatchSize {
 		err = session.Nack(lastDeliveryTag, true, requeue)
 		if err != nil {
 			// cannot do anything at this point
-			return fmt.Errorf("failed to %s full batch: %w", mode, err)
+			if requeue {
+				return fmt.Errorf("failed to requeue full batch with %d bytes: %w", bytes, err)
+			} else {
+				return fmt.Errorf("failed to reject full batch with %d bytes: %w", bytes, err)
+			}
 		}
 
 		if requeue {
-			s.infofConsumer(opts.ConsumerTag, "requeued full batch")
+			s.infofConsumer(opts.ConsumerTag, "requeued full batch with %d bytes", bytes)
 		} else {
-			s.infofConsumer(opts.ConsumerTag, "rejected full batch")
+			s.infofConsumer(opts.ConsumerTag, "rejected full batch with %d bytes", bytes)
 		}
 		return nil
 	}
@@ -653,13 +646,17 @@ func (s *Subscriber) nackBatch(opts BatchHandlerConfig, session *Session, batch 
 	// nack & requeue
 	err = session.Nack(lastDeliveryTag, true, requeue)
 	if err != nil {
-		return fmt.Errorf("failed to %s partial batch: %w", mode, err)
+		if requeue {
+			return fmt.Errorf("failed to requeue partial batch with %d messages and %d bytes: %w", batchSize, bytes, err)
+		} else {
+			return fmt.Errorf("failed to reject partial batch with %d messages and %d bytes: %w", batchSize, bytes, err)
+		}
 	}
 
 	if requeue {
-		s.infofBatchHandler(opts, "requeued partial batch with %d messages", batchSize)
+		s.infofBatchHandler(opts, "requeued partial batch with %d messages and %d bytes", batchSize, bytes)
 	} else {
-		s.infofBatchHandler(opts, "rejected partial batch with %d messages", batchSize)
+		s.infofBatchHandler(opts, "rejected partial batch with %d messages and %d bytes", batchSize, bytes)
 	}
 	return nil
 }
@@ -673,17 +670,17 @@ func isContextClosed(ctx context.Context) bool {
 	}
 }
 
-func (s *Subscriber) batchPostProcessing(opts BatchHandlerConfig, session *Session, batch []Delivery, handlerErr error) (err error) {
+func (s *Subscriber) batchPostProcessing(opts BatchHandlerConfig, session *Session, batch []Delivery, bytes int, handlerErr error) (err error) {
 
 	// processing failed
 	if handlerErr == nil {
 		return s.ackBatch(opts, session, batch)
 	} else if errors.Is(handlerErr, ErrReject) {
 		// reject multiple
-		return s.rejectBatch(opts, session, batch)
+		return s.rejectBatch(opts, session, batch, bytes)
 	}
 	// requeue message if possible & nack all previous messages
-	return s.requeueBatch(opts, session, batch)
+	return s.requeueBatch(opts, session, batch, bytes)
 }
 
 type handler interface {
@@ -772,16 +769,6 @@ func (s *Subscriber) infoHandler(consumer, exchange, routingKey, queue string, a
 		"routingKey": routingKey,
 		"queue":      queue,
 	})).Info(a...)
-}
-
-func (s *Subscriber) warnHandler(consumer, exchange, routingKey, queue string, err error, a ...any) {
-	s.log.WithFields(withConsumerIfSet(consumer, map[string]any{
-		"subscriber": s.pool.Name(),
-		"exchange":   exchange,
-		"routingKey": routingKey,
-		"queue":      queue,
-		"error":      err,
-	})).Warn(a...)
 }
 
 func (s *Subscriber) errorHandler(consumer, exchange, routingKey, queue string, err error, a ...any) {
