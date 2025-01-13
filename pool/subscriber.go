@@ -184,7 +184,7 @@ func (s *Subscriber) Start(ctx context.Context) (err error) {
 		} else {
 			// after starting everything we want to set started to true
 			s.started = true
-			s.infoSimple("started")
+			s.infoSimple("subscriber started")
 		}
 	}()
 
@@ -314,7 +314,7 @@ func (s *Subscriber) consume(h *Handler) (err error) {
 	}
 
 	h.resumed()
-	s.infoConsumer(opts.ConsumerTag, "started")
+	s.infoConsumer(opts.ConsumerTag, "started consumer")
 	for {
 		select {
 		case <-s.catchShutdown():
@@ -437,11 +437,20 @@ func (s *Subscriber) batchConsume(h *BatchHandler) (err error) {
 	}
 
 	h.resumed() // the connection was established successfully at this point, the caller of resume may proceed his execution.
-	s.infoConsumer(opts.ConsumerTag, "started")
+	s.infoConsumer(opts.ConsumerTag, "started batch consumer")
 
-	// preallocate memory for batch
-	batch := make([]Delivery, 0, maxi(1, opts.MaxBatchSize))
+	var (
+		// preallocate memory for batch
+		batch      = make([]Delivery, 0, maxi(1, opts.MaxBatchSize))
+		batchBytes = 0
+	)
 	defer func() {
+		adj := "partial"
+		batchLen := len(batch)
+		if batchLen == opts.MaxBatchSize {
+			adj = "full"
+		}
+
 		if errors.Is(err, ErrClosed) {
 			// requeue all not yet processed messages in batch slice
 			// we can only nack these messages in case the session has not been closed
@@ -450,40 +459,32 @@ func (s *Subscriber) batchConsume(h *BatchHandler) (err error) {
 			// There is no way to recover form this state in case an error is returned from the Nack call.
 			reqErr := s.requeueBatch(opts, session, batch)
 			if reqErr != nil {
-				s.errorBatchHandler(opts.ConsumerTag,
-					opts.Queue,
-					opts.MaxBatchSize,
-					opts.MaxBatchBytes,
-					fmt.Errorf("failed to requeue batch upon shutdown: %w", reqErr),
+				s.errorBatchHandler(
+					opts,
+					fmt.Errorf("failed to requeue %s batch with %d messages upon shutdown: %w", adj, batchLen, reqErr),
 				)
 			} else {
-				s.infoBatchHandlerf(
-					opts.ConsumerTag,
-					opts.Queue,
-					opts.MaxBatchSize,
-					opts.MaxBatchBytes,
-					"requeued %d batch messages upon shutdown",
-					len(batch),
+				s.infofBatchHandler(
+					opts,
+					"requeued %s batch with %d messages upon shutdown",
+					adj,
+					batchLen,
 				)
 			}
 
 		} else if errors.Is(err, ErrDeliveryClosed) && isContextClosed(h.pausing()) {
 			reqErr := s.requeueBatch(opts, session, batch)
 			if reqErr != nil {
-				s.errorBatchHandler(opts.ConsumerTag,
-					opts.Queue,
-					opts.MaxBatchSize,
-					opts.MaxBatchBytes,
-					fmt.Errorf("failed to requeue batch upon pausing: %w", reqErr),
+				s.errorBatchHandler(
+					opts,
+					fmt.Errorf("failed to requeue %s batch with %d messages upon pausing: %w", adj, batchLen, reqErr),
 				)
 			} else {
-				s.infoBatchHandlerf(
-					opts.ConsumerTag,
-					opts.Queue,
-					opts.MaxBatchSize,
-					opts.MaxBatchBytes,
-					"requeued %d batch messages upon pausing",
-					len(batch),
+				s.infofBatchHandler(
+					opts,
+					"requeued %s batch with %d messages upon pausing",
+					adj,
+					batchLen,
 				)
 			}
 		}
@@ -491,9 +492,8 @@ func (s *Subscriber) batchConsume(h *BatchHandler) (err error) {
 	}()
 
 	var (
-		timer      = time.NewTimer(opts.FlushTimeout)
-		drained    = false
-		batchBytes = 0
+		timer   = time.NewTimer(opts.FlushTimeout)
+		drained = false
 	)
 	defer closeTimer(timer, &drained)
 
@@ -534,10 +534,7 @@ func (s *Subscriber) batchConsume(h *BatchHandler) (err error) {
 					// timeout reached, process batch that might not contain
 					// a full batch, yet.
 					s.infoBatchHandler(
-						opts.ConsumerTag,
-						opts.Queue,
-						len(batch),
-						batchBytes,
+						opts,
 						"flush timeout reached",
 					)
 					break collectBatch
@@ -552,33 +549,25 @@ func (s *Subscriber) batchConsume(h *BatchHandler) (err error) {
 			batchSize = len(batch)
 		)
 
-		s.infoBatchHandler(opts.ConsumerTag, opts.Queue, batchSize, batchBytes, "received batch")
+		s.infofBatchHandler(opts, "processing batch with %d messages and %d bytes", batchSize, batchBytes)
 		err = opts.HandlerFunc(h.pausing(), batch)
 		if opts.AutoAck {
 			// no acks required
 			if err != nil {
 				// we cannot really do anything to recover from a processing error in this case
 				s.errorBatchHandler(
-					opts.ConsumerTag,
-					opts.Queue,
-					batchSize,
-					batchBytes,
+					opts,
 					fmt.Errorf("processing failed: dropping batch: %w", err),
 				)
 			} else {
-				s.infoBatchHandler(
-					opts.ConsumerTag,
-					opts.Queue,
-					batchSize,
-					batchBytes,
-					"processed batch",
-				)
+				s.debugfBatchHandler(opts, "processed batch with %d messages and %d bytes", batchSize, batchBytes)
 			}
 		} else {
 			poolErr := s.batchPostProcessing(opts, session, batch, err)
 			if poolErr != nil {
 				return poolErr
 			}
+			s.debugfBatchHandler(opts, "processed batch with %d messages and %d bytes", batchSize, batchBytes)
 		}
 	}
 }
@@ -668,9 +657,9 @@ func (s *Subscriber) nackBatch(opts BatchHandlerConfig, session *Session, batch 
 	}
 
 	if requeue {
-		s.infofConsumer(opts.ConsumerTag, "requeued partial batch of %d messages", batchSize)
+		s.infofBatchHandler(opts, "requeued partial batch with %d messages", batchSize)
 	} else {
-		s.infofConsumer(opts.ConsumerTag, "rejected partial batch of %d messages", batchSize)
+		s.infofBatchHandler(opts, "rejected partial batch with %d messages", batchSize)
 	}
 	return nil
 }
@@ -734,55 +723,46 @@ func (s *Subscriber) shutdownErr() error {
 	return s.ctx.Err()
 }
 
-func (s *Subscriber) infoBatchHandler(consumer, queue string, batchSize, batchBytes int, a ...any) {
-	s.log.WithFields(withConsumerIfSet(consumer,
+func (s *Subscriber) infoBatchHandler(opts BatchHandlerConfig, a ...any) {
+	s.log.WithFields(withConsumerIfSet(
+		opts.ConsumerTag,
 		map[string]any{
-			"batchSize":  batchSize,
-			"batchBytes": batchBytes,
-			"subscriber": s.pool.Name(),
-			"queue":      queue,
+			"maxBatchSize":  opts.MaxBatchSize,
+			"maxBatchBytes": opts.MaxBatchBytes,
+			"subscriber":    s.pool.Name(),
+			"queue":         opts.Queue,
 		})).Info(a...)
 }
 
-func (s *Subscriber) infoBatchHandlerf(consumer, queue string, batchSize, batchBytes int, msg string, a ...any) {
-	s.log.WithFields(withConsumerIfSet(consumer,
+func (s *Subscriber) infofBatchHandler(opts BatchHandlerConfig, msg string, a ...any) {
+	s.log.WithFields(withConsumerIfSet(opts.ConsumerTag,
 		map[string]any{
-			"batchSize":  batchSize,
-			"batchBytes": batchBytes,
-			"subscriber": s.pool.Name(),
-			"queue":      queue,
+			"maxBatchSize":  opts.MaxBatchSize,
+			"maxBatchBytes": opts.MaxBatchBytes,
+			"subscriber":    s.pool.Name(),
+			"queue":         opts.Queue,
 		})).Infof(msg, a...)
 }
 
-func (s *Subscriber) warnBatchHandler(consumer, queue string, batchSize, batchBytes int, err error, a ...any) {
-	s.log.WithFields(withConsumerIfSet(consumer, map[string]any{
-		"batchSize":  batchSize,
-		"batchBytes": batchBytes,
-		"subscriber": s.pool.Name(),
-		"queue":      queue,
-		"error":      err,
-	})).Warn(a...)
-}
-
-func (s *Subscriber) warnBatchHandlerf(consumer, queue string, batchSize, batchBytes int, err error, msg string, a ...any) {
-	s.log.WithFields(withConsumerIfSet(consumer, map[string]any{
-		"batchSize":  batchSize,
-		"batchBytes": batchBytes,
-		"subscriber": s.pool.Name(),
-		"queue":      queue,
-		"error":      err,
-	})).Warnf(msg, a...)
-}
-
-func (s *Subscriber) errorBatchHandler(consumer, queue string, batchSize, batchBytes int, err error, a ...any) {
-	s.log.WithFields(withConsumerIfSet(consumer,
-		map[string]any{
-			"batchSize":  batchSize,
-			"batchBytes": batchBytes,
-			"subscriber": s.pool.Name(),
-			"queue":      queue,
-			"error":      err,
+func (s *Subscriber) errorBatchHandler(opts BatchHandlerConfig, err error, a ...any) {
+	s.log.WithFields(withConsumerIfSet(
+		opts.ConsumerTag, map[string]any{
+			"maxBatchSize":  opts.MaxBatchSize,
+			"maxBatchBytes": opts.MaxBatchBytes,
+			"subscriber":    s.pool.Name(),
+			"queue":         opts.Queue,
+			"error":         err,
 		})).Error(a...)
+}
+
+func (s *Subscriber) debugfBatchHandler(opts BatchHandlerConfig, format string, a ...any) {
+	s.log.WithFields(withConsumerIfSet(
+		opts.ConsumerTag, map[string]any{
+			"maxBatchSize":  opts.MaxBatchSize,
+			"maxBatchBytes": opts.MaxBatchBytes,
+			"subscriber":    s.pool.Name(),
+			"queue":         opts.Queue,
+		})).Debugf(format, a...)
 }
 
 func (s *Subscriber) infoHandler(consumer, exchange, routingKey, queue string, a ...any) {
