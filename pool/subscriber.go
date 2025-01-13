@@ -647,17 +647,22 @@ func (s *Subscriber) nackBatch(opts BatchHandlerConfig, session *Session, batch 
 
 	lastDeliveryTag := batch[batchSize-1].DeliveryTag
 	if batchSize == opts.MaxBatchSize {
-		err = session.Nack(lastDeliveryTag, true, true)
+		err = session.Nack(lastDeliveryTag, true, requeue)
 		if err != nil {
 			// cannot do anything at this point
-			return fmt.Errorf("failed to nack full batch: %w", err)
+			return fmt.Errorf("failed to %s full batch: %w", mode, err)
 		}
-		s.infoConsumer(opts.ConsumerTag, "nacked full batch")
+
+		if requeue {
+			s.infofConsumer(opts.ConsumerTag, "requeued full batch")
+		} else {
+			s.infofConsumer(opts.ConsumerTag, "rejected full batch")
+		}
 		return nil
 	}
 
 	// nack & requeue
-	err = session.Nack(lastDeliveryTag, true, true)
+	err = session.Nack(lastDeliveryTag, true, requeue)
 	if err != nil {
 		return fmt.Errorf("failed to %s partial batch: %w", mode, err)
 	}
