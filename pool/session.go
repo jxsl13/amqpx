@@ -1417,27 +1417,6 @@ func (s *Session) TxRollback() error {
 	return s.channel.TxRollback()
 }
 
-func (s *Session) Do(ctx context.Context, f func() error) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	return s.retry(ctx, nil, func() (err error) {
-		err = s.channel.Tx()
-		if err != nil {
-			return err
-		}
-		defer func() {
-			if err != nil {
-				err = errors.Join(err, s.channel.TxRollback())
-			} else {
-				err = s.channel.TxCommit()
-			}
-		}()
-
-		return f()
-	})
-}
-
 // Error returns all errors from the errors channel
 // and flushes all other pending errors from the channel
 // In case that there are no errors, nil is returned.
