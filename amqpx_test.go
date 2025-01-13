@@ -936,7 +936,7 @@ func TestRequeueLimitPreserveOrderFail(t *testing.T) {
 		finalBatchSize         = 1
 
 		// exceed the requeue limit
-		redeliveryLimit        = pool.DefaultQueueDeliveryLimit // this requeues limit +1 times
+		redeliveryLimit        = pool.DefaultQueueDeliveryLimit * 2 // starting with pool.DefaultQueueDeliveryLimit causes the test to fail undeterministically
 		nackProcessingFinished = make(chan struct{})
 		processingFinshed      = make(chan struct{})
 	)
