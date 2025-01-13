@@ -2,7 +2,7 @@ package testutils
 
 import (
 	"fmt"
-	"math/rand"
+	"math/rand/v2"
 )
 
 const (
@@ -27,7 +27,11 @@ func RandIntWithPrefix(name string) string {
 
 // RandIntRange returns a random integer between min (inclusive) and max (exclusive)
 func RandIntRange(min int, max int) int {
-	return min + rand.Intn(max-min)
+	diff := max - min
+	if diff < 0 {
+		diff = -diff
+	}
+	return min + rand.IntN(diff)
 }
 
 // RandString generates a random alphanumeric string of the length specified

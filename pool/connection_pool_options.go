@@ -3,7 +3,7 @@ package pool
 import (
 	"context"
 	"crypto/tls"
-	"math/rand"
+	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"runtime/debug"
@@ -115,7 +115,6 @@ func ConnectionPoolWithRecoverCallback(callback ConnectionRecoverCallback) Conne
 type BackoffFunc func(retry int) (sleep time.Duration)
 
 func newDefaultBackoffPolicy(min, max time.Duration) BackoffFunc {
-	r := rand.New(rand.NewSource(time.Now().Unix()))
 
 	factor := time.Second
 	for _, scale := range []time.Duration{time.Hour, time.Minute, time.Second, time.Millisecond, time.Microsecond, time.Nanosecond} {
@@ -128,8 +127,8 @@ func newDefaultBackoffPolicy(min, max time.Duration) BackoffFunc {
 
 	return func(retry int) (sleep time.Duration) {
 
-		wait := 2 << maxi(0, mini(32, retry)) * factor
-		jitter := time.Duration(r.Int63n(int64(maxi(1, int(wait)/5)))) // max 20% jitter
+		wait := 2 << maxi(0, mini(32, retry)) * factor                    // 2^(min(32, retry)) * factor (second, min, hours, etc)
+		jitter := time.Duration(rand.Int64N(int64(maxi(1, int(wait)/5)))) // max 20% jitter
 		wait = min + wait + jitter
 		if wait > max {
 			wait = max
