@@ -159,11 +159,11 @@ func (s *Subscriber) RegisterBatchHandler(handler *BatchHandler) {
 
 	s.log.WithFields(withConsumerIfSet(handler.ConsumeOptions().ConsumerTag,
 		map[string]any{
-			"subscriber":    s.pool.Name(),
-			"queue":         opts.Queue,
-			"maxBatchBytes": opts.MaxBatchBytes,
-			"maxBatchSize":  opts.MaxBatchSize,
-			"flushTimeout":  opts.FlushTimeout,
+			"subscriber":      s.pool.Name(),
+			"queue":           opts.Queue,
+			"max_batch_bytes": opts.MaxBatchBytes,
+			"max_batch_size":  opts.MaxBatchSize,
+			"flush_timeout":   opts.FlushTimeout,
 		})).Info("registered batch message handler")
 }
 
@@ -729,60 +729,60 @@ func (s *Subscriber) infoBatchHandler(opts BatchHandlerConfig, a ...any) {
 	s.log.WithFields(withConsumerIfSet(
 		opts.ConsumerTag,
 		map[string]any{
-			"maxBatchSize":  opts.MaxBatchSize,
-			"maxBatchBytes": opts.MaxBatchBytes,
-			"subscriber":    s.pool.Name(),
-			"queue":         opts.Queue,
+			"max_batch_size":  opts.MaxBatchSize,
+			"max_batch_bytes": opts.MaxBatchBytes,
+			"subscriber":      s.pool.Name(),
+			"queue":           opts.Queue,
 		})).Info(a...)
 }
 
 func (s *Subscriber) infofBatchHandler(opts BatchHandlerConfig, msg string, a ...any) {
 	s.log.WithFields(withConsumerIfSet(opts.ConsumerTag,
 		map[string]any{
-			"maxBatchSize":  opts.MaxBatchSize,
-			"maxBatchBytes": opts.MaxBatchBytes,
-			"subscriber":    s.pool.Name(),
-			"queue":         opts.Queue,
+			"max_batch_size":  opts.MaxBatchSize,
+			"max_batch_bytes": opts.MaxBatchBytes,
+			"subscriber":      s.pool.Name(),
+			"queue":           opts.Queue,
 		})).Infof(msg, a...)
 }
 
 func (s *Subscriber) errorBatchHandler(opts BatchHandlerConfig, err error, a ...any) {
 	s.log.WithFields(withConsumerIfSet(
 		opts.ConsumerTag, map[string]any{
-			"maxBatchSize":  opts.MaxBatchSize,
-			"maxBatchBytes": opts.MaxBatchBytes,
-			"subscriber":    s.pool.Name(),
-			"queue":         opts.Queue,
-			"error":         err,
+			"max_batch_size":  opts.MaxBatchSize,
+			"max_batch_bytes": opts.MaxBatchBytes,
+			"subscriber":      s.pool.Name(),
+			"queue":           opts.Queue,
+			"error":           err,
 		})).Error(a...)
 }
 
 func (s *Subscriber) debugfBatchHandler(opts BatchHandlerConfig, format string, a ...any) {
 	s.log.WithFields(withConsumerIfSet(
 		opts.ConsumerTag, map[string]any{
-			"maxBatchSize":  opts.MaxBatchSize,
-			"maxBatchBytes": opts.MaxBatchBytes,
-			"subscriber":    s.pool.Name(),
-			"queue":         opts.Queue,
+			"max_batch_size":  opts.MaxBatchSize,
+			"max_batch_bytes": opts.MaxBatchBytes,
+			"subscriber":      s.pool.Name(),
+			"queue":           opts.Queue,
 		})).Debugf(format, a...)
 }
 
 func (s *Subscriber) infoHandler(consumer, exchange, routingKey, queue string, a ...any) {
 	s.log.WithFields(withConsumerIfSet(consumer, map[string]any{
-		"subscriber": s.pool.Name(),
-		"exchange":   exchange,
-		"routingKey": routingKey,
-		"queue":      queue,
+		"subscriber":  s.pool.Name(),
+		"exchange":    exchange,
+		"routing_key": routingKey,
+		"queue":       queue,
 	})).Info(a...)
 }
 
 func (s *Subscriber) errorHandler(consumer, exchange, routingKey, queue string, err error, a ...any) {
 	s.log.WithFields(withConsumerIfSet(consumer, map[string]any{
-		"subscriber": s.pool.Name(),
-		"exchange":   exchange,
-		"routingKey": routingKey,
-		"queue":      queue,
-		"error":      err,
+		"subscriber":  s.pool.Name(),
+		"exchange":    exchange,
+		"routing_key": routingKey,
+		"queue":       queue,
+		"error":       err,
 	})).Error(a...)
 }
 
