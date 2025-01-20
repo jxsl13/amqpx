@@ -293,13 +293,13 @@ func (cp *ConnectionPool) Name() string {
 }
 
 func (cp *ConnectionPool) info(a ...any) {
-	cp.log.WithField("connectionPool", cp.name).Info(a...)
+	cp.log.WithField("connection_pool", cp.name).Info(a...)
 }
 
 func (cp *ConnectionPool) error(err error, a ...any) {
-	cp.log.WithField("connectionPool", cp.name).WithField("error", err.Error()).Error(a...)
+	cp.log.WithField("connection_pool", cp.name).WithField("error", err.Error()).Error(a...)
 }
 
 func (cp *ConnectionPool) debug(a ...any) {
-	cp.log.WithField("connectionPool", cp.name).Debug(a...)
+	cp.log.WithField("connection_pool", cp.name).Debug(a...)
 }
