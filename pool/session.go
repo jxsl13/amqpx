@@ -524,8 +524,9 @@ func (s *Session) Get(ctx context.Context, queue string, autoAck bool) (msg Deli
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	var intermediaryMsg amqp091.Delivery
 	err = s.retry(ctx, s.getRetryCB, func() error {
-		msg, ok, err = s.channel.Get(queue, autoAck)
+		intermediaryMsg, ok, err = s.channel.Get(queue, autoAck)
 		if err != nil {
 			return err
 		}
@@ -534,7 +535,8 @@ func (s *Session) Get(ctx context.Context, queue string, autoAck bool) (msg Deli
 	if err != nil {
 		return Delivery{}, false, err
 	}
-	return msg, ok, nil
+
+	return NewDeliveryFromAMQP091(intermediaryMsg), ok, nil
 }
 
 // Nack rejects the message.
@@ -592,7 +594,7 @@ type ConsumeOptions struct {
 // Inflight messages, limited by Channel.Qos will be buffered until received from the returned chan.
 // When the Channel or Connection is closed, all buffered and inflight messages will be dropped.
 // When the consumer identifier tag is cancelled, all inflight messages will be delivered until the returned chan is closed.
-func (s *Session) Consume(queue string, option ...ConsumeOptions) (<-chan Delivery, error) {
+func (s *Session) Consume(queue string, option ...ConsumeOptions) (<-chan amqp091.Delivery, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -615,7 +617,7 @@ func (s *Session) Consume(queue string, option ...ConsumeOptions) (<-chan Delive
 	}
 
 	var (
-		c   <-chan Delivery
+		c   <-chan amqp091.Delivery
 		err error
 	)
 	// retries to connect and attempts to start a consumer
@@ -657,7 +659,7 @@ func (s *Session) Consume(queue string, option ...ConsumeOptions) (<-chan Delive
 // Inflight messages, limited by Channel.Qos will be buffered until received from the returned chan.
 // When the Channel or Connection is closed, all buffered and inflight messages will be dropped.
 // When the consumer identifier tag is cancelled, all inflight messages will be delivered until the returned chan is closed.
-func (s *Session) ConsumeWithContext(ctx context.Context, queue string, option ...ConsumeOptions) (<-chan Delivery, error) {
+func (s *Session) ConsumeWithContext(ctx context.Context, queue string, option ...ConsumeOptions) (<-chan amqp091.Delivery, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -680,7 +682,7 @@ func (s *Session) ConsumeWithContext(ctx context.Context, queue string, option .
 	}
 
 	var (
-		c   <-chan Delivery
+		c   <-chan amqp091.Delivery
 		err error
 	)
 	// retries to connect and attempts to start a consumer

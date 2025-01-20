@@ -325,7 +325,7 @@ func (s *Subscriber) consume(h *Handler) (err error) {
 			}
 
 			s.infoHandler(opts.ConsumerTag, msg.Exchange, msg.RoutingKey, opts.Queue, "received message")
-			err = opts.HandlerFunc(h.pausing(), msg)
+			err = opts.HandlerFunc(h.pausing(), NewDeliveryFromAMQP091(msg))
 			if opts.AutoAck {
 				if err != nil {
 					// we cannot really do anything to recover from a processing error in this case
@@ -518,7 +518,7 @@ func (s *Subscriber) batchConsume(h *BatchHandler) (err error) {
 				}
 
 				batchBytes += len(msg.Body)
-				batch = append(batch, msg)
+				batch = append(batch, NewDeliveryFromAMQP091(msg))
 				if opts.MaxBatchSize > 0 && len(batch) == opts.MaxBatchSize {
 					break collectBatch
 				}
