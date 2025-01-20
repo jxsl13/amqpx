@@ -318,13 +318,13 @@ func (sp *SessionPool) Close() {
 }
 
 func (sp *SessionPool) info(a ...any) {
-	sp.log.WithField("sessionPool", sp.pool.name).Info(a...)
+	sp.log.WithField("session_pool", sp.pool.name).Info(a...)
 }
 
 func (sp *SessionPool) error(err error, a ...any) {
-	sp.log.WithField("sessionPool", sp.pool.name).WithField("error", err.Error()).Error(a...)
+	sp.log.WithField("session_pool", sp.pool.name).WithField("error", err.Error()).Error(a...)
 }
 
 func (sp *SessionPool) debug(a ...any) {
-	sp.log.WithField("sessionPool", sp.pool.name).Debug(a...)
+	sp.log.WithField("session_pool", sp.pool.name).Debug(a...)
 }
