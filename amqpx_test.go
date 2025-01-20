@@ -612,7 +612,6 @@ func TestHandlerPauseAndResumeSubscriber(t *testing.T) {
 func TestHandlerPauseAndResumeInFlightNackSubscriber(t *testing.T) {
 	t.Parallel()
 	var (
-		amqp              = amqpx.New()
 		log               = logging.NewTestLogger(t)
 		cctx, cancel      = context.WithCancel(context.TODO())
 		funcName          = testutils.FuncName()
@@ -620,10 +619,18 @@ func TestHandlerPauseAndResumeInFlightNackSubscriber(t *testing.T) {
 		eq1               = nextExchangeQueue()
 	)
 	defer cancel()
-	defer func() {
-		log.Info("closing amqp")
-		assert.NoError(t, amqp.Close())
-	}()
+
+	var (
+		publish                = 10
+		initialBatchSize       = publish * 2      // higher than number of published messages in order to enforce messages to be in flight
+		subscriberFlushTimeout = 10 * time.Second // also use a high timeout in order to enforce messages to be in flight
+		cnt                    = 0
+		processingFinshed      = make(chan struct{})
+		finalBatchSize         = 1
+		process                = make(chan struct{})
+		redeliveryLimit        = pool.DefaultQueueDeliveryLimit - 1
+		redeliveryChan         = make(chan struct{}, redeliveryLimit)
+	)
 
 	options := []amqpx.Option{
 		amqpx.WithLogger(logging.NewNoOpLogger()),
@@ -631,39 +638,59 @@ func TestHandlerPauseAndResumeInFlightNackSubscriber(t *testing.T) {
 		amqpx.WithPublisherSessions(1),
 	}
 
+	// publish messages
 	amqpPub := amqpx.New()
 	amqpPub.RegisterTopologyCreator(createTopology(log, eq1))
-	amqp.RegisterTopologyDeleter(deleteTopology(log, eq1))
-	defer func() {
-		assert.NoError(t, amqpPub.Close())
-	}()
 
 	err := amqpPub.Start(
 		cctx,
 		testutils.HealthyConnectURL,
 		append(options, amqpx.WithName(funcName+"-pub"))...,
 	)
-	require.NoError(t, err)
+	if !assert.NoError(t, err) {
+		return
+	}
+	defer func() {
+		assert.NoError(t, amqpPub.Close())
+	}()
 
-	var (
-		publish                = 10
-		initialBatchSize       = publish * 2 // higher than number of published messages in order to enforce messages to be in flight
-		cnt                    = 0
-		processingFinshed      = make(chan struct{})
-		subscriberFlushTimeout = 10 * time.Second // also use a high timeout in order to enforce messages to be in flight
-		finalBatchSize         = 1
-		process                = make(chan struct{})
-	)
+	for i := 0; i < publish; i++ {
+		err := amqpPub.Publish(cctx, eq1.Exchange, eq1.RoutingKey, pool.Publishing{
+			ContentType: "text/plain",
+			Body:        []byte(eq1.NextPubMsg()),
+		})
+		if err != nil {
+			assert.NoError(t, err)
+			return
+		}
+	}
+	assert.NoError(t, amqpPub.Close())
 
+	// INFO: The issue here seems to be that the first message exceeds the DeliveryLimit and is added to the end of the queue.
+	// which is why the order is not preserved.
+	amqp := amqpx.New()
+	amqp.RegisterTopologyDeleter(deleteTopology(log, eq1))
 	handler := amqp.RegisterBatchHandler(eq1.Queue, func(hctx context.Context, msgs []pool.Delivery) (err error) {
+
+		for _, msg := range msgs {
+			if v, ok := msg.Headers["x-delivery-count"]; ok {
+				deliveryCount, ok := v.(int)
+				if !ok {
+					continue
+				}
+				log.Infof("msg: %s delivery count: %d", string(msg.Body), deliveryCount)
+			}
+		}
+
 		select {
 		case <-hctx.Done():
-			return fmt.Errorf("handler context canceled before processing: %w", hctx.Err())
+			return hctx.Err() // additional nack & requeue
+		case redeliveryChan <- struct{}{}:
+			// nack & requeue the message for a limited amout of times
+			return fmt.Errorf("we don't want the message to be processed, yet") // nack & requeue for every token that could be put in the channel
 		case <-process:
 			// allow processing
 			// otherwise nack the massages
-		default:
-			return fmt.Errorf("we don't want the message to be processed, yet")
 		}
 
 		// at this point the order is not supposed to be.
@@ -688,20 +715,12 @@ func TestHandlerPauseAndResumeInFlightNackSubscriber(t *testing.T) {
 		assert.NoError(t, err)
 		return
 	}
+	defer func() {
+		log.Info("closing amqp")
+		assert.NoError(t, amqp.Close())
+	}()
 
-	// publish half of the messages
-	for i := 0; i < publish; i++ {
-		err := amqpPub.Publish(cctx, eq1.Exchange, eq1.RoutingKey, pool.Publishing{
-			ContentType: "text/plain",
-			Body:        []byte(eq1.NextPubMsg()),
-		})
-		if err != nil {
-			assert.NoError(t, err)
-			return
-		}
-	}
-
-	time.Sleep(2 * time.Second)
+	time.Sleep(4 * time.Second)
 
 	// pause and reduce batch size and resume
 	reconnectTimeout := 2 * time.Minute
@@ -709,14 +728,20 @@ func TestHandlerPauseAndResumeInFlightNackSubscriber(t *testing.T) {
 	pauseCtx, cancel := context.WithTimeout(cctx, reconnectTimeout)
 	err = handler.Pause(pauseCtx)
 	cancel()
-	assert.NoError(t, err)
+	if !assert.NoError(t, err) {
+		return
+	}
 
 	handler.SetMaxBatchSize(finalBatchSize)
+
+	time.Sleep(2 * time.Second)
 
 	resumeCtx, cancel := context.WithTimeout(cctx, reconnectTimeout)
 	err = handler.Resume(resumeCtx)
 	cancel()
-	assert.NoError(t, err)
+	if !assert.NoError(t, err) {
+		return
+	}
 
 	// allow processing without nacks
 	close(process)
