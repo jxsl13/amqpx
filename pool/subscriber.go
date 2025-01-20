@@ -549,7 +549,12 @@ func (s *Subscriber) batchConsume(h *BatchHandler) (err error) {
 			batchSize = len(batch)
 		)
 
-		s.infofBatchHandler(opts, "processing batch with %d messages and %d bytes", batchSize, batchBytes)
+		if batchSize < opts.MaxBatchSize && batchBytes < opts.MaxBatchBytes {
+			s.infofBatchHandler(opts, "processing partial batch with %d messages and %d bytes", batchSize, batchBytes)
+		} else {
+			s.infofBatchHandler(opts, "processing batch with %d messages and %d bytes", batchSize, batchBytes)
+		}
+
 		err = opts.HandlerFunc(h.pausing(), batch)
 		if opts.AutoAck {
 			// no acks required
