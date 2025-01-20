@@ -17,7 +17,7 @@ const (
 	// In order to prevent the broker from requeuing the message to th end of the queue, we need to set this limit in order for at least the
 	// first N requeues to be requeued to the front of the queue.
 	// https://www.rabbitmq.com/docs/quorum-queues#repeated-requeues
-	DefaultQueueDeliveryLimit = 10
+	DefaultQueueDeliveryLimit = 20
 )
 
 // Session is a wrapper for an amqp channel.
