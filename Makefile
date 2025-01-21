@@ -1,6 +1,8 @@
 
 
-.PHONY: build run stop down test count-tests count-disconnect-tests
+.PHONY: build run stop down test count-tests count-disconnect-tests reset
+
+reset: down environment
 
 environment:
 	docker compose up -d
