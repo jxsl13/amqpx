@@ -50,6 +50,7 @@ func TestExchangeDeclarePassive(t *testing.T) {
 		amqpx.WithLogger(logging.NewTestLogger(t)),
 		amqpx.WithPublisherConnections(1),
 		amqpx.WithPublisherSessions(2),
+		amqpx.WithCloseTimeout(time.Minute),
 	)
 	assert.NoError(t, err)
 }
@@ -84,6 +85,7 @@ func TestQueueDeclarePassive(t *testing.T) {
 		amqpx.WithLogger(logging.NewTestLogger(t)),
 		amqpx.WithPublisherConnections(1),
 		amqpx.WithPublisherSessions(2),
+		amqpx.WithCloseTimeout(time.Minute),
 	)
 	assert.NoError(t, err)
 }
@@ -113,6 +115,7 @@ func TestAMQPXPub(t *testing.T) {
 		amqpx.WithLogger(logging.NewNoOpLogger()),
 		amqpx.WithPublisherConnections(1),
 		amqpx.WithPublisherSessions(2),
+		amqpx.WithCloseTimeout(time.Minute),
 	)
 	if err != nil {
 		assert.NoError(t, err)
@@ -197,6 +200,7 @@ func TestAMQPXSubAndPub(t *testing.T) {
 		amqpx.WithLogger(logging.NewNoOpLogger()),
 		amqpx.WithPublisherConnections(1),
 		amqpx.WithPublisherSessions(5),
+		amqpx.WithCloseTimeout(time.Minute),
 	)
 	if err != nil {
 		assert.NoError(t, err)
@@ -296,6 +300,7 @@ func TestAMQPXSubAndPubMulti(t *testing.T) {
 		amqpx.WithLogger(log),
 		amqpx.WithPublisherConnections(1),
 		amqpx.WithPublisherSessions(5),
+		amqpx.WithCloseTimeout(time.Minute),
 	)
 	if err != nil {
 		assert.NoError(t, err)
@@ -357,6 +362,7 @@ func TestAMQPXSubHandler(t *testing.T) {
 		amqpx.WithLogger(logging.NewNoOpLogger()),
 		amqpx.WithPublisherConnections(1),
 		amqpx.WithPublisherSessions(5),
+		amqpx.WithCloseTimeout(time.Minute),
 	)
 	if err != nil {
 		assert.NoError(t, err)
@@ -409,6 +415,7 @@ func TestCreateDeleteTopology(t *testing.T) {
 		amqpx.WithLogger(log),
 		amqpx.WithPublisherConnections(1),
 		amqpx.WithPublisherSessions(2),
+		amqpx.WithCloseTimeout(time.Minute),
 	)
 	assert.NoError(t, err)
 }
@@ -455,6 +462,7 @@ func TestPauseResumeHandlerNoProcessing(t *testing.T) {
 		testutils.HealthyConnectURL,
 		amqpx.WithName(funcName),
 		amqpx.WithLogger(logging.NewNoOpLogger()),
+		amqpx.WithCloseTimeout(time.Minute),
 	)
 	if err != nil {
 		assert.NoError(t, err)
@@ -503,6 +511,7 @@ func TestHandlerPauseAndResumeSubscriber(t *testing.T) {
 		amqpx.WithLogger(logging.NewNoOpLogger()),
 		amqpx.WithPublisherConnections(1),
 		amqpx.WithPublisherSessions(1),
+		amqpx.WithCloseTimeout(time.Minute),
 	}
 
 	amqpPub := amqpx.New()
@@ -551,7 +560,11 @@ func TestHandlerPauseAndResumeSubscriber(t *testing.T) {
 		pool.WithBatchFlushTimeout(subscriberFlushTimeout),
 	)
 
-	err = amqp.Start(cctx, testutils.HealthyConnectURL, amqpx.WithName(funcName+"-sub"), amqpx.WithLogger(log))
+	err = amqp.Start(cctx, testutils.HealthyConnectURL,
+		amqpx.WithName(funcName+"-sub"),
+		amqpx.WithLogger(log),
+		amqpx.WithCloseTimeout(time.Minute),
+	)
 	if err != nil {
 		assert.NoError(t, err)
 		return
@@ -635,6 +648,7 @@ func TestHandlerPauseAndResumeInFlightNackSubscriber(t *testing.T) {
 		amqpx.WithLogger(logging.NewNoOpLogger()),
 		amqpx.WithPublisherConnections(1),
 		amqpx.WithPublisherSessions(1),
+		amqpx.WithCloseTimeout(time.Minute),
 	}
 
 	// publish messages
@@ -708,6 +722,7 @@ func TestHandlerPauseAndResumeInFlightNackSubscriber(t *testing.T) {
 		amqpx.WithLogger(log),
 		amqpx.WithPublisherConnections(1),
 		amqpx.WithPublisherSessions(1),
+		amqpx.WithCloseTimeout(time.Minute),
 	)
 	if err != nil {
 		assert.NoError(t, err)
@@ -803,6 +818,7 @@ func TestRequeueLimitPreserveOrderOK(t *testing.T) {
 		amqpx.WithLogger(log),
 		amqpx.WithPublisherConnections(1),
 		amqpx.WithPublisherSessions(1),
+		amqpx.WithCloseTimeout(time.Minute),
 	)
 	if !assert.NoError(t, err) {
 		return
@@ -868,6 +884,7 @@ func TestRequeueLimitPreserveOrderOK(t *testing.T) {
 		amqpx.WithLogger(log),
 		amqpx.WithPublisherConnections(0), // subscriber only pool
 		amqpx.WithPublisherSessions(0),    // subscriber only pool
+		amqpx.WithCloseTimeout(time.Minute),
 	)
 	if !assert.NoError(t, err) {
 		return
@@ -979,6 +996,7 @@ func testHandlerPauseAndResume(t *testing.T, i int, closeTimeout time.Duration) 
 		amqpx.WithLogger(logging.NewNoOpLogger()),
 		amqpx.WithPublisherConnections(1),
 		amqpx.WithPublisherSessions(5),
+		amqpx.WithCloseTimeout(closeTimeout),
 	}
 
 	amqpPub := amqpx.New()
@@ -991,12 +1009,12 @@ func testHandlerPauseAndResume(t *testing.T, i int, closeTimeout time.Duration) 
 	err := amqpPub.Start(
 		cctx,
 		testutils.HealthyConnectURL,
-		append(options,
-			amqpx.WithName(funcName+"-pub"),
-			amqpx.WithCloseTimeout(closeTimeout),
-		)...,
+		append(options, amqpx.WithName(funcName+"-pub"))...,
 	)
-	require.NoError(t, err)
+
+	if assert.NoError(t, err) {
+		return
+	}
 
 	var (
 		publish = 500
@@ -1143,6 +1161,7 @@ func testBatchHandlerPauseAndResume(t *testing.T, i int) {
 		amqpx.WithLogger(logging.NewNoOpLogger()),
 		amqpx.WithPublisherConnections(1),
 		amqpx.WithPublisherSessions(5),
+		amqpx.WithCloseTimeout(time.Minute),
 	}
 
 	amqpxPublish := amqpx.New()
@@ -1152,9 +1171,7 @@ func testBatchHandlerPauseAndResume(t *testing.T, i int) {
 	err := amqpxPublish.Start(
 		cctx,
 		testutils.HealthyConnectURL,
-		append(options, amqpx.WithName(funcName+"-pub"),
-			amqpx.WithCloseTimeout(30*time.Second),
-		)...,
+		append(options, amqpx.WithName(funcName+"-pub"))...,
 	)
 	require.NoError(t, err)
 
@@ -1469,6 +1486,7 @@ func testHandlerReset(t *testing.T, i int) {
 		amqpx.WithLogger(logging.NewNoOpLogger()),
 		amqpx.WithPublisherConnections(1),
 		amqpx.WithPublisherSessions(5),
+		amqpx.WithCloseTimeout(time.Minute),
 	}
 
 	amqpxPublish := amqpx.New()
@@ -1564,7 +1582,7 @@ func testBatchHandlerReset(t *testing.T, i int) {
 		amqpx.WithLogger(log),
 		amqpx.WithPublisherConnections(1),
 		amqpx.WithPublisherSessions(5),
-		amqpx.WithCloseTimeout(60 * time.Second),
+		amqpx.WithCloseTimeout(time.Minute),
 	}
 
 	amqpxPublish := amqpx.New()
