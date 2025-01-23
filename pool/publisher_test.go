@@ -68,7 +68,7 @@ func TestSinglePublisher(t *testing.T) {
 	pub := pool.NewPublisher(p)
 	defer pub.Close()
 
-	// TODO: currently this test allows duplication of messages
+	// INFO: currently this test allows duplication of messages
 	ConsumeAsyncN(t, ctx, &wg, hs, queueName, nextConsumerName(), consumerMsgGen, numMsgs, true)
 
 	for i := 0; i < numMsgs; i++ {
@@ -101,7 +101,7 @@ func TestSinglePublisher(t *testing.T) {
 }
 
 /*
-// TODO: out of memory rabbitmq tests are disabled until https://github.com/rabbitmq/amqp091-go/issues/253 is resolved
+// FIXME: TODO: out of memory rabbitmq tests are disabled until https://github.com/rabbitmq/amqp091-go/issues/253 is resolved
 func TestPublishAwaitFlowControl(t *testing.T) {
 	t.Parallel()
 
