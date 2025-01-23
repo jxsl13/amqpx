@@ -120,9 +120,9 @@ func ConsumeAsyncN(
 }
 
 type Producer interface {
-	Publish(ctx context.Context, exchange string, routingKey string, msg pool.Publishing) (deliveryTag uint64, err error)
+	Publish(ctx context.Context, exchange string, routingKey string, msg pool.Publishing) (confirm *pool.Confirmation, err error)
+	PublishBatch(ctx context.Context, msgs []pool.BatchPublishing) (confirm *pool.BatchConfirmation, err error)
 	IsConfirmable() bool
-	AwaitConfirm(ctx context.Context, expectedTag uint64) error
 }
 
 func PublishN(
@@ -141,8 +141,58 @@ func PublishN(
 	logging.NewTestLogger(t).Infof("published %d messages, closing publisher", n)
 }
 
+func PublishBatch(
+	t *testing.T,
+	ctx context.Context,
+	p Producer,
+	exchangeName string,
+	publishMessageGenerator func() string,
+	n int,
+) {
+	msgs := make([]pool.BatchPublishing, n)
+	for i := 0; i < n; i++ {
+		message := publishMessageGenerator()
+		msgs[i] = pool.BatchPublishing{
+			Exchange: exchangeName,
+			Publishing: pool.Publishing{
+				ContentType: "text/plain",
+				Body:        []byte(message),
+			},
+		}
+	}
+
+	err := publishBatch(ctx, p, msgs)
+	assert.NoError(t, err)
+	logging.NewTestLogger(t).Infof("published %d messages, closing publisher", n)
+}
+
+func PublishBatchN(
+	t *testing.T,
+	ctx context.Context,
+	p Producer,
+	exchangeNames []string,
+	publishMessageGenerators []func() string,
+	n int,
+) {
+	msgs := make([]pool.BatchPublishing, n)
+	for i := 0; i < n; i++ {
+		message := publishMessageGenerators[i]()
+		msgs[i] = pool.BatchPublishing{
+			Exchange: exchangeNames[i],
+			Publishing: pool.Publishing{
+				ContentType: "text/plain",
+				Body:        []byte(message),
+			},
+		}
+	}
+
+	err := publishBatch(ctx, p, msgs)
+	assert.NoError(t, err)
+	logging.NewTestLogger(t).Infof("published %d messages, closing publisher", n)
+}
+
 func publish(ctx context.Context, p Producer, exchangeName string, message string) error {
-	tag, err := p.Publish(
+	confirm, err := p.Publish(
 		ctx,
 		exchangeName, "",
 		pool.Publishing{
@@ -154,11 +204,30 @@ func publish(ctx context.Context, p Producer, exchangeName string, message strin
 		return fmt.Errorf("expected no error when publishing message: %w", err)
 	}
 	if p.IsConfirmable() {
-		err = p.AwaitConfirm(ctx, tag)
+		err = confirm.Wait(ctx)
 		if err != nil {
 			return fmt.Errorf("expected no error when awaiting confirmation: %w", err)
 		}
 	}
+	return nil
+}
+
+func publishBatch(ctx context.Context, p Producer, msgs []pool.BatchPublishing) error {
+	// loop to retry when confirmation failes
+	for {
+		confirm, err := p.PublishBatch(ctx, msgs)
+		if err != nil {
+			return fmt.Errorf("expected no error when publishing batch message: %w", err)
+		}
+		if p.IsConfirmable() {
+			err = confirm.Wait(ctx)
+			if err != nil {
+				continue
+			}
+		}
+		break
+	}
+
 	return nil
 }
 
@@ -176,6 +245,38 @@ func PublishAsyncN(
 		defer wg.Done()
 		PublishN(t, ctx, p, exchangeName, publishMessageGenerator, n)
 	}(wg, publishMessageGenerator, n)
+}
+
+func PublishBatchAsync(
+	t *testing.T,
+	ctx context.Context,
+	wg *sync.WaitGroup,
+	p Producer,
+	exchangeName string,
+	publishMessageGenerator func() string,
+	n int,
+) {
+	wg.Add(1)
+	go func(wg *sync.WaitGroup, publishMessageGenerators func() string, n int) {
+		defer wg.Done()
+		PublishBatch(t, ctx, p, exchangeName, publishMessageGenerator, n)
+	}(wg, publishMessageGenerator, n)
+}
+
+func PublishBatchAsyncN(
+	t *testing.T,
+	ctx context.Context,
+	wg *sync.WaitGroup,
+	p Producer,
+	exchangeNames []string,
+	publishMessageGenerators []func() string,
+	n int,
+) {
+	wg.Add(1)
+	go func(wg *sync.WaitGroup, publishMessageGenerators []func() string, n int) {
+		defer wg.Done()
+		PublishBatchN(t, ctx, p, exchangeNames, publishMessageGenerators, n)
+	}(wg, publishMessageGenerators, n)
 }
 
 type Topologer interface {

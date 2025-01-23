@@ -74,6 +74,67 @@ func TestNewSingleSessionPublishAndConsume(t *testing.T) {
 	wg.Wait()
 }
 
+func TestNewSingleSessionPublishBatchAndConsume(t *testing.T) {
+	t.Parallel()
+	var (
+		ctx                     = context.TODO()
+		wg                      sync.WaitGroup
+		nextConnName            = testutils.ConnectionNameGenerator()
+		connName                = nextConnName()
+		nextSessionName         = testutils.SessionNameGenerator(connName)
+		sessionName             = nextSessionName()
+		nextQueueName           = testutils.QueueNameGenerator(sessionName)
+		queueName               = nextQueueName()
+		nextExchangeName        = testutils.ExchangeNameGenerator(sessionName)
+		exchangeName            = nextExchangeName()
+		nextConsumerName        = testutils.ConsumerNameGenerator(queueName)
+		consumerName            = nextConsumerName()
+		consumeMessageGenerator = testutils.MessageGenerator(queueName)
+		publishMessageGenerator = testutils.MessageGenerator(queueName)
+		numMsgs                 = 20
+	)
+
+	c, err := pool.NewConnection(
+		ctx,
+		testutils.HealthyConnectURL,
+		connName,
+		pool.ConnectionWithLogger(logging.NewTestLogger(t)),
+	)
+	if err != nil {
+		assert.NoError(t, err)
+		return
+	}
+	defer func() {
+		assert.NoError(t, c.Close())
+	}()
+
+	s, err := pool.NewSession(
+		c,
+		sessionName,
+		pool.SessionWithConfirms(true),
+		pool.SessionWithRetryCallback(
+			func(operation, connName, sessionName string, retry int, err error) {
+				assert.NoErrorf(t, err, "operation=%s connName=%s sessionName=%s retry=%d", operation, connName, sessionName, retry)
+			},
+		),
+	)
+	if err != nil {
+		assert.NoError(t, err)
+		return
+	}
+	defer func() {
+		assert.NoError(t, s.Close())
+	}()
+
+	cleanup := DeclareExchangeQueue(t, ctx, s, exchangeName, queueName)
+	defer cleanup()
+
+	ConsumeAsyncN(t, ctx, &wg, s, queueName, consumerName, consumeMessageGenerator, numMsgs, true)
+	PublishBatchAsync(t, ctx, &wg, s, exchangeName, publishMessageGenerator, numMsgs)
+
+	wg.Wait()
+}
+
 func TestManyNewSessionsPublishAndConsume(t *testing.T) {
 	t.Parallel()
 	var (
@@ -132,6 +193,69 @@ func TestManyNewSessionsPublishAndConsume(t *testing.T) {
 
 		ConsumeAsyncN(t, ctx, &wg, s, queueName, consumerName, consumeNextMessage, numMsgs, true)
 		PublishAsyncN(t, ctx, &wg, s, exchangeName, publishNextMessage, numMsgs)
+	}
+
+	wg.Wait()
+}
+
+func TestManyNewSessionsPublishBatchAndConsume(t *testing.T) {
+	t.Parallel()
+	var (
+		ctx             = context.TODO()
+		wg              sync.WaitGroup
+		nextConnName    = testutils.ConnectionNameGenerator()
+		connName        = nextConnName()
+		nextSessionName = testutils.SessionNameGenerator(connName)
+		sessions        = 5
+		numMsgs         = 20
+	)
+
+	c, err := pool.NewConnection(
+		ctx,
+		testutils.HealthyConnectURL,
+		connName,
+		pool.ConnectionWithLogger(logging.NewTestLogger(t)),
+	)
+	if err != nil {
+		assert.NoError(t, err)
+		return
+	}
+	defer func() {
+		assert.NoError(t, c.Close())
+	}()
+
+	for id := 0; id < sessions; id++ {
+		var (
+			sessionName      = nextSessionName()
+			nextQueueName    = testutils.QueueNameGenerator(sessionName)
+			queueName        = nextQueueName()
+			nextExchangeName = testutils.ExchangeNameGenerator(sessionName)
+			exchangeName     = nextExchangeName()
+			nextConsumerName = testutils.ConsumerNameGenerator(queueName)
+			consumerName     = nextConsumerName()
+			// generate equal consume & publish messages for comparison
+			consumeNextMessage = testutils.MessageGenerator(queueName)
+			publishNextMessage = testutils.MessageGenerator(queueName)
+		)
+
+		s, err := pool.NewSession(
+			c,
+			sessionName,
+			pool.SessionWithConfirms(true),
+		)
+		if err != nil {
+			assert.NoError(t, err)
+			return
+		}
+		defer func() {
+			assert.NoError(t, s.Close())
+		}()
+
+		cleanup := DeclareExchangeQueue(t, ctx, s, exchangeName, queueName)
+		defer cleanup()
+
+		ConsumeAsyncN(t, ctx, &wg, s, queueName, consumerName, consumeNextMessage, numMsgs, true)
+		PublishBatchAsync(t, ctx, &wg, s, exchangeName, publishNextMessage, numMsgs)
 	}
 
 	wg.Wait()
@@ -625,6 +749,59 @@ func TestNewSessionPublishWithDisconnect(t *testing.T) {
 	wg.Wait()
 }
 
+func TestNewSessionPublishBatchWithDisconnect(t *testing.T) {
+	t.Parallel()
+	var (
+		proxyName, connectURL, _ = testutils.NextConnectURL()
+		ctx                      = context.TODO()
+		nextConnName             = testutils.ConnectionNameGenerator()
+	)
+
+	hs, hsclose := NewSession(
+		t,
+		ctx,
+		testutils.HealthyConnectURL,
+		nextConnName(),
+	)
+	defer hsclose()
+
+	s, sclose := NewSession(
+		t,
+		ctx,
+		connectURL,
+		nextConnName(),
+	)
+	defer sclose()
+
+	var (
+		nextExchangeName = testutils.ExchangeNameGenerator(hs.Name())
+		nextQueueName    = testutils.QueueNameGenerator(hs.Name())
+
+		exchangeName     = nextExchangeName()
+		queueName        = nextQueueName()
+		nextConsumerName = testutils.ConsumerNameGenerator(queueName)
+	)
+
+	cleanup := DeclareExchangeQueue(t, ctx, hs, exchangeName, queueName)
+	defer cleanup()
+
+	var (
+		wg                        sync.WaitGroup
+		consumeMsgGen             = testutils.MessageGenerator(queueName)
+		publishMsgGen             = testutils.MessageGenerator(queueName)
+		numMsgs                   = 20
+		disconnected, reconnected = Disconnect(t, proxyName, 5*time.Second)
+	)
+
+	ConsumeAsyncN(t, ctx, &wg, hs, queueName, nextConsumerName(), consumeMsgGen, numMsgs, true)
+
+	disconnected()
+	PublishBatch(t, ctx, s, exchangeName, publishMsgGen, numMsgs)
+	reconnected()
+
+	wg.Wait()
+}
+
 func TestNewSessionConsumeWithDisconnect(t *testing.T) {
 	t.Parallel()
 	var (
@@ -1033,7 +1210,7 @@ func TestNewSingleSessionCloseWithHealthyRabbitMQ(t *testing.T) {
 	defer cleanup()
 
 	log.Infof("publishing message to exchange %s", exchangeName)
-	tag, err := s.Publish(ctx, exchangeName, "",
+	confirm, err := s.Publish(ctx, exchangeName, "",
 		pool.Publishing{
 			ContentType: "text/plain",
 			Body:        []byte("hello world"),
@@ -1044,8 +1221,8 @@ func TestNewSingleSessionCloseWithHealthyRabbitMQ(t *testing.T) {
 		return
 	}
 
-	log.Infof("awaiting confirm for tag %d", tag)
-	err = s.AwaitConfirm(ctx, tag)
+	log.Infof("awaiting confirm for tag %d", confirm.DeferredConfirmation().DeliveryTag)
+	err = confirm.Wait(ctx)
 	log.Infof("await confirm failed(as expected): %v", err)
 	assert.NoError(t, err)
 
@@ -1054,4 +1231,120 @@ func TestNewSingleSessionCloseWithHealthyRabbitMQ(t *testing.T) {
 	log.Infof("closing session %s", s.Name())
 	err = s.Close()
 	assert.NoError(t, err)
+}
+
+func TestNewSingleSessionPublishWithDisconnects(t *testing.T) {
+	t.Parallel()
+	var (
+		ctx                      = context.TODO()
+		wg                       sync.WaitGroup
+		proxyName, connectURL, _ = testutils.NextConnectURL()
+		nextConnName             = testutils.ConnectionNameGenerator()
+		connName                 = nextConnName()
+		connNameHealthy          = nextConnName()
+		nextSessionName          = testutils.SessionNameGenerator(connName)
+		numMsgs                  = 50
+		numBatches               = 1000
+	)
+
+	c, err := pool.NewConnection(
+		ctx,
+		connectURL,
+		connName,
+		pool.ConnectionWithLogger(logging.NewTestLogger(t)),
+		pool.ConnectionWithBackoffPolicy(func(retry int) (sleep time.Duration) {
+			return 100 * time.Millisecond
+		}),
+	)
+	if err != nil {
+		assert.NoError(t, err)
+		return
+	}
+	defer func() {
+		assert.NoError(t, c.Close())
+	}()
+
+	hc, err := pool.NewConnection(
+		ctx,
+		testutils.HealthyConnectURL,
+		connNameHealthy,
+		pool.ConnectionWithLogger(logging.NewTestLogger(t)),
+	)
+	if err != nil {
+		assert.NoError(t, err)
+		return
+	}
+	defer func() {
+		assert.NoError(t, hc.Close())
+	}()
+
+	var (
+		sessionName        = nextSessionName()
+		sessionNameHealthy = nextSessionName()
+		nextQueueName      = testutils.QueueNameGenerator(sessionName)
+		nextExchangeName   = testutils.ExchangeNameGenerator(sessionName)
+	)
+
+	s, err := pool.NewSession(
+		c,
+		sessionName,
+		pool.SessionWithConfirms(true),
+	)
+	if err != nil {
+		assert.NoError(t, err)
+		return
+	}
+	defer func() {
+		assert.NoError(t, s.Close())
+	}()
+
+	hs, err := pool.NewSession(
+		hc,
+		sessionNameHealthy,
+	)
+	if err != nil {
+		assert.NoError(t, err)
+		return
+	}
+	defer func() {
+		assert.NoError(t, hs.Close())
+	}()
+
+	exchangeNames := make([]string, numMsgs)
+	publishNextMessages := make([]func() string, numMsgs)
+	for batch := 0; batch < numMsgs; batch++ {
+		exchangeNames[batch] = nextExchangeName()
+		queueName := nextQueueName()
+		cleanup := DeclareExchangeQueue(t, ctx, hs, exchangeNames[batch], queueName)
+		defer cleanup()
+
+		nextConsumerName := testutils.ConsumerNameGenerator(queueName)
+		consumeNextMessage := testutils.MessageGenerator(queueName)
+		publishNextMessages[batch] = testutils.MessageGenerator(queueName)
+		ConsumeAsyncN(t, ctx, &wg, hs, queueName, nextConsumerName(), consumeNextMessage, numBatches, true)
+	}
+
+	go func() {
+		for batch := 0; batch < numBatches; batch++ {
+			PublishBatchN(t, ctx, s, exchangeNames, publishNextMessages, numMsgs)
+		}
+	}()
+
+	exitChannel := make(chan struct{})
+	defer close(exitChannel)
+
+	go func() {
+		for {
+			select {
+			case <-exitChannel:
+				return
+			case <-time.After(5 * time.Second):
+				disconnected, reconnected := Disconnect(t, proxyName, 100*time.Millisecond)
+				disconnected()
+				reconnected()
+			}
+		}
+	}()
+
+	wg.Wait()
 }

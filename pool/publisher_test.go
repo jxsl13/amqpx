@@ -100,6 +100,86 @@ func TestSinglePublisher(t *testing.T) {
 	wg.Wait()
 }
 
+func TestSingleBatchPublisher(t *testing.T) {
+	t.Parallel()
+
+	var (
+		_, connectURL, _ = testutils.NextConnectURL()
+		ctx              = context.TODO()
+		log              = logging.NewTestLogger(t)
+		nextConnName     = testutils.ConnectionNameGenerator()
+		numMsgs          = 5
+	)
+
+	hs, hsclose := NewSession(
+		t,
+		ctx,
+		testutils.HealthyConnectURL,
+		nextConnName(),
+	)
+	defer hsclose()
+
+	p, err := pool.New(
+		ctx,
+		connectURL,
+		1,
+		1,
+		pool.WithLogger(logging.NewTestLogger(t)),
+		pool.WithConfirms(true),
+		pool.WithConnectionRecoverCallback(func(name string, retry int, err error) {
+			log.Warnf("connection %s is broken, retry %d, error: %s", name, retry, err)
+		}),
+	)
+	if err != nil {
+		assert.NoError(t, err)
+		return
+	}
+	defer p.Close()
+
+	var (
+		nextExchangeName = testutils.ExchangeNameGenerator(hs.Name())
+		nextQueueName    = testutils.QueueNameGenerator(hs.Name())
+		exchangeName     = nextExchangeName()
+		queueName        = nextQueueName()
+	)
+	cleanup := DeclareExchangeQueue(t, ctx, hs, exchangeName, queueName)
+	defer cleanup()
+
+	var (
+		nextConsumerName = testutils.ConsumerNameGenerator(queueName)
+		publisherMsgGen  = testutils.MessageGenerator(queueName)
+		consumerMsgGen   = testutils.MessageGenerator(queueName)
+		wg               sync.WaitGroup
+	)
+
+	pub := pool.NewPublisher(p)
+	defer pub.Close()
+
+	// TODO: currently this test allows duplication of messages
+	ConsumeAsyncN(t, ctx, &wg, hs, queueName, nextConsumerName(), consumerMsgGen, numMsgs, true)
+
+	msgs := []pool.BatchPublishing{}
+	for i := 0; i < numMsgs; i++ {
+		msg := publisherMsgGen()
+		msgs = append(msgs, pool.BatchPublishing{
+			Exchange:   exchangeName,
+			RoutingKey: "",
+			Publishing: pool.Publishing{
+				Mandatory:   true,
+				ContentType: "text/plain",
+				Body:        []byte(msg),
+			},
+		})
+	}
+	err = pub.PublishBatch(ctx, msgs)
+	if err != nil {
+		assert.NoError(t, err, "when publishing batch message")
+		return
+
+	}
+	wg.Wait()
+}
+
 /*
 // TODO: out of memory rabbitmq tests are disabled until https://github.com/rabbitmq/amqp091-go/issues/253 is resolved
 func TestPublishAwaitFlowControl(t *testing.T) {
