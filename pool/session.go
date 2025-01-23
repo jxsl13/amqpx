@@ -394,7 +394,7 @@ func (s *Session) AwaitConfirm(ctx context.Context, expectedTag uint64) (err err
 		}
 		if !confirm.Ack {
 			// in case the server did not accept the message, it might be due to resource problems.
-			// TODO: do we want to pause here upon flow control messages
+			// TODO: do we want to pause here upon flow control messages?
 			return ErrNack
 		}
 		// confirmed by broker

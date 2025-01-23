@@ -760,6 +760,8 @@ func TestHandlerPauseAndResumeInFlightNackSubscriber(t *testing.T) {
 }
 
 // This test tests that the requeued messages preserve their order until the requeue limit is reached.
+// TODO: we loose message 0 and message 1 on ubuntu tests
+// we get messages 2, 3, 4, 5, 6, 7, 8, 9
 func TestRequeueLimitPreserveOrderOK(t *testing.T) {
 	// we test that an event is requeued to the front of the queue as many times as it was defined.
 	// https://www.rabbitmq.com/docs/quorum-queues#repeated-requeues
@@ -1145,10 +1147,14 @@ func testBatchHandlerPauseAndResume(t *testing.T, i int) {
 
 	amqpxPublish := amqpx.New()
 	amqpxPublish.RegisterTopologyCreator(createTopology(log, eq1, eq2, eq3))
+	amqpxPublish.RegisterTopologyDeleter(deleteTopology(log, eq1, eq2, eq3))
+
 	err := amqpxPublish.Start(
 		cctx,
 		testutils.HealthyConnectURL,
-		append(options, amqpx.WithName(funcName+"-pub"))...,
+		append(options, amqpx.WithName(funcName+"-pub"),
+			amqpx.WithCloseTimeout(30*time.Second),
+		)...,
 	)
 	require.NoError(t, err)
 
@@ -1158,8 +1164,6 @@ func testBatchHandlerPauseAndResume(t *testing.T, i int) {
 	)
 
 	// step 1 - fill queue with messages
-	amqp.RegisterTopologyDeleter(deleteTopology(log, eq1, eq2, eq3))
-
 	// fill queue with messages
 	for i := 0; i < publish; i++ {
 		err := amqpxPublish.Publish(cctx, eq1.Exchange, eq1.RoutingKey, pool.Publishing{

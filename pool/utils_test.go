@@ -70,7 +70,7 @@ outer:
 
 				var receivedMsg = string(val.Body)
 				if allowDuplicates && receivedMsg == previouslyReceivedMsg {
-					// TODO: it is possible that messages are duplicated, but this is not a problem
+					// INFO: it is possible that messages are duplicated, but this is not a problem, we allow that
 					// due to network issues. We should not fail the test in this case.
 					log.Warnf("received duplicate message: %s", receivedMsg)
 					continue
@@ -226,7 +226,7 @@ func DeclareExchangeQueue(
 			log.Infof("deleting queue %s", queueName)
 			_, e := s.QueueDelete(ctx, queueName)
 			assert.NoError(t, e, "expected no error when deleting queue")
-			// TODO: asserting the number of purged messages seems to be flaky, so we do not do that for now.
+			// INFO: asserting the number of purged messages seems to be flaky, so we do not do that for now.
 			//assert.Equalf(t, 0, deleted, "expected 0 deleted messages, got %d for queue %s", deleted, queueName)
 		}
 	}()
@@ -363,7 +363,7 @@ func SubscriberConsumeN(
 		}
 
 		if allowDuplicates && receivedMsg == previouslyReceivedMsg {
-			// TODO: it is possible that messages are duplicated, but this is not a problem
+			// INFO: it is possible that messages are duplicated, but this is not a problem
 			// due to network issues. We should not fail the test in this case.
 			log.Warnf("received duplicate message: %s", receivedMsg)
 			return nil
@@ -458,7 +458,7 @@ func SubscriberBatchConsumeN(
 			}
 
 			if allowDuplicates && receivedMsg == previouslyReceivedMsg {
-				// TODO: it is possible that messages are duplicated, but this is not a problem
+				// INFO: it is possible that messages are duplicated, but this is not a problem
 				// due to network issues. We should not fail the test in this case.
 				log.Warnf("received duplicate message: %s", receivedMsg)
 				continue
