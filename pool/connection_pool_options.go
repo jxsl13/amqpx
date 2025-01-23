@@ -114,11 +114,11 @@ func ConnectionPoolWithRecoverCallback(callback ConnectionRecoverCallback) Conne
 
 type BackoffFunc func(retry int) (sleep time.Duration)
 
-func newDefaultBackoffPolicy(min, max time.Duration) BackoffFunc {
+func newDefaultBackoffPolicy(minDuration, maxDuration time.Duration) BackoffFunc {
 
 	factor := time.Second
 	for _, scale := range []time.Duration{time.Hour, time.Minute, time.Second, time.Millisecond, time.Microsecond, time.Nanosecond} {
-		d := min.Truncate(scale)
+		d := minDuration.Truncate(scale)
 		if d > 0 {
 			factor = scale
 			break
@@ -127,26 +127,12 @@ func newDefaultBackoffPolicy(min, max time.Duration) BackoffFunc {
 
 	return func(retry int) (sleep time.Duration) {
 
-		wait := 2 << maxi(0, mini(32, retry)) * factor                    // 2^(min(32, retry)) * factor (second, min, hours, etc)
-		jitter := time.Duration(rand.Int64N(int64(maxi(1, int(wait)/5)))) // max 20% jitter
-		wait = min + wait + jitter
-		if wait > max {
-			wait = max
+		wait := 2 << max(0, min(32, retry)) * factor                     // 2^(min(32, retry)) * factor (second, min, hours, etc)
+		jitter := time.Duration(rand.Int64N(int64(max(1, int(wait)/5)))) // max 20% jitter
+		wait = minDuration + wait + jitter
+		if wait > maxDuration {
+			wait = maxDuration
 		}
 		return wait
 	}
-}
-
-func mini(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
-func maxi(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }

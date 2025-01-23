@@ -945,18 +945,18 @@ func TestHandlerPauseAndResume(t *testing.T) {
 	var wg sync.WaitGroup
 	defer wg.Wait()
 
-	for i := 0; i < 10; i++ {
-		wg.Add(1)
+	iterations := 1000
+	closeTimeout := max(time.Duration(iterations/3)*time.Second, 10*time.Second)
+	wg.Add(iterations)
+	for i := 0; i < iterations; i++ {
 		go func(i int) {
 			defer wg.Done()
-			testHandlerPauseAndResume(t, i)
+			testHandlerPauseAndResume(t, i, closeTimeout)
 		}(i)
 	}
 }
 
-func testHandlerPauseAndResume(t *testing.T, i int) {
-	t.Logf("iteration %d", i)
-
+func testHandlerPauseAndResume(t *testing.T, i int, closeTimeout time.Duration) {
 	var (
 		amqp              = amqpx.New()
 		log               = logging.NewTestLogger(t)
@@ -981,7 +981,7 @@ func testHandlerPauseAndResume(t *testing.T, i int) {
 
 	amqpPub := amqpx.New()
 	amqpPub.RegisterTopologyCreator(createTopology(log, eq1, eq2, eq3))
-	amqp.RegisterTopologyDeleter(deleteTopology(log, eq1, eq2, eq3))
+	amqpPub.RegisterTopologyDeleter(deleteTopology(log, eq1, eq2, eq3))
 	defer func() {
 		assert.NoError(t, amqpPub.Close())
 	}()
@@ -989,7 +989,10 @@ func testHandlerPauseAndResume(t *testing.T, i int) {
 	err := amqpPub.Start(
 		cctx,
 		testutils.HealthyConnectURL,
-		append(options, amqpx.WithName(funcName+"-pub"))...,
+		append(options,
+			amqpx.WithName(funcName+"-pub"),
+			amqpx.WithCloseTimeout(closeTimeout),
+		)...,
 	)
 	require.NoError(t, err)
 

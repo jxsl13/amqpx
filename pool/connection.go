@@ -120,6 +120,13 @@ func NewConnection(ctx context.Context, connectUrl, name string, options ...Conn
 		return conn, nil
 	}
 
+	select {
+	case <-ctx.Done():
+		return nil, fmt.Errorf("connection failed: %w", ctx.Err())
+	default:
+		// continue
+	}
+
 	if !recoverable(err) {
 		return nil, err
 	}
@@ -320,14 +327,25 @@ func (ch *Connection) recover(ctx context.Context) (err error) {
 			break
 		}
 
-		if !recoverable(err) {
-			return err
-		}
+		select {
+		case <-ch.catchShutdown():
+			// catch shutdown signal
+			return fmt.Errorf("connection recovery failed: %w", ch.shutdownErr())
+		case <-ctx.Done():
+			// catch context cancelation
+			return fmt.Errorf("connection recovery failed: %w", ctx.Err())
+		default:
 
-		if ch.recoverCB != nil {
-			// allow a user to hook into the recovery process
-			// in order to notify about the recovery process
-			ch.recoverCB(ch.name, try, err)
+			// context cancelation is not handle din the recoverable function
+			if !recoverable(err) {
+				return err
+			}
+
+			if ch.recoverCB != nil {
+				// allow a user to hook into the recovery process
+				// in order to notify about the recovery process
+				ch.recoverCB(ch.name, try, err)
+			}
 		}
 
 		// reset to exponential backoff

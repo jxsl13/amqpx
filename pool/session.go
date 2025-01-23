@@ -301,9 +301,12 @@ func (s *Session) tryRecover(ctx context.Context, err error) error {
 		return nil
 	}
 
+	// shutdown & context cancelation is not handled in this function
 	if !recoverable(err) {
 		return err
 	}
+
+	// shutdown & context cancelation is handled in this function
 	return s.recover(ctx)
 }
 

@@ -1,7 +1,6 @@
 package pool
 
 import (
-	"context"
 	"errors"
 
 	"github.com/rabbitmq/amqp091-go"
@@ -61,19 +60,11 @@ func recoverable(err error) bool {
 		panic("checking nil error for recoverability")
 	}
 
-	if errors.Is(err, context.Canceled) {
-		return false
-	}
-
-	if errors.Is(err, context.DeadlineExceeded) {
-		return false
-	}
-
-	if errors.Is(err, ErrClosed) {
-		return false
-	}
-
-	// flow control errors are recoverable
+	//  INFO:
+	// - ErrClosed, context.Canceled and context.DeadlineExceeded MUST be handled outside of this function
+	// bacause network io timeouts are now also considered as context.DeadlineExceeded, we do want them to be recoverable but
+	// explicit shutdowns or context cancelations when calling methods, not to be recoverable.
+	// - flow control errors are recoverable and are NOT supposed to be handled here
 
 	// invalid usage of the amqp protocol is not recoverable
 	// INFO: this should be checked last.

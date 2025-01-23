@@ -441,7 +441,7 @@ func (s *Subscriber) batchConsume(h *BatchHandler) (err error) {
 
 	var (
 		// preallocate memory for batch
-		batch      = make([]Delivery, 0, maxi(1, opts.MaxBatchSize))
+		batch      = make([]Delivery, 0, max(1, opts.MaxBatchSize))
 		batchBytes = 0
 	)
 	defer func() {
