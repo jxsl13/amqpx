@@ -70,8 +70,48 @@ func (t Table) WithDeadLetterExchangeAndRoutingKey(exchange, routingKey string) 
 	return t
 }
 
+// Returns the number of deliveries of the message.
+func (t Table) DeliveryCount() (int64, bool) {
+	if t == nil {
+		return 0, false
+	}
+	v, ok := t["x-delivery-count"]
+	if !ok {
+		return 0, false
+	}
+
+	cnt, ok := v.(int64)
+	if !ok {
+		return 0, false
+	}
+
+	return cnt, true
+}
+
+func (t Table) Death() (int64, bool) {
+	if t == nil {
+		return 0, false
+	}
+
+	v, ok := t["x-death"]
+	if !ok {
+		return 0, false
+	}
+
+	death, ok := v.(int64)
+	if !ok {
+		return 0, false
+	}
+	return death, true
+
+}
+
 func (t Table) toAMQPTable() amqp091.Table {
 	return amqp091.Table(t)
+}
+
+func (t Table) Clone() Table {
+	return t.clone()
 }
 
 func (t Table) clone(add ...int) Table {
