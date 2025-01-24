@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -801,7 +802,7 @@ func TestRequeueLimitPreserveOrderOK(t *testing.T) {
 		// in case that this value is changed to a higher value, the test will fail, which is when the number of allowed requeues is exceeded.
 		// aftet that requeue limit is reached, messages are not returned back to the front of the queue but at the end.
 		// This prevents the raft log from growing indefinitely.
-		redeliveryLimit        = pool.DefaultQueueDeliveryLimit - 1
+		redeliveryLimit        = pool.DefaultQueueDeliveryLimit
 		nackProcessingFinished = make(chan struct{})
 		processingFinshed      = make(chan struct{})
 	)
@@ -844,32 +845,24 @@ func TestRequeueLimitPreserveOrderOK(t *testing.T) {
 	sub := amqpx.New()
 
 	redeliveryCounter := 0
-	done := false
+	var once sync.Once
 	handler := sub.RegisterBatchHandler(eq1.Queue, func(bctx context.Context, msgs []pool.Delivery) (err error) {
 
-		if done && redeliveryCounter == redeliveryLimit {
+		redeliveryCounter++
+
+		if redeliveryCounter >= redeliveryLimit-3 { // only -2 is needed, but for debugging purposes in the fronend we add another -1
+
+			once.Do(func() {
+				close(nackProcessingFinished)
+			})
+
 			log.Info("blocking processing")
 			<-bctx.Done()
 			log.Info("unblocking processing")
 
+			// INFO: additional redelivery once the context is canceled
 			return bctx.Err() // reject & requeue, additional redelivery that is still supposed to have the correct order.
-		}
 
-		// make sure that all were redelivered
-		redelivered := false
-		for _, msg := range msgs {
-			redelivered = redelivered || msg.Redelivered
-		}
-
-		// if all redelivered, increment counter
-		if redelivered {
-			redeliveryCounter++
-		}
-
-		// do this only once
-		if !done && redeliveryCounter == redeliveryLimit {
-			close(nackProcessingFinished)
-			done = true
 		}
 
 		return fmt.Errorf("requeue %d messages", len(msgs))
@@ -914,8 +907,10 @@ func TestRequeueLimitPreserveOrderOK(t *testing.T) {
 
 	time.Sleep(1 * time.Second)
 
-	cnt := 0
+	var cnt int64 = 0
 	handler.SetMaxBatchSize(finalBatchSize)
+
+	// INFO: additional redilivery for final consumption
 	handler.SetHandlerFunc(func(hctx context.Context, msgs []pool.Delivery) error {
 		select {
 		case <-hctx.Done():
@@ -932,8 +927,7 @@ func TestRequeueLimitPreserveOrderOK(t *testing.T) {
 			assert.NoError(t, err)
 		}
 
-		cnt += len(msgs)
-		if cnt == publish {
+		if atomic.AddInt64(&cnt, int64(len(msgs))) == int64(publish) {
 			close(processingFinshed)
 		}
 
