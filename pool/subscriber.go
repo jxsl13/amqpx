@@ -570,6 +570,7 @@ func (s *Subscriber) batchConsume(h *BatchHandler) (err error) {
 		} else {
 			poolErr := s.batchPostProcessing(opts, session, batch, batchBytes, err)
 			if poolErr != nil {
+				batch = batch[:0] // reset batch because in thise case it is already n/acked
 				return poolErr
 			}
 			s.debugfBatchHandler(opts, "processed batch with %d messages and %d bytes", batchSize, batchBytes)
