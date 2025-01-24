@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"strings"
 	"sync"
-	"testing"
 )
 
 type generatorOptions struct {
@@ -277,8 +276,7 @@ type ExchangeQueue struct {
 	assertionStarted   bool
 }
 
-func (eq *ExchangeQueue) ValidateNextSubMsg(t *testing.T, msg string) error {
-	t.Helper()
+func (eq *ExchangeQueue) ValidateNextSubMsg(msg string) error {
 
 	if !eq.assertionStarted {
 		eq.assertionStarted = true

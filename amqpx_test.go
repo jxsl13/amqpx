@@ -924,7 +924,7 @@ func TestRequeueLimitPreserveOrderOK(t *testing.T) {
 		// The bigger the batch, the more data we loose
 		for _, msg := range msgs {
 			log.Printf("received message: %s", string(msg.Body))
-			err := eq1.ValidateNextSubMsg(t, string(msg.Body))
+			err := eq1.ValidateNextSubMsg(string(msg.Body))
 			assert.NoError(t, err)
 		}
 
@@ -1191,7 +1191,7 @@ func testBatchHandlerPauseAndResume(t *testing.T, i int) {
 	// step 2 - process messages, pause, wait, resume, process rest, cancel context
 	handler01 := amqp.RegisterBatchHandler(eq1.Queue, func(_ context.Context, msgs []pool.Delivery) (err error) {
 		for _, msg := range msgs {
-			assert.Equal(t, eq1.NextSubMsg(), string(msg.Body))
+			assert.NoError(t, eq1.ValidateNextSubMsg(string(msg.Body)))
 			cnt++
 			if cnt == publish/3 || cnt == publish/3*2 {
 				err = amqp.Publish(cctx, eq2.Exchange, eq2.RoutingKey, pool.Publishing{

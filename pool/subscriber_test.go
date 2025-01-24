@@ -414,7 +414,7 @@ func TestLowLevelConsumeBatchOK(t *testing.T) {
 				consume(log, test.Qos, 1, batchTimeout, chDone, chAck, conn, queueName, messageCount, func(batch []*amqp.Delivery) {
 					for i, d := range batch {
 						log.Infof("Processing ack message: %d: %s", i, string(d.Body))
-						err := eq.ValidateNextSubMsg(t, string(d.Body))
+						err := eq.ValidateNextSubMsg(string(d.Body))
 						assert.NoError(t, err)
 
 					}
@@ -552,7 +552,7 @@ func TestLowLevelConsumeBatchOK_2(t *testing.T) {
 					for i, d := range batch {
 						log.Infof("Processing ack message: %d: %s", i, string(d.Body))
 
-						err := eq.ValidateNextSubMsg(t, string(d.Body))
+						err := eq.ValidateNextSubMsg(string(d.Body))
 						assert.NoError(t, err)
 					}
 				})
