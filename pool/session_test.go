@@ -609,19 +609,24 @@ func TestNewSessionPublishWithDisconnect(t *testing.T) {
 	defer cleanup()
 
 	var (
+		cctx, cancel              = context.WithCancel(ctx)
 		wg                        sync.WaitGroup
 		consumeMsgGen             = testutils.MessageGenerator(queueName)
 		publishMsgGen             = testutils.MessageGenerator(queueName)
 		numMsgs                   = 20
 		disconnected, reconnected = Disconnect(t, proxyName, 5*time.Second)
 	)
+	defer cancel()
 
-	ConsumeAsyncN(t, ctx, &wg, hs, queueName, nextConsumerName(), consumeMsgGen, numMsgs, true)
+	ConsumeAsyncN(t, cctx, &wg, hs, queueName, nextConsumerName(), consumeMsgGen, numMsgs, true)
 
 	disconnected()
 	PublishN(t, ctx, s, exchangeName, publishMsgGen, numMsgs)
 	reconnected()
 
+	time.Sleep(5 * time.Second)
+
+	cancel()
 	wg.Wait()
 }
 

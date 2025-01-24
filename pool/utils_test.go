@@ -16,7 +16,7 @@ import (
 )
 
 type Consumer interface {
-	Consume(queue string, option ...pool.ConsumeOptions) (<-chan amqp091.Delivery, error)
+	ConsumeWithContext(ctx context.Context, queue string, option ...pool.ConsumeOptions) (<-chan amqp091.Delivery, error)
 }
 
 func ConsumeN(
@@ -42,7 +42,8 @@ func ConsumeN(
 
 outer:
 	for {
-		delivery, err := c.Consume(
+		delivery, err := c.ConsumeWithContext(
+			ctx,
 			queueName,
 			pool.ConsumeOptions{
 				ConsumerTag: consumerName,
