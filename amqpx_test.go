@@ -776,6 +776,7 @@ func TestHandlerPauseAndResumeInFlightNackSubscriber(t *testing.T) {
 }
 
 // This test tests that the requeued messages preserve their order until the requeue limit is reached.
+// IMPORTANT: This test requires RabbitMQ 4.0 or higher, as it uses the x-arguments to set the requeue limit.
 // TODO: we loose message 0 and message 1 on ubuntu tests
 // we get messages 2, 3, 4, 5, 6, 7, 8, 9
 func TestRequeueLimitPreserveOrderOK(t *testing.T) {
@@ -850,7 +851,7 @@ func TestRequeueLimitPreserveOrderOK(t *testing.T) {
 
 		redeliveryCounter++
 
-		if redeliveryCounter >= redeliveryLimit-3 { // only -2 is needed, but for debugging purposes in the fronend we add another -1
+		if redeliveryCounter >= redeliveryLimit-2 { // only -2 is needed, but for debugging purposes in the fronend we add another -1
 
 			once.Do(func() {
 				close(nackProcessingFinished)
