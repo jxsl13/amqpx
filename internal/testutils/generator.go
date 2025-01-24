@@ -271,4 +271,35 @@ type ExchangeQueue struct {
 
 	NextPubMsg func() string
 	NextSubMsg func() string
+
+	lastAssertedSubMsg string
+	assertionStarted   bool
+}
+
+func (eq *ExchangeQueue) ValidateNextSubMsg(msg string) error {
+
+	if !eq.assertionStarted {
+		eq.assertionStarted = true
+		eq.lastAssertedSubMsg = eq.NextSubMsg()
+
+		if eq.lastAssertedSubMsg != msg {
+			return fmt.Errorf("expected message %q, got %q", eq.lastAssertedSubMsg, msg)
+		}
+		return nil
+	}
+
+	// the new message is either the previous message due to connection problems and re-delivery
+	// or a new message
+
+	if eq.lastAssertedSubMsg == msg {
+		return nil
+	}
+
+	eq.lastAssertedSubMsg = eq.NextSubMsg()
+
+	if eq.lastAssertedSubMsg != msg {
+		return fmt.Errorf("expected message %q, got %q", eq.lastAssertedSubMsg, msg)
+	}
+	return nil
+
 }

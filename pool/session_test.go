@@ -887,7 +887,6 @@ func TestNewSingleSessionCloseWithDisconnect(t *testing.T) {
 		return
 	}
 	defer func() {
-		//TODO: we do not want to assert anything here
 		assert.NoError(t, c.Close())
 	}()
 
@@ -939,7 +938,6 @@ func TestNewSingleSessionCloseWithOutOfMemoryRabbitMQ(t *testing.T) {
 		return
 	}
 	defer func() {
-		//TODO: we do not want to assert anything here
 		assert.NoError(t, c.Close())
 	}()
 
@@ -1010,7 +1008,6 @@ func TestNewSingleSessionCloseWithHealthyRabbitMQ(t *testing.T) {
 		return
 	}
 	defer func() {
-		//TODO: we do not want to assert anything here
 		assert.NoError(t, c.Close())
 	}()
 

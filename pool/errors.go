@@ -1,7 +1,6 @@
 package pool
 
 import (
-	"context"
 	"errors"
 
 	"github.com/rabbitmq/amqp091-go"
@@ -40,10 +39,6 @@ var (
 	// ErrReject can be used to reject a specific message
 	// This is a special error that negatively acknowledges messages and does not reuque them.
 	ErrReject = errors.New("message rejected")
-
-	// ErrRejectSingle can be used to reject a specific message
-	// This is a special error that negatively acknowledges messages and does not reuque them
-	ErrRejectSingle = errors.New("single message rejected")
 )
 
 var (
@@ -65,21 +60,11 @@ func recoverable(err error) bool {
 		panic("checking nil error for recoverability")
 	}
 
-	if errors.Is(err, context.Canceled) {
-		return false
-	}
-
-	if errors.Is(err, context.DeadlineExceeded) {
-		return false
-	}
-
-	if errors.Is(err, ErrClosed) {
-		return false
-	}
-
-	if errors.Is(err, ErrBlockingFlowControl) {
-		return false
-	}
+	//  INFO:
+	// - ErrClosed, context.Canceled and context.DeadlineExceeded MUST be handled outside of this function
+	// bacause network io timeouts are now also considered as context.DeadlineExceeded, we do want them to be recoverable but
+	// explicit shutdowns or context cancelations when calling methods, not to be recoverable.
+	// - flow control errors are recoverable and are NOT supposed to be handled here
 
 	// invalid usage of the amqp protocol is not recoverable
 	// INFO: this should be checked last.

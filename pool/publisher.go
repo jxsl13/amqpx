@@ -176,18 +176,18 @@ func (p *Publisher) Get(ctx context.Context, queue string, autoAck bool) (msg De
 
 func (p *Publisher) info(exchange, routingKey string, a ...any) {
 	p.log.WithFields(map[string]any{
-		"publisher":  p.pool.Name(),
-		"exchange":   exchange,
-		"routingKey": routingKey,
+		"publisher":   p.pool.Name(),
+		"exchange":    exchange,
+		"routing_key": routingKey,
 	}).Info(a...)
 }
 
 func (p *Publisher) warn(exchange, routingKey string, err error, a ...any) {
 	p.log.WithFields(map[string]any{
-		"publisher":  p.pool.Name(),
-		"exchange":   exchange,
-		"routingKey": routingKey,
-		"error":      err,
+		"publisher":   p.pool.Name(),
+		"exchange":    exchange,
+		"routing_key": routingKey,
+		"error":       err,
 	}).Warn(a...)
 }
 

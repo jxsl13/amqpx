@@ -10,6 +10,7 @@ import (
 	"github.com/jxsl13/amqpx/internal/testutils"
 	"github.com/jxsl13/amqpx/logging"
 	"github.com/jxsl13/amqpx/pool"
+	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -291,4 +292,370 @@ func testBatchSubscriberMaxBytes(t *testing.T, funcName string, maxBatchBytes in
 	}
 
 	wg.Wait()
+}
+
+// This test proofs that Qos and prefetch_count are not required when consuming batches.
+func TestLowLevelConsumeBatchOK(t *testing.T) {
+	t.Parallel()
+	var (
+		funcName = testutils.FuncName()
+	)
+
+	tests := []struct {
+		Name         string
+		Qos          bool
+		MessageCount int
+		BatchSize    int
+		BatchTimeout time.Duration
+	}{
+		{"#1", true, 10, 2, 100 * time.Millisecond},
+		{"#2", true, 10, 20, 100 * time.Millisecond},
+		{"#3", true, 10, 2, 500 * time.Millisecond},
+		{"#4", true, 10, 20, 500 * time.Millisecond},
+		{"#5", false, 10, 2, 100 * time.Millisecond},
+		{"#6", false, 10, 20, 100 * time.Millisecond},
+		{"#7", false, 10, 2, 500 * time.Millisecond},
+		{"#8", false, 10, 20, 500 * time.Millisecond},
+	}
+
+	for _, test := range tests {
+
+		test := test
+		t.Run(test.Name, func(t *testing.T) {
+			t.Parallel()
+
+			var (
+				log               = logging.NewTestLogger(t)
+				ctx, cancel       = context.WithCancel(context.TODO())
+				nextExchangeQueue = testutils.NewExchangeQueueGenerator(fmt.Sprintf("%s_%s", funcName, test.Name))
+				eq                = nextExchangeQueue()
+				exchangeName      = eq.Exchange
+				queueName         = eq.Queue
+
+				messageCount = test.MessageCount
+				batchSize    = test.BatchSize
+				batchTimeout = test.BatchTimeout
+				chDone       = make(chan struct{})
+				chAck        = make(chan struct{})
+			)
+
+			log.SetLevel(0)
+			defer cancel()
+
+			// open connection
+			conn, err := amqp.Dial(testutils.HealthyConnectURL)
+			if err != nil {
+				log.Fatal(err)
+			}
+			defer conn.Close()
+
+			// open channel
+			ch, err := conn.Channel()
+			if err != nil {
+				log.Fatal(err)
+			}
+			defer ch.Close()
+
+			// declare queue
+			err = ch.ExchangeDeclare(exchangeName, string(pool.ExchangeKindFanOut), true, false, false, false, nil)
+			if err != nil {
+				assert.NoError(t, err)
+				return
+			}
+			defer ch.ExchangeDelete(exchangeName, false, false)
+
+			q, err := ch.QueueDeclare(queueName, true, false, false, true, nil)
+			if err != nil {
+				assert.NoError(t, err)
+				return
+			}
+			defer ch.QueueDelete(q.Name, false, false, true)
+
+			// publish message
+			for i := 0; i < messageCount; i++ {
+				err = ch.PublishWithContext(ctx, "", q.Name, false, false, amqp.Publishing{
+					ContentType: "text/plain",
+					Body:        []byte(eq.NextPubMsg()),
+				})
+				if err != nil {
+					assert.NoError(t, err)
+					return
+				}
+			}
+
+			var wg sync.WaitGroup
+
+			// consume message in batch but do not acknowledge
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				consume(log, test.Qos, batchSize, batchTimeout, chDone, chAck, conn, queueName, messageCount, func(batch []*amqp.Delivery) {
+					for i, d := range batch {
+						log.Infof("Processing nack message: %d: %s", i, string(d.Body))
+					}
+				})
+			}()
+
+			// let it run for a while
+			time.Sleep(4200 * time.Millisecond)
+
+			// close the consumer
+			close(chDone)
+			wg.Wait()
+
+			// re-open the consumer, this time acknowledge the messages
+			chDone = make(chan struct{})
+			close(chAck)
+
+			// consume message one by one
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				consume(log, test.Qos, 1, batchTimeout, chDone, chAck, conn, queueName, messageCount, func(batch []*amqp.Delivery) {
+					for i, d := range batch {
+						log.Infof("Processing ack message: %d: %s", i, string(d.Body))
+						err := eq.ValidateNextSubMsg(string(d.Body))
+						assert.NoError(t, err)
+
+					}
+				})
+			}()
+
+			select {
+			case <-chDone:
+				log.Info("consumed successfully")
+			case <-time.After(time.Duration(test.MessageCount) * 300 * time.Millisecond):
+				t.Error("failed to consume all messages: timeout reached")
+			}
+		})
+	}
+
+}
+
+// This test proofs that Qos and prefetch_count are not required when consuming batches.
+func TestLowLevelConsumeBatchOK_2(t *testing.T) {
+	t.Parallel()
+	var (
+		funcName = testutils.FuncName()
+	)
+
+	tests := []struct {
+		Name         string
+		Qos          bool
+		MessageCount int
+		BatchSize    int
+		BatchTimeout time.Duration
+	}{
+		{"#1", true, 10, 2, 50 * time.Millisecond},
+		{"#2", true, 10, 20, 100 * time.Millisecond},
+		{"#3", true, 10, 2, 500 * time.Millisecond},
+		{"#4", true, 10, 20, 500 * time.Millisecond},
+		{"#5", false, 10, 2, 50 * time.Millisecond},
+		{"#6", false, 10, 20, 100 * time.Millisecond},
+		{"#7", false, 10, 2, 500 * time.Millisecond},
+		{"#8", false, 10, 20, 500 * time.Millisecond},
+	}
+
+	for _, test := range tests {
+
+		test := test
+		t.Run(test.Name, func(t *testing.T) {
+			t.Parallel()
+
+			var (
+				log               = logging.NewTestLogger(t)
+				ctx, cancel       = context.WithCancel(context.TODO())
+				nextExchangeQueue = testutils.NewExchangeQueueGenerator(fmt.Sprintf("%s_%s", funcName, test.Name))
+				eq                = nextExchangeQueue()
+				exchangeName      = eq.Exchange
+				queueName         = eq.Queue
+
+				messageCount = test.MessageCount
+				batchSize    = test.BatchSize
+				batchTimeout = test.BatchTimeout
+				chDone       = make(chan struct{})
+				chAck        = make(chan struct{})
+			)
+
+			log.SetLevel(0)
+			defer cancel()
+
+			// open connection
+			conn, err := amqp.Dial(testutils.HealthyConnectURL)
+			if err != nil {
+				log.Fatal(err)
+			}
+			defer conn.Close()
+
+			// open channel
+			ch, err := conn.Channel()
+			if err != nil {
+				log.Fatal(err)
+			}
+			defer ch.Close()
+
+			// declare queue
+			err = ch.ExchangeDeclare(exchangeName, string(pool.ExchangeKindFanOut), true, false, false, false, nil)
+			if err != nil {
+				assert.NoError(t, err)
+				return
+			}
+			defer ch.ExchangeDelete(exchangeName, false, false)
+
+			q, err := ch.QueueDeclare(queueName, true, false, false, true, nil)
+			if err != nil {
+				assert.NoError(t, err)
+				return
+			}
+			defer ch.QueueDelete(q.Name, false, false, true)
+
+			var wg sync.WaitGroup
+
+			// consume message in batch but do not acknowledge
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				consume(log, test.Qos, batchSize, batchTimeout, chDone, chAck, conn, queueName, messageCount, func(batch []*amqp.Delivery) {
+					for i, d := range batch {
+						log.Infof("Processing nack message: %d: %s", i, string(d.Body))
+					}
+				})
+			}()
+
+			// publish message
+			for i := 0; i < messageCount; i++ {
+				err = ch.PublishWithContext(ctx, "", q.Name, false, false, amqp.Publishing{
+					ContentType: "text/plain",
+					Body:        []byte(eq.NextPubMsg()),
+				})
+				if err != nil {
+					assert.NoError(t, err)
+					return
+				}
+			}
+			// let it run for a while
+			time.Sleep(4200 * time.Millisecond)
+
+			// close the consumer
+			close(chDone)
+			wg.Wait()
+
+			// re-open the consumer, this time acknowledge the messages
+			chDone = make(chan struct{})
+			close(chAck)
+
+			// consume message one by one
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				consume(log, test.Qos, 1, batchTimeout, chDone, chAck, conn, queueName, messageCount, func(batch []*amqp.Delivery) {
+					for i, d := range batch {
+						log.Infof("Processing ack message: %d: %s", i, string(d.Body))
+
+						err := eq.ValidateNextSubMsg(string(d.Body))
+						assert.NoError(t, err)
+					}
+				})
+			}()
+
+			select {
+			case <-chDone:
+				log.Info("consumed successfully")
+			case <-time.After(time.Duration(test.MessageCount) * 300 * time.Millisecond):
+				t.Error("failed to consume all messages: timeout reached")
+			}
+		})
+	}
+}
+
+func consume(log logging.Logger, qos bool, batchSize int, batchTimeout time.Duration, chDone chan struct{}, chAck chan struct{}, conn *amqp.Connection, queueName string, messageCount int, process func(batch []*amqp.Delivery)) {
+	defer func() {
+		log.Info("consumer closed")
+	}()
+
+	log.Info("starting consumer...")
+	ch, err := conn.Channel()
+	if err != nil {
+		log.Error(err)
+		return
+	}
+	defer ch.Close()
+
+	if qos {
+		// consume message
+		err = ch.Qos(batchSize, 0, false)
+		if err != nil {
+			log.Error(err)
+			return
+		}
+	}
+
+	msgs, err := ch.Consume(queueName, "", false, false, false, false, nil)
+	if err != nil {
+		log.Error(err)
+		return
+	}
+
+	log.Info("consumer started")
+	counter := 0
+
+all:
+	for {
+		batch := make([]*amqp.Delivery, 0, batchSize)
+		batchCounter := 0
+		c := time.After(batchTimeout)
+
+	collect:
+		for {
+			select {
+			case d, ok := <-msgs:
+				if !ok {
+					log.Error("delivery channel closed")
+					return
+				}
+
+				batch = append(batch, &d)
+				batchCounter++
+				if batchCounter >= batchSize {
+					log.Infof("Batch is full with %d messages", len(batch))
+					break collect
+				}
+			case <-c:
+				log.Infof("Batch timeout with %d messages", len(batch))
+				break collect
+			case <-chDone:
+				break all
+			}
+		}
+
+		if len(batch) == 0 {
+			log.Info("Empty batch, skipping processing")
+			continue
+		}
+
+		select {
+		case <-chAck:
+			process(batch)
+
+			err := batch[len(batch)-1].Ack(true)
+			if err != nil {
+				log.Error(err)
+				return
+			}
+
+			counter += len(batch)
+			if counter >= messageCount {
+				close(chDone)
+			}
+		default:
+			process(batch)
+
+			err := batch[len(batch)-1].Nack(true, true)
+			if err != nil {
+				log.Error(err)
+				return
+			}
+		}
+	}
+
 }

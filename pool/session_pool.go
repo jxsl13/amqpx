@@ -197,7 +197,7 @@ func (sp *SessionPool) GetSession(ctx context.Context) (s *Session, err error) {
 }
 
 // GetTransientSession returns a transient session.
-// This method may return an error when the context ha sbeen closed before a session could be obtained.
+// This method may return an error when the context has been closed before a session could be obtained.
 // A transient session creates a transient connection under the hood.
 func (sp *SessionPool) GetTransientSession(ctx context.Context) (s *Session, err error) {
 	conn, err := sp.pool.GetTransientConnection(ctx)
@@ -261,7 +261,7 @@ func (sp *SessionPool) deriveSession(ctx context.Context, conn *Connection, id i
 // If Session is not a cached channel, it is simply closed here.
 func (sp *SessionPool) ReturnSession(session *Session, err error) {
 
-	// don't put non-managed sessions back into the channel
+	// don't put unmanaged sessions back into the pool channel
 	if !session.IsCached() {
 		_ = session.Close()
 		return
@@ -269,8 +269,8 @@ func (sp *SessionPool) ReturnSession(session *Session, err error) {
 
 	session.Flag(err)
 
-	// flush confirms channel
-	session.Flush()
+	session.FlushConfirms()
+	session.FlushReturned()
 
 	// always put the session back into the pool
 	// even if the session is still broken
@@ -318,13 +318,13 @@ func (sp *SessionPool) Close() {
 }
 
 func (sp *SessionPool) info(a ...any) {
-	sp.log.WithField("sessionPool", sp.pool.name).Info(a...)
+	sp.log.WithField("session_pool", sp.pool.name).Info(a...)
 }
 
 func (sp *SessionPool) error(err error, a ...any) {
-	sp.log.WithField("sessionPool", sp.pool.name).WithField("error", err.Error()).Error(a...)
+	sp.log.WithField("session_pool", sp.pool.name).WithField("error", err.Error()).Error(a...)
 }
 
 func (sp *SessionPool) debug(a ...any) {
-	sp.log.WithField("sessionPool", sp.pool.name).Debug(a...)
+	sp.log.WithField("session_pool", sp.pool.name).Debug(a...)
 }

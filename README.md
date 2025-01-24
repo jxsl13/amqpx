@@ -22,6 +22,10 @@
 
 This library is highly inspired by `https://github.com/houseofcat/turbocookedrabbit`
 
+## Requirements:
+ - Go 1.22 or higher
+ - RabbitMQ 4.0 or higher for batch processing ordering guarantees ([Quorum Queues - Repeated Redeliveries](https://www.rabbitmq.com/docs/quorum-queues#repeated-requeues))
+
 ## Getting started
 
 ```shell

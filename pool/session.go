@@ -13,6 +13,11 @@ import (
 
 const (
 	notImplemented = 540
+
+	// In order to prevent the broker from requeuing the message to th end of the queue, we need to set this limit in order for at least the
+	// first N requeues to be requeued to the front of the queue.
+	// https://www.rabbitmq.com/docs/quorum-queues#repeated-requeues
+	DefaultQueueDeliveryLimit = 20
 )
 
 // Session is a wrapper for an amqp channel.
@@ -296,9 +301,12 @@ func (s *Session) tryRecover(ctx context.Context, err error) error {
 		return nil
 	}
 
+	// shutdown & context cancelation is not handled in this function
 	if !recoverable(err) {
 		return err
 	}
+
+	// shutdown & context cancelation is handled in this function
 	return s.recover(ctx)
 }
 
@@ -355,7 +363,12 @@ func (s *Session) recover(ctx context.Context) error {
 // You may check for ErrNack in order to see whether the broker rejected the message temporatily.
 // WARNING: AwaitConfirm cannot be retried in case the channel dies or errors.
 // You must resend your message and attempt to await it again.
-func (s *Session) AwaitConfirm(ctx context.Context, expectedTag uint64) error {
+func (s *Session) AwaitConfirm(ctx context.Context, expectedTag uint64) (err error) {
+	defer func() {
+		if err != nil {
+			err = fmt.Errorf("await confirm failed: %w", err)
+		}
+	}()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -364,51 +377,50 @@ func (s *Session) AwaitConfirm(ctx context.Context, expectedTag uint64) error {
 	}
 
 	select {
-	// TODO: this might lead to problems when a single session is used
+	// TODO: WARNING: this might lead to problems when a single session is used
 	// in a multithreaded context. That way we might received out of order confirmations
 	// which could lead to unexpected behavior.
 	case confirm, ok := <-s.confirms:
 		if !ok {
 			err := s.error()
 			if err != nil {
-				return fmt.Errorf("await confirm failed: confirms channel closed: %w", err)
+				return fmt.Errorf("confirms channel closed: %w", err)
 			}
-			return fmt.Errorf("await confirm failed: confirms channel %w", ErrClosed)
+			return fmt.Errorf("confirms channel %w", ErrClosed)
+		}
+		if confirm.DeliveryTag != expectedTag {
+			// https://www.rabbitmq.com/docs/confirms#publisher-confirms-latency
+			return fmt.Errorf("%w: expected %d, got %d", ErrDeliveryTagMismatch, expectedTag, confirm.DeliveryTag)
 		}
 		if !confirm.Ack {
 			// in case the server did not accept the message, it might be due to resource problems.
-			// TODO: do we want to pause here upon flow control messages
-			err := fmt.Errorf("await confirm failed: %w", ErrNack)
-			return err
+			// TODO: do we want to pause here upon flow control messages?
+			return ErrNack
 		}
-		if confirm.DeliveryTag != expectedTag {
-			return fmt.Errorf("await confirm failed: %w: expected %d, got %d", ErrDeliveryTagMismatch, expectedTag, confirm.DeliveryTag)
-		}
+		// confirmed by broker
 		return nil
 	case returned, ok := <-s.returned:
 		if !ok {
 			err := s.error()
 			if err != nil {
-				return fmt.Errorf("await confirm failed: returned channel closed: %w", err)
+				return fmt.Errorf("returned channel closed: %w", err)
 			}
-			return fmt.Errorf("await confirm failed: %w", errReturnedClosed)
+			return fmt.Errorf("%w", errReturnedClosed)
 		}
-		return fmt.Errorf("await confirm failed: %w: %s", ErrReturned, returned.ReplyText)
+		return fmt.Errorf("%w: %s", ErrReturned, returned.ReplyText)
 	case blocking, ok := <-s.conn.BlockingFlowControl():
 		if !ok {
 			err := s.error()
 			if err != nil {
-				return fmt.Errorf("await confirm failed: blocking channel closed: %w", err)
+				return fmt.Errorf("blocking channel closed: %w", err)
 			}
-			return fmt.Errorf("await confirm failed: %w", errBlockingFlowControlClosed)
+			return fmt.Errorf("%w", errBlockingFlowControlClosed)
 		}
-		return fmt.Errorf("await confirm failed: %w: %s", ErrBlockingFlowControl, blocking.Reason)
+		return fmt.Errorf("%w: %s", ErrBlockingFlowControl, blocking.Reason)
 	case <-ctx.Done():
-		err := ctx.Err()
-		return fmt.Errorf("await confirm: failed context %w: %w", ErrClosed, err)
+		return fmt.Errorf("await confirm: failed context %w: %w", ErrClosed, ctx.Err())
 	case <-s.ctx.Done():
-		err := ctx.Err()
-		return fmt.Errorf("await confirm failed: session %w: %w", ErrClosed, err)
+		return fmt.Errorf("session %w: %w", ErrClosed, ctx.Err())
 	}
 }
 
@@ -483,7 +495,7 @@ func (s *Session) Publish(ctx context.Context, exchange string, routingKey strin
 			msg.Mandatory,
 			msg.Immediate,
 			amqp091.Publishing{
-				Headers:         msg.Headers,
+				Headers:         msg.Headers.toAMQPTable(),
 				ContentType:     msg.ContentType,
 				ContentEncoding: msg.ContentEncoding,
 				DeliveryMode:    amqpDeliverMode,
@@ -515,8 +527,9 @@ func (s *Session) Get(ctx context.Context, queue string, autoAck bool) (msg Deli
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	var intermediaryMsg amqp091.Delivery
 	err = s.retry(ctx, s.getRetryCB, func() error {
-		msg, ok, err = s.channel.Get(queue, autoAck)
+		intermediaryMsg, ok, err = s.channel.Get(queue, autoAck)
 		if err != nil {
 			return err
 		}
@@ -525,7 +538,8 @@ func (s *Session) Get(ctx context.Context, queue string, autoAck bool) (msg Deli
 	if err != nil {
 		return Delivery{}, false, err
 	}
-	return msg, ok, nil
+
+	return NewDeliveryFromAMQP091(intermediaryMsg), ok, nil
 }
 
 // Nack rejects the message.
@@ -583,7 +597,7 @@ type ConsumeOptions struct {
 // Inflight messages, limited by Channel.Qos will be buffered until received from the returned chan.
 // When the Channel or Connection is closed, all buffered and inflight messages will be dropped.
 // When the consumer identifier tag is cancelled, all inflight messages will be delivered until the returned chan is closed.
-func (s *Session) Consume(queue string, option ...ConsumeOptions) (<-chan Delivery, error) {
+func (s *Session) Consume(queue string, option ...ConsumeOptions) (<-chan amqp091.Delivery, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -606,7 +620,7 @@ func (s *Session) Consume(queue string, option ...ConsumeOptions) (<-chan Delive
 	}
 
 	var (
-		c   <-chan Delivery
+		c   <-chan amqp091.Delivery
 		err error
 	)
 	// retries to connect and attempts to start a consumer
@@ -618,7 +632,7 @@ func (s *Session) Consume(queue string, option ...ConsumeOptions) (<-chan Delive
 			o.Exclusive,
 			o.NoLocal,
 			o.NoWait,
-			o.Args,
+			o.Args.toAMQPTable(),
 		)
 		if err != nil {
 			return err
@@ -648,7 +662,7 @@ func (s *Session) Consume(queue string, option ...ConsumeOptions) (<-chan Delive
 // Inflight messages, limited by Channel.Qos will be buffered until received from the returned chan.
 // When the Channel or Connection is closed, all buffered and inflight messages will be dropped.
 // When the consumer identifier tag is cancelled, all inflight messages will be delivered until the returned chan is closed.
-func (s *Session) ConsumeWithContext(ctx context.Context, queue string, option ...ConsumeOptions) (<-chan Delivery, error) {
+func (s *Session) ConsumeWithContext(ctx context.Context, queue string, option ...ConsumeOptions) (<-chan amqp091.Delivery, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -671,7 +685,7 @@ func (s *Session) ConsumeWithContext(ctx context.Context, queue string, option .
 	}
 
 	var (
-		c   <-chan Delivery
+		c   <-chan amqp091.Delivery
 		err error
 	)
 	// retries to connect and attempts to start a consumer
@@ -684,7 +698,7 @@ func (s *Session) ConsumeWithContext(ctx context.Context, queue string, option .
 			o.Exclusive,
 			o.NoLocal,
 			o.NoWait,
-			o.Args,
+			o.Args.toAMQPTable(),
 		)
 		if err != nil {
 			return err
@@ -812,7 +826,7 @@ func (s *Session) ExchangeDeclare(ctx context.Context, name string, kind Exchang
 			o.AutoDelete,
 			o.Internal,
 			o.NoWait,
-			o.Args,
+			o.Args.toAMQPTable(),
 		)
 	})
 }
@@ -846,7 +860,7 @@ func (s *Session) ExchangeDeclarePassive(ctx context.Context, name string, kind 
 			o.AutoDelete,
 			o.Internal,
 			o.NoWait,
-			o.Args,
+			o.Args.toAMQPTable(),
 		)
 	})
 
@@ -968,7 +982,8 @@ func (s *Session) QueueDeclare(ctx context.Context, name string, option ...Queue
 		AutoDelete: false,
 		Exclusive:  false,
 		NoWait:     false,
-		Args:       QuorumQueue,
+		Args: QuorumQueue.
+			WithDeliveryLimit(DefaultQueueDeliveryLimit), // https://www.rabbitmq.com/docs/quorum-queues#repeated-requeues
 	}
 	if len(option) > 0 {
 		o = option[0]
@@ -984,7 +999,7 @@ func (s *Session) QueueDeclare(ctx context.Context, name string, option ...Queue
 			o.AutoDelete,
 			o.Exclusive,
 			o.NoWait,
-			o.Args,
+			o.Args.toAMQPTable(),
 		)
 		return err
 	})
@@ -1007,7 +1022,8 @@ func (s *Session) QueueDeclarePassive(ctx context.Context, name string, option .
 		AutoDelete: false,
 		Exclusive:  false,
 		NoWait:     false,
-		Args:       QuorumQueue,
+		Args: QuorumQueue.
+			WithDeliveryLimit(DefaultQueueDeliveryLimit), // https://www.rabbitmq.com/docs/quorum-queues#repeated-requeues
 	}
 	if len(option) > 0 {
 		o = option[0]
@@ -1024,7 +1040,7 @@ func (s *Session) QueueDeclarePassive(ctx context.Context, name string, option .
 			o.AutoDelete,
 			o.Exclusive,
 			o.NoWait,
-			o.Args,
+			o.Args.toAMQPTable(),
 		)
 		return err
 	})
@@ -1154,7 +1170,7 @@ func (s *Session) QueueBind(ctx context.Context, queueName string, routingKey st
 			routingKey,
 			exchange,
 			o.NoWait,
-			o.Args,
+			o.Args.toAMQPTable(),
 		)
 	})
 }
@@ -1174,7 +1190,7 @@ func (s *Session) QueueUnbind(ctx context.Context, name string, routingKey strin
 	}
 
 	return s.retry(ctx, s.queueUnbindRetryCB, func() error {
-		return s.channel.QueueUnbind(name, routingKey, exchange, option)
+		return s.channel.QueueUnbind(name, routingKey, exchange, option.toAMQPTable())
 	})
 }
 
@@ -1265,7 +1281,7 @@ func (s *Session) ExchangeBind(ctx context.Context, destination string, routingK
 			routingKey,
 			source,
 			o.NoWait,
-			o.Args,
+			o.Args.toAMQPTable(),
 		)
 	})
 }
@@ -1305,7 +1321,7 @@ func (s *Session) ExchangeUnbind(ctx context.Context, destination string, routin
 			routingKey,
 			source,
 			o.NoWait,
-			o.Args,
+			o.Args.toAMQPTable(),
 		)
 	})
 }
@@ -1341,7 +1357,7 @@ func (s *Session) Qos(ctx context.Context, prefetchCount int, prefetchSize int) 
 	defer s.mu.Unlock()
 
 	return s.retry(ctx, s.qosRetryCB, func() error {
-		// session quos should not affect new sessions of the same connection
+		// session Qos should not affect new sessions of the same connection
 		return s.channel.Qos(prefetchCount, prefetchSize, false)
 	})
 }
@@ -1411,27 +1427,6 @@ func (s *Session) TxRollback() error {
 	defer s.mu.Unlock()
 
 	return s.channel.TxRollback()
-}
-
-func (s *Session) Do(ctx context.Context, f func() error) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	return s.retry(ctx, nil, func() (err error) {
-		err = s.channel.Tx()
-		if err != nil {
-			return err
-		}
-		defer func() {
-			if err != nil {
-				err = errors.Join(err, s.channel.TxRollback())
-			} else {
-				err = s.channel.TxCommit()
-			}
-		}()
-
-		return f()
-	})
 }
 
 // Error returns all errors from the errors channel
@@ -1506,15 +1501,17 @@ func (s *Session) debug(a ...any) {
 	s.slog().Debug(a...)
 }
 
-// Flush internal channels.
-func (s *Session) Flush() {
+// Flush confirms channel
+func (s *Session) FlushConfirms() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	// do not flush the errors channel
-	// as it i sneeded for checking whether a session recovery is needed
-
-	flush(s.errors)
 	flush(s.confirms)
+}
+
+// FlushReturned publish	 channel
+func (s *Session) FlushReturned() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	flush(s.returned)
 }
 
