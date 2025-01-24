@@ -17,13 +17,13 @@ func TestExchangeQueueAssertNextSubMsgOK(t *testing.T) {
 	}
 
 	for _, pubMsg := range publishSeries {
-		err := eq.ValidateNextSubMsg(t, pubMsg)
+		err := eq.ValidateNextSubMsg(pubMsg)
 		if err != nil {
 			t.Error(err)
 		}
 
 		// test that we can also have duplicate messages but only consecutive ones
-		err = eq.ValidateNextSubMsg(t, pubMsg)
+		err = eq.ValidateNextSubMsg(pubMsg)
 		if err != nil {
 			t.Error(err)
 		}
@@ -47,7 +47,7 @@ func TestExchangeQueueAssertNextSubMsgNotOK(t *testing.T) {
 
 	allAsserted := true
 	for _, pubMsg := range publishSeries {
-		matched := eq.ValidateNextSubMsg(t, pubMsg) == nil
+		matched := eq.ValidateNextSubMsg(pubMsg) == nil
 		allAsserted = allAsserted && matched
 	}
 
@@ -70,7 +70,7 @@ func TestExchangeQueueAssertNextSubMsgNotOK_2(t *testing.T) {
 
 	allAsserted := true
 	for _, pubMsg := range publishSeries {
-		matched := eq.ValidateNextSubMsg(t, pubMsg) == nil
+		matched := eq.ValidateNextSubMsg(pubMsg) == nil
 		allAsserted = allAsserted && matched
 	}
 
