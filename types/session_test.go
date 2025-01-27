@@ -1,4 +1,4 @@
-package pool_test
+package types_test
 
 import (
 	"context"
@@ -6,9 +6,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jxsl13/amqpx/internal/amqputils"
+	"github.com/jxsl13/amqpx/internal/proxyutils"
 	"github.com/jxsl13/amqpx/internal/testutils"
 	"github.com/jxsl13/amqpx/logging"
-	"github.com/jxsl13/amqpx/pool"
+	"github.com/jxsl13/amqpx/types"
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/stretchr/testify/assert"
 )
@@ -33,11 +35,11 @@ func TestNewSingleSessionPublishAndConsume(t *testing.T) {
 		numMsgs                 = 20
 	)
 
-	c, err := pool.NewConnection(
+	c, err := types.NewConnection(
 		ctx,
 		testutils.HealthyConnectURL,
 		connName,
-		pool.ConnectionWithLogger(logging.NewTestLogger(t)),
+		types.ConnectionWithLogger(logging.NewTestLogger(t)),
 	)
 	if err != nil {
 		assert.NoError(t, err)
@@ -47,11 +49,11 @@ func TestNewSingleSessionPublishAndConsume(t *testing.T) {
 		assert.NoError(t, c.Close())
 	}()
 
-	s, err := pool.NewSession(
+	s, err := types.NewSession(
 		c,
 		sessionName,
-		pool.SessionWithConfirms(true),
-		pool.SessionWithRetryCallback(
+		types.SessionWithConfirms(true),
+		types.SessionWithRetryCallback(
 			func(operation, connName, sessionName string, retry int, err error) {
 				assert.NoErrorf(t, err, "operation=%s connName=%s sessionName=%s retry=%d", operation, connName, sessionName, retry)
 			},
@@ -65,11 +67,11 @@ func TestNewSingleSessionPublishAndConsume(t *testing.T) {
 		assert.NoError(t, s.Close())
 	}()
 
-	cleanup := DeclareExchangeQueue(t, ctx, s, exchangeName, queueName)
+	cleanup := amqputils.DeclareExchangeQueue(t, ctx, s, exchangeName, queueName)
 	defer cleanup()
 
-	ConsumeAsyncN(t, ctx, &wg, s, queueName, consumerName, consumeMessageGenerator, numMsgs, true)
-	PublishAsyncN(t, ctx, &wg, s, exchangeName, publishMessageGenerator, numMsgs)
+	amqputils.ConsumeAsyncN(t, ctx, &wg, s, queueName, consumerName, consumeMessageGenerator, numMsgs, true)
+	amqputils.PublishAsyncN(t, ctx, &wg, s, exchangeName, publishMessageGenerator, numMsgs)
 
 	wg.Wait()
 }
@@ -86,11 +88,11 @@ func TestManyNewSessionsPublishAndConsume(t *testing.T) {
 		numMsgs         = 20
 	)
 
-	c, err := pool.NewConnection(
+	c, err := types.NewConnection(
 		ctx,
 		testutils.HealthyConnectURL,
 		connName,
-		pool.ConnectionWithLogger(logging.NewTestLogger(t)),
+		types.ConnectionWithLogger(logging.NewTestLogger(t)),
 	)
 	if err != nil {
 		assert.NoError(t, err)
@@ -114,10 +116,10 @@ func TestManyNewSessionsPublishAndConsume(t *testing.T) {
 			publishNextMessage = testutils.MessageGenerator(queueName)
 		)
 
-		s, err := pool.NewSession(
+		s, err := types.NewSession(
 			c,
 			sessionName,
-			pool.SessionWithConfirms(true),
+			types.SessionWithConfirms(true),
 		)
 		if err != nil {
 			assert.NoError(t, err)
@@ -127,11 +129,11 @@ func TestManyNewSessionsPublishAndConsume(t *testing.T) {
 			assert.NoError(t, s.Close())
 		}()
 
-		cleanup := DeclareExchangeQueue(t, ctx, s, exchangeName, queueName)
+		cleanup := amqputils.DeclareExchangeQueue(t, ctx, s, exchangeName, queueName)
 		defer cleanup()
 
-		ConsumeAsyncN(t, ctx, &wg, s, queueName, consumerName, consumeNextMessage, numMsgs, true)
-		PublishAsyncN(t, ctx, &wg, s, exchangeName, publishNextMessage, numMsgs)
+		amqputils.ConsumeAsyncN(t, ctx, &wg, s, queueName, consumerName, consumeNextMessage, numMsgs, true)
+		amqputils.PublishAsyncN(t, ctx, &wg, s, exchangeName, publishNextMessage, numMsgs)
 	}
 
 	wg.Wait()
@@ -149,11 +151,11 @@ func TestNewSessionQueueDeclarePassive(t *testing.T) {
 		nextQueueName   = testutils.QueueNameGenerator(sessionName)
 	)
 
-	conn, err := pool.NewConnection(
+	conn, err := types.NewConnection(
 		ctx,
 		testutils.HealthyConnectURL,
 		connName,
-		pool.ConnectionWithLogger(logging.NewTestLogger(t)),
+		types.ConnectionWithLogger(logging.NewTestLogger(t)),
 	)
 	if err != nil {
 		assert.NoError(t, err)
@@ -163,11 +165,11 @@ func TestNewSessionQueueDeclarePassive(t *testing.T) {
 		assert.NoError(t, conn.Close()) // can be nil or error
 	}()
 
-	session, err := pool.NewSession(
+	session, err := types.NewSession(
 		conn,
 		sessionName,
-		pool.SessionWithConfirms(true),
-		pool.SessionWithRetryCallback(
+		types.SessionWithConfirms(true),
+		types.SessionWithRetryCallback(
 			func(operation, connName, sessionName string, retry int, err error) {
 				assert.NoErrorf(t, err, "unexpected session recovery: operation=%s connName=%s sessionName=%s retry=%d", operation, connName, sessionName, retry)
 			},
@@ -220,11 +222,11 @@ func TestNewSessionExchangeDeclareWithDisconnect(t *testing.T) {
 		nextSessionName          = testutils.SessionNameGenerator(connName)
 	)
 
-	c, err := pool.NewConnection(
+	c, err := types.NewConnection(
 		ctx,
 		connectURL,
 		connName,
-		pool.ConnectionWithLogger(logging.NewTestLogger(t)),
+		types.ConnectionWithLogger(logging.NewTestLogger(t)),
 	)
 	if err != nil {
 		assert.NoError(t, err)
@@ -239,9 +241,9 @@ func TestNewSessionExchangeDeclareWithDisconnect(t *testing.T) {
 		nextExchangeName = testutils.ExchangeNameGenerator(sessionName)
 		exchangeName     = nextExchangeName()
 
-		disconnected, reconnected = Disconnect(t, proxyName, 5*time.Second)
+		disconnected, reconnected = proxyutils.Disconnect(t, proxyName, 5*time.Second)
 	)
-	s, err := pool.NewSession(c, sessionName)
+	s, err := types.NewSession(c, sessionName)
 	if err != nil {
 		assert.NoError(t, err)
 		return
@@ -251,7 +253,7 @@ func TestNewSessionExchangeDeclareWithDisconnect(t *testing.T) {
 	}()
 
 	disconnected()
-	err = s.ExchangeDeclare(ctx, exchangeName, pool.ExchangeKindTopic)
+	err = s.ExchangeDeclare(ctx, exchangeName, types.ExchangeKindTopic)
 	if err != nil {
 		assert.NoError(t, err)
 		return
@@ -272,11 +274,11 @@ func TestNewSessionExchangeDeleteWithDisconnect(t *testing.T) {
 		nextSessionName          = testutils.SessionNameGenerator(connName)
 	)
 
-	c, err := pool.NewConnection(
+	c, err := types.NewConnection(
 		ctx,
 		connectURL,
 		connName,
-		pool.ConnectionWithLogger(logging.NewTestLogger(t)),
+		types.ConnectionWithLogger(logging.NewTestLogger(t)),
 	)
 	if err != nil {
 		assert.NoError(t, err)
@@ -291,9 +293,9 @@ func TestNewSessionExchangeDeleteWithDisconnect(t *testing.T) {
 		nextExchangeName = testutils.ExchangeNameGenerator(sessionName)
 		exchangeName     = nextExchangeName()
 
-		disconnected, reconnected = Disconnect(t, proxyName, 5*time.Second)
+		disconnected, reconnected = proxyutils.Disconnect(t, proxyName, 5*time.Second)
 	)
-	s, err := pool.NewSession(c, sessionName)
+	s, err := types.NewSession(c, sessionName)
 	if err != nil {
 		assert.NoError(t, err)
 		return
@@ -302,7 +304,7 @@ func TestNewSessionExchangeDeleteWithDisconnect(t *testing.T) {
 		assert.NoError(t, s.Close())
 	}()
 
-	err = s.ExchangeDeclare(ctx, exchangeName, pool.ExchangeKindTopic)
+	err = s.ExchangeDeclare(ctx, exchangeName, types.ExchangeKindTopic)
 	if err != nil {
 		assert.NoError(t, err)
 		return
@@ -325,11 +327,11 @@ func TestNewSessionQueueDeclareWithDisconnect(t *testing.T) {
 		nextSessionName          = testutils.SessionNameGenerator(connName)
 	)
 
-	c, err := pool.NewConnection(
+	c, err := types.NewConnection(
 		ctx,
 		connectURL,
 		connName,
-		pool.ConnectionWithLogger(logging.NewTestLogger(t)),
+		types.ConnectionWithLogger(logging.NewTestLogger(t)),
 	)
 	if err != nil {
 		assert.NoError(t, err, "expected no error when creating new connection")
@@ -344,9 +346,9 @@ func TestNewSessionQueueDeclareWithDisconnect(t *testing.T) {
 		nextQueueName = testutils.QueueNameGenerator(sessionName)
 		queueName     = nextQueueName()
 
-		disconnected, reconnected = Disconnect(t, proxyName, 5*time.Second)
+		disconnected, reconnected = proxyutils.Disconnect(t, proxyName, 5*time.Second)
 	)
-	s, err := pool.NewSession(c, sessionName)
+	s, err := types.NewSession(c, sessionName)
 	if err != nil {
 		assert.NoError(t, err)
 		return
@@ -380,11 +382,11 @@ func TestNewSessionQueueDeleteWithDisconnect(t *testing.T) {
 		nextSessionName          = testutils.SessionNameGenerator(connName)
 	)
 
-	c, err := pool.NewConnection(
+	c, err := types.NewConnection(
 		ctx,
 		connectURL,
 		connName,
-		pool.ConnectionWithLogger(logging.NewTestLogger(t)),
+		types.ConnectionWithLogger(logging.NewTestLogger(t)),
 	)
 	if err != nil {
 		assert.NoError(t, err)
@@ -399,9 +401,9 @@ func TestNewSessionQueueDeleteWithDisconnect(t *testing.T) {
 		nextQueueName = testutils.QueueNameGenerator(sessionName)
 		queueName     = nextQueueName()
 
-		disconnected, reconnected = Disconnect(t, proxyName, 5*time.Second)
+		disconnected, reconnected = proxyutils.Disconnect(t, proxyName, 5*time.Second)
 	)
-	s, err := pool.NewSession(c, sessionName)
+	s, err := types.NewSession(c, sessionName)
 	if err != nil {
 		assert.NoError(t, err)
 		return
@@ -433,11 +435,11 @@ func TestNewSessionQueueBindWithDisconnect(t *testing.T) {
 		nextSessionName          = testutils.SessionNameGenerator(connName)
 	)
 
-	c, err := pool.NewConnection(
+	c, err := types.NewConnection(
 		ctx,
 		connectURL,
 		connName,
-		pool.ConnectionWithLogger(logging.NewTestLogger(t)),
+		types.ConnectionWithLogger(logging.NewTestLogger(t)),
 	)
 	if err != nil {
 		assert.NoError(t, err)
@@ -454,9 +456,9 @@ func TestNewSessionQueueBindWithDisconnect(t *testing.T) {
 		nextQueueName    = testutils.QueueNameGenerator(sessionName)
 		queueName        = nextQueueName()
 
-		disconnected, reconnected = Disconnect(t, proxyName, 5*time.Second)
+		disconnected, reconnected = proxyutils.Disconnect(t, proxyName, 5*time.Second)
 	)
-	s, err := pool.NewSession(c, sessionName)
+	s, err := types.NewSession(c, sessionName)
 	if err != nil {
 		assert.NoError(t, err)
 		return
@@ -465,7 +467,7 @@ func TestNewSessionQueueBindWithDisconnect(t *testing.T) {
 		assert.NoError(t, s.Close())
 	}()
 
-	err = s.ExchangeDeclare(ctx, exchangeName, pool.ExchangeKindTopic)
+	err = s.ExchangeDeclare(ctx, exchangeName, types.ExchangeKindTopic)
 	if err != nil {
 		assert.NoError(t, err)
 		return
@@ -506,11 +508,11 @@ func TestNewSessionQueueUnbindWithDisconnect(t *testing.T) {
 		nextSessionName          = testutils.SessionNameGenerator(connName)
 	)
 
-	c, err := pool.NewConnection(
+	c, err := types.NewConnection(
 		ctx,
 		connectURL,
 		connName,
-		pool.ConnectionWithLogger(logging.NewTestLogger(t)),
+		types.ConnectionWithLogger(logging.NewTestLogger(t)),
 	)
 	if err != nil {
 		assert.NoError(t, err)
@@ -527,9 +529,9 @@ func TestNewSessionQueueUnbindWithDisconnect(t *testing.T) {
 		nextQueueName    = testutils.QueueNameGenerator(sessionName)
 		queueName        = nextQueueName()
 
-		disconnected, reconnected = Disconnect(t, proxyName, 5*time.Second)
+		disconnected, reconnected = proxyutils.Disconnect(t, proxyName, 5*time.Second)
 	)
-	s, err := pool.NewSession(c, sessionName)
+	s, err := types.NewSession(c, sessionName)
 	if err != nil {
 		assert.NoError(t, err)
 		return
@@ -538,7 +540,7 @@ func TestNewSessionQueueUnbindWithDisconnect(t *testing.T) {
 		assert.NoError(t, s.Close())
 	}()
 
-	err = s.ExchangeDeclare(ctx, exchangeName, pool.ExchangeKindTopic)
+	err = s.ExchangeDeclare(ctx, exchangeName, types.ExchangeKindTopic)
 	if err != nil {
 		assert.NoError(t, err)
 		return
@@ -580,7 +582,7 @@ func TestNewSessionPublishWithDisconnect(t *testing.T) {
 		nextConnName             = testutils.ConnectionNameGenerator()
 	)
 
-	hs, hsclose := NewSession(
+	hs, hsclose := amqputils.NewSession(
 		t,
 		ctx,
 		testutils.HealthyConnectURL,
@@ -588,7 +590,7 @@ func TestNewSessionPublishWithDisconnect(t *testing.T) {
 	)
 	defer hsclose()
 
-	s, sclose := NewSession(
+	s, sclose := amqputils.NewSession(
 		t,
 		ctx,
 		connectURL,
@@ -605,7 +607,7 @@ func TestNewSessionPublishWithDisconnect(t *testing.T) {
 		nextConsumerName = testutils.ConsumerNameGenerator(queueName)
 	)
 
-	cleanup := DeclareExchangeQueue(t, ctx, hs, exchangeName, queueName)
+	cleanup := amqputils.DeclareExchangeQueue(t, ctx, hs, exchangeName, queueName)
 	defer cleanup()
 
 	var (
@@ -614,14 +616,14 @@ func TestNewSessionPublishWithDisconnect(t *testing.T) {
 		consumeMsgGen             = testutils.MessageGenerator(queueName)
 		publishMsgGen             = testutils.MessageGenerator(queueName)
 		numMsgs                   = 20
-		disconnected, reconnected = Disconnect(t, proxyName, 5*time.Second)
+		disconnected, reconnected = proxyutils.Disconnect(t, proxyName, 5*time.Second)
 	)
 	defer cancel()
 
-	ConsumeAsyncN(t, cctx, &wg, hs, queueName, nextConsumerName(), consumeMsgGen, numMsgs, true)
+	amqputils.ConsumeAsyncN(t, cctx, &wg, hs, queueName, nextConsumerName(), consumeMsgGen, numMsgs, true)
 
 	disconnected()
-	PublishN(t, ctx, s, exchangeName, publishMsgGen, numMsgs)
+	amqputils.PublishN(t, ctx, s, exchangeName, publishMsgGen, numMsgs)
 	reconnected()
 
 	time.Sleep(5 * time.Second)
@@ -638,7 +640,7 @@ func TestNewSessionConsumeWithDisconnect(t *testing.T) {
 		nextConnName             = testutils.ConnectionNameGenerator()
 	)
 
-	hs, hsclose := NewSession(
+	hs, hsclose := amqputils.NewSession(
 		t,
 		ctx,
 		testutils.HealthyConnectURL,
@@ -646,7 +648,7 @@ func TestNewSessionConsumeWithDisconnect(t *testing.T) {
 	)
 	defer hsclose()
 
-	s, sclose := NewSession(
+	s, sclose := amqputils.NewSession(
 		t,
 		ctx,
 		connectURL,
@@ -663,7 +665,7 @@ func TestNewSessionConsumeWithDisconnect(t *testing.T) {
 		nextConsumerName = testutils.ConsumerNameGenerator(queueName)
 	)
 
-	cleanup := DeclareExchangeQueue(t, ctx, hs, exchangeName, queueName)
+	cleanup := amqputils.DeclareExchangeQueue(t, ctx, hs, exchangeName, queueName)
 	defer cleanup()
 
 	var (
@@ -671,13 +673,13 @@ func TestNewSessionConsumeWithDisconnect(t *testing.T) {
 		consumerMsgGen            = testutils.MessageGenerator(queueName)
 		numMsgs                   = 20
 		wg                        sync.WaitGroup
-		disconnected, reconnected = Disconnect(t, proxyName, 5*time.Second)
+		disconnected, reconnected = proxyutils.Disconnect(t, proxyName, 5*time.Second)
 	)
 
-	PublishAsyncN(t, ctx, &wg, hs, exchangeName, publisherMsgGen, numMsgs)
+	amqputils.PublishAsyncN(t, ctx, &wg, hs, exchangeName, publisherMsgGen, numMsgs)
 
 	disconnected()
-	ConsumeN(t, ctx, s, queueName, nextConsumerName(), consumerMsgGen, numMsgs, false)
+	amqputils.ConsumeN(t, ctx, s, queueName, nextConsumerName(), consumerMsgGen, numMsgs, false)
 	reconnected()
 
 	wg.Wait()
@@ -845,7 +847,7 @@ func TestChannelCloseWithDisconnect(t *testing.T) {
 	t.Parallel()
 	var (
 		proxyName, connectURL, _  = testutils.NextConnectURL()
-		disconnected, reconnected = Disconnect(t, proxyName, 5*time.Second)
+		disconnected, reconnected = proxyutils.Disconnect(t, proxyName, 5*time.Second)
 	)
 
 	amqpConn, err := amqp.Dial(connectURL)
@@ -878,14 +880,14 @@ func TestNewSingleSessionCloseWithDisconnect(t *testing.T) {
 		nextSessionName           = testutils.SessionNameGenerator(connName)
 		sessionName               = nextSessionName()
 		proxyName, connectURL, _  = testutils.NextConnectURL()
-		disconnected, reconnected = Disconnect(t, proxyName, 5*time.Second)
+		disconnected, reconnected = proxyutils.Disconnect(t, proxyName, 5*time.Second)
 	)
 
-	c, err := pool.NewConnection(
+	c, err := types.NewConnection(
 		ctx,
 		connectURL,
 		connName,
-		pool.ConnectionWithLogger(logging.NewTestLogger(t)),
+		types.ConnectionWithLogger(logging.NewTestLogger(t)),
 	)
 	if err != nil {
 		assert.NoError(t, err)
@@ -895,11 +897,11 @@ func TestNewSingleSessionCloseWithDisconnect(t *testing.T) {
 		assert.NoError(t, c.Close())
 	}()
 
-	s, err := pool.NewSession(
+	s, err := types.NewSession(
 		c,
 		sessionName,
-		pool.SessionWithConfirms(true),
-		pool.SessionWithRetryCallback(
+		types.SessionWithConfirms(true),
+		types.SessionWithRetryCallback(
 			func(operation, connName, sessionName string, retry int, err error) {
 				assert.NoErrorf(t, err, "operation=%s connName=%s sessionName=%s retry=%d", operation, connName, sessionName, retry)
 			},
@@ -932,11 +934,11 @@ func TestNewSingleSessionCloseWithOutOfMemoryRabbitMQ(t *testing.T) {
 		queueName        = nextQueueName()
 	)
 
-	c, err := pool.NewConnection(
+	c, err := types.NewConnection(
 		ctx,
 		testutils.BrokenConnectURL, // out of memory rabbitmq
 		connName,
-		pool.ConnectionWithLogger(log),
+		types.ConnectionWithLogger(log),
 	)
 	if err != nil {
 		assert.NoError(t, err)
@@ -946,11 +948,11 @@ func TestNewSingleSessionCloseWithOutOfMemoryRabbitMQ(t *testing.T) {
 		assert.NoError(t, c.Close())
 	}()
 
-	s, err := pool.NewSession(
+	s, err := types.NewSession(
 		c,
 		sessionName,
-		pool.SessionWithConfirms(true),
-		pool.SessionWithRetryCallback(
+		types.SessionWithConfirms(true),
+		types.SessionWithRetryCallback(
 			func(operation, connName, sessionName string, retry int, err error) {
 				assert.NoErrorf(t, err, "operation=%s connName=%s sessionName=%s retry=%d", operation, connName, sessionName, retry)
 			},
@@ -961,12 +963,12 @@ func TestNewSingleSessionCloseWithOutOfMemoryRabbitMQ(t *testing.T) {
 		return
 	}
 
-	cleanup := DeclareExchangeQueue(t, ctx, s, exchangeName, queueName)
+	cleanup := amqputils.DeclareExchangeQueue(t, ctx, s, exchangeName, queueName)
 	defer cleanup()
 
 	log.Infof("publishing message to exchange %s", exchangeName)
 	tag, err := s.Publish(ctx, exchangeName, "",
-		pool.Publishing{
+		types.Publishing{
 			ContentType: "text/plain",
 			Body:        []byte("hello world"),
 		},
@@ -1002,11 +1004,11 @@ func TestNewSingleSessionCloseWithHealthyRabbitMQ(t *testing.T) {
 		queueName        = nextQueueName()
 	)
 
-	c, err := pool.NewConnection(
+	c, err := types.NewConnection(
 		ctx,
 		testutils.HealthyConnectURL, // healthy rabbitmq
 		connName,
-		pool.ConnectionWithLogger(log),
+		types.ConnectionWithLogger(log),
 	)
 	if err != nil {
 		assert.NoError(t, err)
@@ -1016,11 +1018,11 @@ func TestNewSingleSessionCloseWithHealthyRabbitMQ(t *testing.T) {
 		assert.NoError(t, c.Close())
 	}()
 
-	s, err := pool.NewSession(
+	s, err := types.NewSession(
 		c,
 		sessionName,
-		pool.SessionWithConfirms(true),
-		pool.SessionWithRetryCallback(
+		types.SessionWithConfirms(true),
+		types.SessionWithRetryCallback(
 			func(operation, connName, sessionName string, retry int, err error) {
 				assert.NoErrorf(t, err, "operation=%s connName=%s sessionName=%s retry=%d", operation, connName, sessionName, retry)
 			},
@@ -1031,12 +1033,12 @@ func TestNewSingleSessionCloseWithHealthyRabbitMQ(t *testing.T) {
 		return
 	}
 
-	cleanup := DeclareExchangeQueue(t, ctx, s, exchangeName, queueName)
+	cleanup := amqputils.DeclareExchangeQueue(t, ctx, s, exchangeName, queueName)
 	defer cleanup()
 
 	log.Infof("publishing message to exchange %s", exchangeName)
 	tag, err := s.Publish(ctx, exchangeName, "",
-		pool.Publishing{
+		types.Publishing{
 			ContentType: "text/plain",
 			Body:        []byte("hello world"),
 		},

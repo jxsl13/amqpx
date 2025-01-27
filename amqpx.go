@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/jxsl13/amqpx/pool"
+	"github.com/jxsl13/amqpx/types"
 )
 
 var (
@@ -127,11 +128,11 @@ func (a *AMQPX) RegisterTopologyDeleter(finalizer TopologyFunc) {
 
 // RegisterHandler registers a handler function for a specific queue.
 // consumer can be set to a unique consumer name (if left empty, a unique name will be generated)
-func (a *AMQPX) RegisterHandler(queue string, handlerFunc pool.HandlerFunc, option ...pool.ConsumeOptions) *pool.Handler {
+func (a *AMQPX) RegisterHandler(queue string, handlerFunc pool.HandlerFunc, option ...types.ConsumeOptions) *pool.Handler {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	o := pool.ConsumeOptions{}
+	o := types.ConsumeOptions{}
 	if len(option) > 0 {
 		o = option[0]
 	}
@@ -328,7 +329,7 @@ func (a *AMQPX) close() (err error) {
 
 // Publish a message to a specific exchange with a given routingKey.
 // You may set exchange to "" and routingKey to your queue name in order to publish directly to a queue.
-func (a *AMQPX) Publish(ctx context.Context, exchange string, routingKey string, msg pool.Publishing) error {
+func (a *AMQPX) Publish(ctx context.Context, exchange string, routingKey string, msg types.Publishing) error {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	if a.pub == nil {
@@ -339,7 +340,7 @@ func (a *AMQPX) Publish(ctx context.Context, exchange string, routingKey string,
 }
 
 // Get is only supposed to be used for testing, do not use get for polling any broker queues.
-func (a *AMQPX) Get(ctx context.Context, queue string, autoAck bool) (msg pool.Delivery, ok bool, err error) {
+func (a *AMQPX) Get(ctx context.Context, queue string, autoAck bool) (msg types.Delivery, ok bool, err error) {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	if a.pub == nil {
@@ -366,7 +367,7 @@ func RegisterTopologyDeleter(finalizer TopologyFunc) {
 // consumer can be set to a unique consumer name (if left empty, a unique name will be generated)
 // The returned handler can be used to pause message processing and resume paused processing.
 // The processing must have been started with Start before it can be paused or resumed.
-func RegisterHandler(queue string, handlerFunc pool.HandlerFunc, option ...pool.ConsumeOptions) *pool.Handler {
+func RegisterHandler(queue string, handlerFunc pool.HandlerFunc, option ...types.ConsumeOptions) *pool.Handler {
 	return amqpx.RegisterHandler(queue, handlerFunc, option...)
 }
 
@@ -395,12 +396,12 @@ func Close() error {
 
 // Publish a message to a specific exchange with a given routingKey.
 // You may set exchange to "" and routingKey to your queue name in order to publish directly to a queue.
-func Publish(ctx context.Context, exchange string, routingKey string, msg pool.Publishing) error {
+func Publish(ctx context.Context, exchange string, routingKey string, msg types.Publishing) error {
 	return amqpx.Publish(ctx, exchange, routingKey, msg)
 }
 
 // Get is only supposed to be used for testing, do not use get for polling any broker queues.
-func Get(ctx context.Context, queue string, autoAck bool) (msg pool.Delivery, ok bool, err error) {
+func Get(ctx context.Context, queue string, autoAck bool) (msg types.Delivery, ok bool, err error) {
 	return amqpx.Get(ctx, queue, autoAck)
 }
 

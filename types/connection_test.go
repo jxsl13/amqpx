@@ -1,4 +1,4 @@
-package pool_test
+package types_test
 
 import (
 	"context"
@@ -6,9 +6,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jxsl13/amqpx/internal/proxyutils"
 	"github.com/jxsl13/amqpx/internal/testutils"
 	"github.com/jxsl13/amqpx/logging"
-	"github.com/jxsl13/amqpx/pool"
+	"github.com/jxsl13/amqpx/types"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -19,11 +20,11 @@ func TestNewSingleConnection(t *testing.T) {
 		nextName = testutils.ConnectionNameGenerator()
 	)
 
-	c, err := pool.NewConnection(
+	c, err := types.NewConnection(
 		ctx,
 		testutils.HealthyConnectURL,
 		nextName(),
-		pool.ConnectionWithLogger(logging.NewTestLogger(t)),
+		types.ConnectionWithLogger(logging.NewTestLogger(t)),
 	)
 
 	if err != nil {
@@ -49,11 +50,11 @@ func TestManyNewConnection(t *testing.T) {
 		go func() {
 			defer wg.Done()
 
-			c, err := pool.NewConnection(
+			c, err := types.NewConnection(
 				ctx,
 				testutils.HealthyConnectURL,
 				nextName(),
-				pool.ConnectionWithLogger(logging.NewTestLogger(t)),
+				types.ConnectionWithLogger(logging.NewTestLogger(t)),
 			)
 			if err != nil {
 				assert.NoError(t, err)
@@ -80,15 +81,15 @@ func TestNewSingleConnectionWithDisconnect(t *testing.T) {
 		nextName                 = testutils.ConnectionNameGenerator()
 	)
 
-	started, stopped := DisconnectWithStartedStopped(t, proxyName, 0, 0, 10*time.Second)
+	started, stopped := proxyutils.DisconnectWithStartedStopped(t, proxyName, 0, 0, 10*time.Second)
 	started()
 	defer stopped()
 
-	c, err := pool.NewConnection(
+	c, err := types.NewConnection(
 		ctx,
 		connectURL,
 		nextName(),
-		pool.ConnectionWithLogger(logging.NewTestLogger(t)),
+		types.ConnectionWithLogger(logging.NewTestLogger(t)),
 	)
 	if err != nil {
 		assert.NoError(t, err)
@@ -110,7 +111,7 @@ func TestManyNewConnectionWithDisconnect(t *testing.T) {
 		connections = 100
 		nextName    = testutils.ConnectionNameGenerator()
 	)
-	wait := DisconnectWithStopped(t, proxyName, 0, 0, time.Second)
+	wait := proxyutils.DisconnectWithStopped(t, proxyName, 0, 0, time.Second)
 	defer wait() // wait for goroutine to properly close & unblock the proxy
 
 	wg.Add(connections)
@@ -118,7 +119,7 @@ func TestManyNewConnectionWithDisconnect(t *testing.T) {
 		go func() {
 			defer wg.Done()
 
-			c, err := pool.NewConnection(
+			c, err := types.NewConnection(
 				ctx,
 				connectURL,
 				nextName(),

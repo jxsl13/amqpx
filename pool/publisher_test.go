@@ -7,9 +7,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jxsl13/amqpx/internal/amqputils"
+	"github.com/jxsl13/amqpx/internal/proxyutils"
 	"github.com/jxsl13/amqpx/internal/testutils"
 	"github.com/jxsl13/amqpx/logging"
 	"github.com/jxsl13/amqpx/pool"
+	"github.com/jxsl13/amqpx/types"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -24,7 +27,7 @@ func TestSinglePublisher(t *testing.T) {
 		numMsgs                  = 5
 	)
 
-	hs, hsclose := NewSession(
+	hs, hsclose := amqputils.NewSession(
 		t,
 		ctx,
 		testutils.HealthyConnectURL,
@@ -55,7 +58,7 @@ func TestSinglePublisher(t *testing.T) {
 		exchangeName     = nextExchangeName()
 		queueName        = nextQueueName()
 	)
-	cleanup := DeclareExchangeQueue(t, ctx, hs, exchangeName, queueName)
+	cleanup := amqputils.DeclareExchangeQueue(t, ctx, hs, exchangeName, queueName)
 	defer cleanup()
 
 	var (
@@ -69,12 +72,12 @@ func TestSinglePublisher(t *testing.T) {
 	defer pub.Close()
 
 	// INFO: currently this test allows duplication of messages
-	ConsumeAsyncN(t, ctx, &wg, hs, queueName, nextConsumerName(), consumerMsgGen, numMsgs, true)
+	amqputils.ConsumeAsyncN(t, ctx, &wg, hs, queueName, nextConsumerName(), consumerMsgGen, numMsgs, true)
 
 	for i := 0; i < numMsgs; i++ {
 		msg := publisherMsgGen()
 		err = func(msg string) error {
-			disconnected, reconnected := DisconnectWithStartedStopped(
+			disconnected, reconnected := proxyutils.DisconnectWithStartedStopped(
 				t,
 				proxyName,
 				0,
@@ -86,7 +89,7 @@ func TestSinglePublisher(t *testing.T) {
 				reconnected()
 			}()
 
-			return pub.Publish(ctx, exchangeName, "", pool.Publishing{
+			return pub.Publish(ctx, exchangeName, "", types.Publishing{
 				Mandatory:   true,
 				ContentType: "text/plain",
 				Body:        []byte(msg),
@@ -145,7 +148,7 @@ func TestPublishAwaitFlowControl(t *testing.T) {
 	defer func() {
 		p.ReturnSession(ts, nil)
 	}()
-	cleanup := DeclareExchangeQueue(t, ctx, ts, exchangeName, queueName)
+	cleanup := amqputils.DeclareExchangeQueue(t, ctx, ts, exchangeName, queueName)
 	defer cleanup()
 
 	var (
@@ -157,7 +160,7 @@ func TestPublishAwaitFlowControl(t *testing.T) {
 	tctx, tcancel := context.WithTimeout(ctx, 10*time.Second)
 	defer tcancel()
 
-	err = pub.Publish(tctx, exchangeName, "", pool.Publishing{
+	err = pub.Publish(tctx, exchangeName, "", types.Publishing{
 		ContentType: "text/plain",
 		Body:        []byte(publisherMsgGen()),
 	})

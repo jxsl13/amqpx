@@ -7,9 +7,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jxsl13/amqpx/internal/amqputils"
+	"github.com/jxsl13/amqpx/internal/proxyutils"
 	"github.com/jxsl13/amqpx/internal/testutils"
 	"github.com/jxsl13/amqpx/logging"
 	"github.com/jxsl13/amqpx/pool"
+	"github.com/jxsl13/amqpx/types"
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/stretchr/testify/assert"
 )
@@ -20,7 +23,7 @@ func TestNewSingleSubscriber(t *testing.T) {
 		ctx          = context.TODO()
 		nextPoolName = testutils.PoolNameGenerator(testutils.FuncName())
 		poolName     = nextPoolName()
-		hp           = NewPool(t, ctx, testutils.HealthyConnectURL, poolName, 1, 2)
+		hp           = amqputils.NewPool(t, ctx, testutils.HealthyConnectURL, poolName, 1, 2)
 	)
 	defer hp.Close()
 
@@ -44,13 +47,13 @@ func TestNewSingleSubscriber(t *testing.T) {
 	}
 	defer hp.ReturnSession(ts, nil)
 
-	cleanup := DeclareExchangeQueue(t, ctx, ts, exchangeName, queueName)
+	cleanup := amqputils.DeclareExchangeQueue(t, ctx, ts, exchangeName, queueName)
 	defer cleanup()
 	var wg sync.WaitGroup
 	defer wg.Wait()
 
-	SubscriberConsumeAsyncN(t, ctx, &wg, hp, queueName, consumerName, subscriberMsgGen, numMsgs, false)
-	PublisherPublishAsyncN(t, ctx, &wg, hp, exchangeName, publisherMsgGen, numMsgs)
+	amqputils.SubscriberConsumeAsyncN(t, ctx, &wg, hp, queueName, consumerName, subscriberMsgGen, numMsgs, false)
+	amqputils.PublisherPublishAsyncN(t, ctx, &wg, hp, exchangeName, publisherMsgGen, numMsgs)
 }
 
 func TestNewSingleSubscriberWithDisconnect(t *testing.T) {
@@ -59,10 +62,10 @@ func TestNewSingleSubscriberWithDisconnect(t *testing.T) {
 		ctx                       = context.TODO()
 		nextPoolName              = testutils.PoolNameGenerator(testutils.FuncName())
 		poolName                  = nextPoolName()
-		hp                        = NewPool(t, ctx, testutils.HealthyConnectURL, poolName, 1, 2)
+		hp                        = amqputils.NewPool(t, ctx, testutils.HealthyConnectURL, poolName, 1, 2)
 		proxyName, connectURL, _  = testutils.NextConnectURL()
-		pp                        = NewPool(t, ctx, connectURL, nextPoolName()+proxyName, 1, 1)
-		disconnected, reconnected = Disconnect(t, proxyName, 5*time.Second)
+		pp                        = amqputils.NewPool(t, ctx, connectURL, nextPoolName()+proxyName, 1, 1)
+		disconnected, reconnected = proxyutils.Disconnect(t, proxyName, 5*time.Second)
 	)
 	defer hp.Close()
 
@@ -86,15 +89,15 @@ func TestNewSingleSubscriberWithDisconnect(t *testing.T) {
 	}
 	defer hp.ReturnSession(ts, nil)
 
-	cleanup := DeclareExchangeQueue(t, ctx, ts, exchangeName, queueName)
+	cleanup := amqputils.DeclareExchangeQueue(t, ctx, ts, exchangeName, queueName)
 	defer cleanup()
 	var wg sync.WaitGroup
 	defer wg.Wait()
-	PublisherPublishAsyncN(t, ctx, &wg, hp, exchangeName, publisherMsgGen, numMsgs)
+	amqputils.PublisherPublishAsyncN(t, ctx, &wg, hp, exchangeName, publisherMsgGen, numMsgs)
 
 	disconnected()
 	defer reconnected()
-	SubscriberConsumeN(t, ctx, pp, queueName, consumerName, subscriberMsgGen, numMsgs, true)
+	amqputils.SubscriberConsumeN(t, ctx, pp, queueName, consumerName, subscriberMsgGen, numMsgs, true)
 }
 
 func TestNewSingleBatchSubscriber(t *testing.T) {
@@ -103,7 +106,7 @@ func TestNewSingleBatchSubscriber(t *testing.T) {
 		ctx          = context.TODO()
 		nextPoolName = testutils.PoolNameGenerator(testutils.FuncName())
 		poolName     = nextPoolName()
-		hp           = NewPool(t, ctx, testutils.HealthyConnectURL, poolName, 1, 2)
+		hp           = amqputils.NewPool(t, ctx, testutils.HealthyConnectURL, poolName, 1, 2)
 	)
 	defer hp.Close()
 
@@ -128,12 +131,12 @@ func TestNewSingleBatchSubscriber(t *testing.T) {
 	}
 	defer hp.ReturnSession(ts, nil)
 
-	cleanup := DeclareExchangeQueue(t, ctx, ts, exchangeName, queueName)
+	cleanup := amqputils.DeclareExchangeQueue(t, ctx, ts, exchangeName, queueName)
 	defer cleanup()
 	var wg sync.WaitGroup
 	defer wg.Wait()
 
-	SubscriberBatchConsumeAsyncN(
+	amqputils.SubscriberBatchConsumeAsyncN(
 		t,
 		ctx,
 		&wg,
@@ -146,7 +149,7 @@ func TestNewSingleBatchSubscriber(t *testing.T) {
 		numMsgs*1024, // should not be hit
 		false,
 	)
-	PublisherPublishAsyncN(t, ctx, &wg, hp, exchangeName, publisherMsgGen, numMsgs)
+	amqputils.PublisherPublishAsyncN(t, ctx, &wg, hp, exchangeName, publisherMsgGen, numMsgs)
 }
 
 func TestBatchSubscriberMaxBytes(t *testing.T) {
@@ -177,7 +180,7 @@ func testBatchSubscriberMaxBytes(t *testing.T, funcName string, maxBatchBytes in
 		nextExchangeQueue = testutils.NewExchangeQueueGenerator(poolName)
 
 		numSessions = 2
-		hp          = NewPool(t, ctx, testutils.HealthyConnectURL, poolName, 1, numSessions) // // publisher sessions + consumer sessions
+		hp          = amqputils.NewPool(t, ctx, testutils.HealthyConnectURL, poolName, 1, numSessions) // // publisher sessions + consumer sessions
 
 		numMsgs      = 20
 		batchTimeout = 5 * time.Second // keep this at a higher number for slow machines
@@ -204,7 +207,7 @@ func testBatchSubscriberMaxBytes(t *testing.T, funcName string, maxBatchBytes in
 			}
 			defer hp.ReturnSession(ts, nil)
 
-			cleanup := DeclareExchangeQueue(t, ctx, ts, eq.Exchange, eq.Queue)
+			cleanup := amqputils.DeclareExchangeQueue(t, ctx, ts, eq.Exchange, eq.Queue)
 			defer cleanup()
 
 			// publish all messages
@@ -219,7 +222,7 @@ func testBatchSubscriberMaxBytes(t *testing.T, funcName string, maxBatchBytes in
 					maxMsgLen = mlen
 				}
 
-				err = pub.Publish(ctx, eq.Exchange, "", pool.Publishing{
+				err = pub.Publish(ctx, eq.Exchange, "", types.Publishing{
 					Mandatory:   true,
 					ContentType: "text/plain",
 					Body:        []byte(message),
@@ -248,7 +251,7 @@ func testBatchSubscriberMaxBytes(t *testing.T, funcName string, maxBatchBytes in
 			batchCount := 0
 			messageCount := 0
 			sub.RegisterBatchHandlerFunc(eq.Queue,
-				func(ctx context.Context, msgs []pool.Delivery) error {
+				func(ctx context.Context, msgs []types.Delivery) error {
 
 					for idx, msg := range msgs {
 						assert.Truef(t, len(msg.Body) > 0, "msg body is empty: message index: %d", idx)
@@ -273,7 +276,7 @@ func testBatchSubscriberMaxBytes(t *testing.T, funcName string, maxBatchBytes in
 				pool.WithMaxBatchBytes(maxBatchBytes),
 				pool.WithMaxBatchSize(0), // disable this check
 				pool.WithBatchFlushTimeout(batchTimeout),
-				pool.WithBatchConsumeOptions(pool.ConsumeOptions{
+				pool.WithBatchConsumeOptions(types.ConsumeOptions{
 					ConsumerTag: eq.ConsumerTag,
 					Exclusive:   true,
 				}),
@@ -357,7 +360,7 @@ func TestLowLevelConsumeBatchOK(t *testing.T) {
 			defer ch.Close()
 
 			// declare queue
-			err = ch.ExchangeDeclare(exchangeName, string(pool.ExchangeKindFanOut), true, false, false, false, nil)
+			err = ch.ExchangeDeclare(exchangeName, string(types.ExchangeKindFanOut), true, false, false, false, nil)
 			if err != nil {
 				assert.NoError(t, err)
 				return
@@ -495,7 +498,7 @@ func TestLowLevelConsumeBatchOK_2(t *testing.T) {
 			defer ch.Close()
 
 			// declare queue
-			err = ch.ExchangeDeclare(exchangeName, string(pool.ExchangeKindFanOut), true, false, false, false, nil)
+			err = ch.ExchangeDeclare(exchangeName, string(types.ExchangeKindFanOut), true, false, false, false, nil)
 			if err != nil {
 				assert.NoError(t, err)
 				return

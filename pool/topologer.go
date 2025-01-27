@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/jxsl13/amqpx/logging"
+	"github.com/jxsl13/amqpx/types"
 )
 
 type Topologer struct {
@@ -36,7 +37,7 @@ func NewTopologer(p *Pool, options ...TopologerOption) *Topologer {
 	return top
 }
 
-func (t *Topologer) getSession(ctx context.Context) (*Session, error) {
+func (t *Topologer) getSession(ctx context.Context) (*types.Session, error) {
 
 	if t.transientOnly || t.pool.SessionPoolSize() == 0 {
 		return t.pool.GetTransientSession(ctx)
@@ -60,7 +61,7 @@ func (t *Topologer) getSession(ctx context.Context) (*Session, error) {
 // how messages are routed through it. Once an exchange is declared, its type
 // cannot be changed.  The common types are "direct", "fanout", "topic" and
 // "headers".
-func (t *Topologer) ExchangeDeclare(ctx context.Context, name string, kind ExchangeKind, option ...ExchangeDeclareOptions) (err error) {
+func (t *Topologer) ExchangeDeclare(ctx context.Context, name string, kind types.ExchangeKind, option ...types.ExchangeDeclareOptions) (err error) {
 	s, err := t.getSession(ctx)
 	if err != nil {
 		return err
@@ -76,7 +77,7 @@ func (t *Topologer) ExchangeDeclare(ctx context.Context, name string, kind Excha
 // exchange is assumed by RabbitMQ to already exist, and attempting to connect to a
 // non-existent exchange will cause RabbitMQ to throw an exception. This function
 // can be used to detect the existence of an exchange.
-func (t *Topologer) ExchangeDeclarePassive(ctx context.Context, name string, kind ExchangeKind, option ...ExchangeDeclareOptions) (err error) {
+func (t *Topologer) ExchangeDeclarePassive(ctx context.Context, name string, kind types.ExchangeKind, option ...types.ExchangeDeclareOptions) (err error) {
 	s, err := t.getSession(ctx)
 	if err != nil {
 		return err
@@ -90,7 +91,7 @@ func (t *Topologer) ExchangeDeclarePassive(ctx context.Context, name string, kin
 // ExchangeDelete removes the named exchange from the server. When an exchange is
 // deleted all queue bindings on the exchange are also deleted.  If this exchange
 // does not exist, the channel will be closed with an error.
-func (t *Topologer) ExchangeDelete(ctx context.Context, name string, option ...ExchangeDeleteOptions) (err error) {
+func (t *Topologer) ExchangeDelete(ctx context.Context, name string, option ...types.ExchangeDeleteOptions) (err error) {
 	s, err := t.getSession(ctx)
 	if err != nil {
 		return err
@@ -120,10 +121,10 @@ func (t *Topologer) ExchangeDelete(ctx context.Context, name string, option ...E
 //
 // The queue name may be empty, in which case the server will generate a unique name
 // which will be returned in the Name field of Queue struct.
-func (t *Topologer) QueueDeclare(ctx context.Context, name string, option ...QueueDeclareOptions) (queue Queue, err error) {
+func (t *Topologer) QueueDeclare(ctx context.Context, name string, option ...types.QueueDeclareOptions) (queue types.Queue, err error) {
 	s, err := t.getSession(ctx)
 	if err != nil {
-		return Queue{}, err
+		return types.Queue{}, err
 	}
 	defer func() {
 		t.pool.ReturnSession(s, err)
@@ -134,10 +135,10 @@ func (t *Topologer) QueueDeclare(ctx context.Context, name string, option ...Que
 // QueueDeclarePassive is functionally and parametrically equivalent to QueueDeclare, except that it sets the "passive" attribute to true.
 // A passive queue is assumed by RabbitMQ to already exist, and attempting to connect to a non-existent queue will cause RabbitMQ to throw an exception.
 // This function can be used to test for the existence of a queue.
-func (t *Topologer) QueueDeclarePassive(ctx context.Context, name string, option ...QueueDeclareOptions) (queue Queue, err error) {
+func (t *Topologer) QueueDeclarePassive(ctx context.Context, name string, option ...types.QueueDeclareOptions) (queue types.Queue, err error) {
 	s, err := t.getSession(ctx)
 	if err != nil {
-		return Queue{}, err
+		return types.Queue{}, err
 	}
 	defer func() {
 		t.pool.ReturnSession(s, err)
@@ -148,7 +149,7 @@ func (t *Topologer) QueueDeclarePassive(ctx context.Context, name string, option
 // QueuePurge removes all messages from the named queue which are not waiting to be acknowledged.
 // Messages that have been delivered but have not yet been acknowledged will not be removed.
 // When successful, returns the number of messages purged.
-func (t *Topologer) QueuePurge(ctx context.Context, name string, options ...QueuePurgeOptions) (int, error) {
+func (t *Topologer) QueuePurge(ctx context.Context, name string, options ...types.QueuePurgeOptions) (int, error) {
 	s, err := t.getSession(ctx)
 	if err != nil {
 		return 0, err
@@ -162,7 +163,7 @@ func (t *Topologer) QueuePurge(ctx context.Context, name string, options ...Queu
 // QueueDelete removes the queue from the server including all bindings then
 // purges the messages based on server configuration, returning the number of
 // messages purged.
-func (t *Topologer) QueueDelete(ctx context.Context, name string, option ...QueueDeleteOptions) (purged int, err error) {
+func (t *Topologer) QueueDelete(ctx context.Context, name string, option ...types.QueueDeleteOptions) (purged int, err error) {
 	s, err := t.getSession(ctx)
 	if err != nil {
 		return 0, err
@@ -204,7 +205,7 @@ func (t *Topologer) QueueDelete(ctx context.Context, name string, option ...Queu
 //	key: info ---> amq.topic ----> # ------> emails
 //	                         \---> info ---/
 //	key: debug --> amq.topic ----> # ------> emails
-func (t *Topologer) QueueBind(ctx context.Context, name string, routingKey string, exchange string, option ...QueueBindOptions) (err error) {
+func (t *Topologer) QueueBind(ctx context.Context, name string, routingKey string, exchange string, option ...types.QueueBindOptions) (err error) {
 	s, err := t.getSession(ctx)
 	if err != nil {
 		return err
@@ -220,7 +221,7 @@ func (t *Topologer) QueueBind(ctx context.Context, name string, routingKey strin
 
 // It is possible to send and empty string for the exchange name which means to
 // unbind the queue from the default exchange.
-func (t *Topologer) QueueUnbind(ctx context.Context, name string, routingKey string, exchange string, args ...Table) (err error) {
+func (t *Topologer) QueueUnbind(ctx context.Context, name string, routingKey string, exchange string, args ...types.Table) (err error) {
 	s, err := t.getSession(ctx)
 	if err != nil {
 		return err
@@ -254,7 +255,7 @@ func (t *Topologer) QueueUnbind(ctx context.Context, name string, routingKey str
 //	-----------------------------------------------
 //	key: AAPL  --> trade ----> MSFT     sell
 //	                     \---> AAPL --> buy
-func (t *Topologer) ExchangeBind(ctx context.Context, destination string, routingKey string, source string, option ...ExchangeBindOptions) (err error) {
+func (t *Topologer) ExchangeBind(ctx context.Context, destination string, routingKey string, source string, option ...types.ExchangeBindOptions) (err error) {
 	s, err := t.getSession(ctx)
 	if err != nil {
 		return err
@@ -269,7 +270,7 @@ func (t *Topologer) ExchangeBind(ctx context.Context, destination string, routin
 // server by removing the routing key between them.  This is the inverse of
 // ExchangeBind.  If the binding does not currently exist, an error will be
 // returned.
-func (t *Topologer) ExchangeUnbind(ctx context.Context, destination string, routingKey string, source string, option ...ExchangeUnbindOptions) (err error) {
+func (t *Topologer) ExchangeUnbind(ctx context.Context, destination string, routingKey string, source string, option ...types.ExchangeUnbindOptions) (err error) {
 	s, err := t.getSession(ctx)
 	if err != nil {
 		return err

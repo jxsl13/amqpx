@@ -3,7 +3,6 @@ package pool
 import (
 	"context"
 	"crypto/tls"
-	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"runtime/debug"
@@ -11,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jxsl13/amqpx/logging"
+	"github.com/jxsl13/amqpx/types"
 )
 
 type connectionPoolOption struct {
@@ -25,7 +25,7 @@ type connectionPoolOption struct {
 
 	Logger logging.Logger
 
-	ConnectionRecoverCallback ConnectionRecoverCallback
+	ConnectionRecoverCallback types.ConnectionRecoverCallback
 }
 
 type ConnectionPoolOption func(*connectionPoolOption)
@@ -106,33 +106,8 @@ func ConnectionPoolWithTLS(config *tls.Config) ConnectionPoolOption {
 }
 
 // ConnectionPoolWithRecoverCallback allows to set a custom recover callback.
-func ConnectionPoolWithRecoverCallback(callback ConnectionRecoverCallback) ConnectionPoolOption {
+func ConnectionPoolWithRecoverCallback(callback types.ConnectionRecoverCallback) ConnectionPoolOption {
 	return func(po *connectionPoolOption) {
 		po.ConnectionRecoverCallback = callback
-	}
-}
-
-type BackoffFunc func(retry int) (sleep time.Duration)
-
-func newDefaultBackoffPolicy(minDuration, maxDuration time.Duration) BackoffFunc {
-
-	factor := time.Second
-	for _, scale := range []time.Duration{time.Hour, time.Minute, time.Second, time.Millisecond, time.Microsecond, time.Nanosecond} {
-		d := minDuration.Truncate(scale)
-		if d > 0 {
-			factor = scale
-			break
-		}
-	}
-
-	return func(retry int) (sleep time.Duration) {
-
-		wait := 2 << max(0, min(32, retry)) * factor                     // 2^(min(32, retry)) * factor (second, min, hours, etc)
-		jitter := time.Duration(rand.Int64N(int64(max(1, int(wait)/5)))) // max 20% jitter
-		wait = minDuration + wait + jitter
-		if wait > maxDuration {
-			wait = maxDuration
-		}
-		return wait
 	}
 }

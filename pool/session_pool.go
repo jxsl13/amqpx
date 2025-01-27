@@ -6,7 +6,9 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/jxsl13/amqpx/internal/contextutils"
 	"github.com/jxsl13/amqpx/logging"
+	"github.com/jxsl13/amqpx/types"
 )
 
 type SessionPool struct {
@@ -18,31 +20,31 @@ type SessionPool struct {
 	capacity       int
 	bufferCapacity int
 	confirmable    bool
-	sessions       chan *Session
+	sessions       chan *types.Session
 
 	ctx    context.Context
 	cancel context.CancelFunc
 
 	log logging.Logger
 
-	RecoverCallback                     SessionRetryCallback
-	PublishRetryCallback                SessionRetryCallback
-	GetRetryCallback                    SessionRetryCallback
-	ConsumeRetryCallback                SessionRetryCallback
-	ConsumeContextRetryCallback         SessionRetryCallback
-	ExchangeDeclareRetryCallback        SessionRetryCallback
-	ExchangeDeclarePassiveRetryCallback SessionRetryCallback
-	ExchangeDeleteRetryCallback         SessionRetryCallback
-	QueueDeclareRetryCallback           SessionRetryCallback
-	QueueDeclarePassiveRetryCallback    SessionRetryCallback
-	QueueDeleteRetryCallback            SessionRetryCallback
-	QueueBindRetryCallback              SessionRetryCallback
-	QueueUnbindRetryCallback            SessionRetryCallback
-	QueuePurgeRetryCallback             SessionRetryCallback
-	ExchangeBindRetryCallback           SessionRetryCallback
-	ExchangeUnbindRetryCallback         SessionRetryCallback
-	QoSRetryCallback                    SessionRetryCallback
-	FlowRetryCallback                   SessionRetryCallback
+	RecoverCallback                     types.SessionRetryCallback
+	PublishRetryCallback                types.SessionRetryCallback
+	GetRetryCallback                    types.SessionRetryCallback
+	ConsumeRetryCallback                types.SessionRetryCallback
+	ConsumeContextRetryCallback         types.SessionRetryCallback
+	ExchangeDeclareRetryCallback        types.SessionRetryCallback
+	ExchangeDeclarePassiveRetryCallback types.SessionRetryCallback
+	ExchangeDeleteRetryCallback         types.SessionRetryCallback
+	QueueDeclareRetryCallback           types.SessionRetryCallback
+	QueueDeclarePassiveRetryCallback    types.SessionRetryCallback
+	QueueDeleteRetryCallback            types.SessionRetryCallback
+	QueueBindRetryCallback              types.SessionRetryCallback
+	QueueUnbindRetryCallback            types.SessionRetryCallback
+	QueuePurgeRetryCallback             types.SessionRetryCallback
+	ExchangeBindRetryCallback           types.SessionRetryCallback
+	ExchangeUnbindRetryCallback         types.SessionRetryCallback
+	QoSRetryCallback                    types.SessionRetryCallback
+	FlowRetryCallback                   types.SessionRetryCallback
 }
 
 func NewSessionPool(pool *ConnectionPool, numSessions int, options ...SessionPoolOption) (*SessionPool, error) {
@@ -70,7 +72,7 @@ func NewSessionPool(pool *ConnectionPool, numSessions int, options ...SessionPoo
 func newSessionPoolFromOption(pool *ConnectionPool, ctx context.Context, option sessionPoolOption) (sp *SessionPool, err error) {
 	// decouple from parent context, in case we want to close this context ourselves.
 	ctx, cc := context.WithCancelCause(ctx)
-	cancel := toCancelFunc(fmt.Errorf("session pool %w", ErrClosed), cc)
+	cancel := contextutils.ToCancelFunc(fmt.Errorf("session pool %w", types.ErrClosed), cc)
 
 	// DO NOT rename this variable to sp
 	sessionPool := &SessionPool{
@@ -80,7 +82,7 @@ func newSessionPoolFromOption(pool *ConnectionPool, ctx context.Context, option 
 		bufferCapacity: option.BufferCapacity,
 		confirmable:    option.Confirmable,
 		capacity:       option.Capacity,
-		sessions:       make(chan *Session, option.Capacity),
+		sessions:       make(chan *types.Session, option.Capacity),
 
 		ctx:    ctx,
 		cancel: cancel,
@@ -136,7 +138,7 @@ func (sp *SessionPool) initCachedSessions() error {
 }
 
 // initCachedSession allows you create a pooled Session.
-func (sp *SessionPool) initCachedSession(id int) (*Session, error) {
+func (sp *SessionPool) initCachedSession(id int) (*types.Session, error) {
 
 	// retry until we get a channel
 	// or until shutdown
@@ -170,7 +172,7 @@ func (sp *SessionPool) Capacity() int {
 
 // GetSession gets a pooled session.
 // blocks until a session is acquired from the pool.
-func (sp *SessionPool) GetSession(ctx context.Context) (s *Session, err error) {
+func (sp *SessionPool) GetSession(ctx context.Context) (s *types.Session, err error) {
 	select {
 	case <-sp.catchShutdown():
 		return nil, sp.shutdownErr()
@@ -178,7 +180,7 @@ func (sp *SessionPool) GetSession(ctx context.Context) (s *Session, err error) {
 		return nil, ctx.Err()
 	case session, ok := <-sp.sessions:
 		if !ok {
-			return nil, fmt.Errorf("failed to get session: %w", ErrClosed)
+			return nil, fmt.Errorf("failed to get session: %w", types.ErrClosed)
 		}
 		defer func() {
 			// it's possible for the recovery to fail
@@ -199,7 +201,7 @@ func (sp *SessionPool) GetSession(ctx context.Context) (s *Session, err error) {
 // GetTransientSession returns a transient session.
 // This method may return an error when the context has been closed before a session could be obtained.
 // A transient session creates a transient connection under the hood.
-func (sp *SessionPool) GetTransientSession(ctx context.Context) (s *Session, err error) {
+func (sp *SessionPool) GetTransientSession(ctx context.Context) (s *types.Session, err error) {
 	conn, err := sp.pool.GetTransientConnection(ctx)
 	if err != nil {
 		return nil, err
@@ -218,7 +220,7 @@ func (sp *SessionPool) GetTransientSession(ctx context.Context) (s *Session, err
 	return s, nil
 }
 
-func (sp *SessionPool) deriveSession(ctx context.Context, conn *Connection, id int) (*Session, error) {
+func (sp *SessionPool) deriveSession(ctx context.Context, conn *types.Connection, id int) (*types.Session, error) {
 
 	cached := conn.IsCached()
 
@@ -229,37 +231,37 @@ func (sp *SessionPool) deriveSession(ctx context.Context, conn *Connection, id i
 		name = fmt.Sprintf("%s-transient-session-%d", conn.Name(), id)
 	}
 
-	return NewSession(conn, name,
-		SessionWithContext(ctx),
-		SessionWithBufferCapacity(sp.bufferCapacity),
-		SessionWithCached(cached),
-		SessionWithConfirms(sp.confirmable),
-		SessionWithAutoCloseConnection(!cached), // only close transient connections
+	return types.NewSession(conn, name,
+		types.SessionWithContext(ctx),
+		types.SessionWithBufferCapacity(sp.bufferCapacity),
+		types.SessionWithCached(cached),
+		types.SessionWithConfirms(sp.confirmable),
+		types.SessionWithAutoCloseConnection(!cached), // only close transient connections
 		// reporting/alerting/metrics/etc. callbacks
-		SessionWithRecoverCallback(sp.RecoverCallback),
-		SessionWithPublishRetryCallback(sp.PublishRetryCallback),
-		SessionWithGetRetryCallback(sp.GetRetryCallback),
-		SessionWithConsumeRetryCallback(sp.ConsumeRetryCallback),
-		SessionWithConsumeContextRetryCallback(sp.ConsumeContextRetryCallback),
-		SessionWithExchangeDeclareRetryCallback(sp.ExchangeDeclareRetryCallback),
-		SessionWithExchangeDeclarePassiveRetryCallback(sp.ExchangeDeclarePassiveRetryCallback),
-		SessionWithExchangeDeleteRetryCallback(sp.ExchangeDeleteRetryCallback),
-		SessionWithQueueDeclareRetryCallback(sp.QueueDeclareRetryCallback),
-		SessionWithQueueDeclarePassiveRetryCallback(sp.QueueDeclarePassiveRetryCallback),
-		SessionWithQueueDeleteRetryCallback(sp.QueueDeleteRetryCallback),
-		SessionWithQueueBindRetryCallback(sp.QueueBindRetryCallback),
-		SessionWithQueueUnbindRetryCallback(sp.QueueUnbindRetryCallback),
-		SessionWithQueuePurgeRetryCallback(sp.QueuePurgeRetryCallback),
-		SessionWithExchangeBindRetryCallback(sp.ExchangeBindRetryCallback),
-		SessionWithExchangeUnbindRetryCallback(sp.ExchangeUnbindRetryCallback),
-		SessionWithQoSRetryCallback(sp.QoSRetryCallback),
-		SessionWithFlowRetryCallback(sp.FlowRetryCallback),
+		types.SessionWithRecoverCallback(sp.RecoverCallback),
+		types.SessionWithPublishRetryCallback(sp.PublishRetryCallback),
+		types.SessionWithGetRetryCallback(sp.GetRetryCallback),
+		types.SessionWithConsumeRetryCallback(sp.ConsumeRetryCallback),
+		types.SessionWithConsumeContextRetryCallback(sp.ConsumeContextRetryCallback),
+		types.SessionWithExchangeDeclareRetryCallback(sp.ExchangeDeclareRetryCallback),
+		types.SessionWithExchangeDeclarePassiveRetryCallback(sp.ExchangeDeclarePassiveRetryCallback),
+		types.SessionWithExchangeDeleteRetryCallback(sp.ExchangeDeleteRetryCallback),
+		types.SessionWithQueueDeclareRetryCallback(sp.QueueDeclareRetryCallback),
+		types.SessionWithQueueDeclarePassiveRetryCallback(sp.QueueDeclarePassiveRetryCallback),
+		types.SessionWithQueueDeleteRetryCallback(sp.QueueDeleteRetryCallback),
+		types.SessionWithQueueBindRetryCallback(sp.QueueBindRetryCallback),
+		types.SessionWithQueueUnbindRetryCallback(sp.QueueUnbindRetryCallback),
+		types.SessionWithQueuePurgeRetryCallback(sp.QueuePurgeRetryCallback),
+		types.SessionWithExchangeBindRetryCallback(sp.ExchangeBindRetryCallback),
+		types.SessionWithExchangeUnbindRetryCallback(sp.ExchangeUnbindRetryCallback),
+		types.SessionWithQoSRetryCallback(sp.QoSRetryCallback),
+		types.SessionWithFlowRetryCallback(sp.FlowRetryCallback),
 	)
 }
 
 // ReturnSession returns a Session to the pool.
 // If Session is not a cached channel, it is simply closed here.
-func (sp *SessionPool) ReturnSession(session *Session, err error) {
+func (sp *SessionPool) ReturnSession(session *types.Session, err error) {
 
 	// don't put unmanaged sessions back into the pool channel
 	if !session.IsCached() {
@@ -305,7 +307,7 @@ func (sp *SessionPool) Close() {
 	for i := 0; i < sp.capacity; i++ {
 		session := <-sp.sessions
 		wg.Add(1)
-		go func(s *Session) {
+		go func(s *types.Session) {
 			defer wg.Done()
 			_ = s.Close()
 		}(session)

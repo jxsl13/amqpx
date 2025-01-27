@@ -1,9 +1,15 @@
-package pool
+package types
 
 import (
 	"slices"
 
 	"github.com/rabbitmq/amqp091-go"
+)
+
+var (
+	QuorumQueue = Table{
+		"x-queue-type": "quorum",
+	}
 )
 
 /*
@@ -104,10 +110,6 @@ func (t Table) Death() (int64, bool) {
 	}
 	return death, true
 
-}
-
-func (t Table) toAMQPTable() amqp091.Table {
-	return amqp091.Table(t)
 }
 
 func (t Table) Clone() Table {

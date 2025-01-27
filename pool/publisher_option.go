@@ -4,13 +4,14 @@ import (
 	"context"
 
 	"github.com/jxsl13/amqpx/logging"
+	"github.com/jxsl13/amqpx/types"
 )
 
 type publisherOption struct {
 	Ctx context.Context
 
 	AutoClosePool bool
-	BackoffPolicy BackoffFunc
+	BackoffPolicy types.BackoffFunc
 
 	Logger logging.Logger
 }
@@ -39,7 +40,7 @@ func PublisherWithAutoClosePool(autoClose bool) PublisherOption {
 	}
 }
 
-func PublisherWithBackoffPolicy(backoffFunc BackoffFunc) PublisherOption {
+func PublisherWithBackoffPolicy(backoffFunc types.BackoffFunc) PublisherOption {
 	return func(po *publisherOption) {
 		if backoffFunc != nil {
 			po.BackoffPolicy = backoffFunc

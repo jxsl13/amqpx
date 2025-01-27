@@ -1,4 +1,4 @@
-package pool
+package types
 
 import (
 	"context"
@@ -7,17 +7,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jxsl13/amqpx/internal/contextutils"
+	"github.com/jxsl13/amqpx/internal/errorutils"
 	"github.com/jxsl13/amqpx/logging"
 	"github.com/rabbitmq/amqp091-go"
-)
-
-const (
-	notImplemented = 540
-
-	// In order to prevent the broker from requeuing the message to th end of the queue, we need to set this limit in order for at least the
-	// first N requeues to be requeued to the front of the queue.
-	// https://www.rabbitmq.com/docs/quorum-queues#repeated-requeues
-	DefaultQueueDeliveryLimit = 20
 )
 
 // Session is a wrapper for an amqp channel.
@@ -105,7 +98,7 @@ func NewSession(conn *Connection, name string, options ...SessionOption) (*Sessi
 	}
 
 	ctx, cc := context.WithCancelCause(option.Ctx)
-	cancel := toCancelFunc(fmt.Errorf("session %w", ErrClosed), cc)
+	cancel := contextutils.ToCancelFunc(fmt.Errorf("session %w", ErrClosed), cc)
 
 	session := &Session{
 		name:           name,
@@ -161,7 +154,7 @@ func (s *Session) Flag(err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	flagged := err != nil && recoverable(err)
+	flagged := err != nil && errorutils.Recoverable(err)
 	if !s.flagged && flagged {
 		s.flagged = flagged
 	}
@@ -302,7 +295,7 @@ func (s *Session) tryRecover(ctx context.Context, err error) error {
 	}
 
 	// shutdown & context cancelation is not handled in this function
-	if !recoverable(err) {
+	if !errorutils.Recoverable(err) {
 		return err
 	}
 
@@ -495,7 +488,7 @@ func (s *Session) Publish(ctx context.Context, exchange string, routingKey strin
 			msg.Mandatory,
 			msg.Immediate,
 			amqp091.Publishing{
-				Headers:         msg.Headers.toAMQPTable(),
+				Headers:         amqp091.Table(msg.Headers),
 				ContentType:     msg.ContentType,
 				ContentEncoding: msg.ContentEncoding,
 				DeliveryMode:    amqpDeliverMode,
@@ -633,7 +626,7 @@ func (s *Session) ConsumeWithContext(ctx context.Context, queue string, option .
 			o.Exclusive,
 			o.NoLocal,
 			o.NoWait,
-			o.Args.toAMQPTable(),
+			amqp091.Table(o.Args),
 		)
 		if err != nil {
 			return err
@@ -761,7 +754,7 @@ func (s *Session) ExchangeDeclare(ctx context.Context, name string, kind Exchang
 			o.AutoDelete,
 			o.Internal,
 			o.NoWait,
-			o.Args.toAMQPTable(),
+			amqp091.Table(o.Args),
 		)
 	})
 }
@@ -795,7 +788,7 @@ func (s *Session) ExchangeDeclarePassive(ctx context.Context, name string, kind 
 			o.AutoDelete,
 			o.Internal,
 			o.NoWait,
-			o.Args.toAMQPTable(),
+			amqp091.Table(o.Args),
 		)
 	})
 
@@ -934,7 +927,7 @@ func (s *Session) QueueDeclare(ctx context.Context, name string, option ...Queue
 			o.AutoDelete,
 			o.Exclusive,
 			o.NoWait,
-			o.Args.toAMQPTable(),
+			amqp091.Table(o.Args),
 		)
 		return err
 	})
@@ -975,7 +968,7 @@ func (s *Session) QueueDeclarePassive(ctx context.Context, name string, option .
 			o.AutoDelete,
 			o.Exclusive,
 			o.NoWait,
-			o.Args.toAMQPTable(),
+			amqp091.Table(o.Args),
 		)
 		return err
 	})
@@ -1105,7 +1098,7 @@ func (s *Session) QueueBind(ctx context.Context, queueName string, routingKey st
 			routingKey,
 			exchange,
 			o.NoWait,
-			o.Args.toAMQPTable(),
+			amqp091.Table(o.Args),
 		)
 	})
 }
@@ -1125,7 +1118,7 @@ func (s *Session) QueueUnbind(ctx context.Context, name string, routingKey strin
 	}
 
 	return s.retry(ctx, s.queueUnbindRetryCB, func() error {
-		return s.channel.QueueUnbind(name, routingKey, exchange, option.toAMQPTable())
+		return s.channel.QueueUnbind(name, routingKey, exchange, amqp091.Table(option))
 	})
 }
 
@@ -1216,7 +1209,7 @@ func (s *Session) ExchangeBind(ctx context.Context, destination string, routingK
 			routingKey,
 			source,
 			o.NoWait,
-			o.Args.toAMQPTable(),
+			amqp091.Table(o.Args),
 		)
 	})
 }
@@ -1256,7 +1249,7 @@ func (s *Session) ExchangeUnbind(ctx context.Context, destination string, routin
 			routingKey,
 			source,
 			o.NoWait,
-			o.Args.toAMQPTable(),
+			amqp091.Table(o.Args),
 		)
 	})
 }

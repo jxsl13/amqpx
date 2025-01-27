@@ -8,7 +8,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jxsl13/amqpx/internal/contextutils"
 	"github.com/jxsl13/amqpx/logging"
+	"github.com/jxsl13/amqpx/types"
 )
 
 // ConnectionPool houses the pool of RabbitMQ connections.
@@ -31,9 +33,9 @@ type ConnectionPool struct {
 
 	log logging.Logger
 
-	recoverCB ConnectionRecoverCallback
+	recoverCB types.ConnectionRecoverCallback
 
-	connections chan *Connection
+	connections chan *types.Connection
 
 	mu                  sync.Mutex
 	transientID         int64
@@ -74,7 +76,7 @@ func NewConnectionPool(ctx context.Context, connectUrl string, numConns int, opt
 func newConnectionPoolFromOption(connectUrl string, option connectionPoolOption) (_ *ConnectionPool, err error) {
 	u, err := url.ParseRequestURI(connectUrl)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrInvalidConnectURL, err)
+		return nil, fmt.Errorf("%w: %v", types.ErrInvalidConnectURL, err)
 	}
 
 	if option.TLSConfig != nil {
@@ -83,7 +85,7 @@ func newConnectionPoolFromOption(connectUrl string, option connectionPoolOption)
 
 	// decouple from parent context, in case we want to close this context ourselves.
 	ctx, cc := context.WithCancelCause(option.Ctx)
-	cancel := toCancelFunc(fmt.Errorf("connection pool %w", ErrClosed), cc)
+	cancel := contextutils.ToCancelFunc(fmt.Errorf("connection pool %w", types.ErrClosed), cc)
 
 	cp := &ConnectionPool{
 		name: option.Name,
@@ -94,7 +96,7 @@ func newConnectionPoolFromOption(connectUrl string, option connectionPoolOption)
 
 		capacity:    option.Capacity,
 		tls:         option.TLSConfig,
-		connections: make(chan *Connection, option.Capacity),
+		connections: make(chan *types.Connection, option.Capacity),
 
 		ctx:    ctx,
 		cancel: cancel,
@@ -141,29 +143,29 @@ func (cp *ConnectionPool) initCachedConns() error {
 	return nil
 }
 
-func (cp *ConnectionPool) deriveConnection(ctx context.Context, id int64, cached bool) (*Connection, error) {
+func (cp *ConnectionPool) deriveConnection(ctx context.Context, id int64, cached bool) (*types.Connection, error) {
 	var name string
 	if cached {
 		name = fmt.Sprintf("%s-cached-connection-%d", cp.name, id)
 	} else {
 		name = fmt.Sprintf("%s-transient-connection-%d", cp.name, id)
 	}
-	return NewConnection(ctx, cp.url, name,
-		ConnectionWithTimeout(cp.connTimeout),
-		ConnectionWithHeartbeatInterval(cp.heartbeat),
-		ConnectionWithTLS(cp.tls),
-		ConnectionWithCached(cached),
-		ConnectionWithLogger(cp.log),
-		ConnectionWithRecoverCallback(cp.recoverCB),
+	return types.NewConnection(ctx, cp.url, name,
+		types.ConnectionWithTimeout(cp.connTimeout),
+		types.ConnectionWithHeartbeatInterval(cp.heartbeat),
+		types.ConnectionWithTLS(cp.tls),
+		types.ConnectionWithCached(cached),
+		types.ConnectionWithLogger(cp.log),
+		types.ConnectionWithRecoverCallback(cp.recoverCB),
 	)
 }
 
 // GetConnection only returns an error upon shutdown
-func (cp *ConnectionPool) GetConnection(ctx context.Context) (conn *Connection, err error) {
+func (cp *ConnectionPool) GetConnection(ctx context.Context) (conn *types.Connection, err error) {
 	select {
 	case conn, ok := <-cp.connections:
 		if !ok {
-			return nil, fmt.Errorf("connection pool %w", ErrClosed)
+			return nil, fmt.Errorf("connection pool %w", types.ErrClosed)
 		}
 
 		// recovery may fail, that's why we MUST check for errors
@@ -184,7 +186,7 @@ func (cp *ConnectionPool) GetConnection(ctx context.Context) (conn *Connection, 
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	case <-cp.catchShutdown():
-		return nil, fmt.Errorf("connection pool %w", ErrClosed)
+		return nil, fmt.Errorf("connection pool %w", types.ErrClosed)
 	}
 }
 
@@ -197,7 +199,7 @@ func (cp *ConnectionPool) nextTransientID() int64 {
 
 // GetTransientConnection may return an error when the context was cancelled before the connection could be obtained.
 // Transient connections may be returned to the pool. The are closed properly upon returning.
-func (cp *ConnectionPool) GetTransientConnection(ctx context.Context) (conn *Connection, err error) {
+func (cp *ConnectionPool) GetTransientConnection(ctx context.Context) (conn *types.Connection, err error) {
 	conn, err = cp.deriveConnection(ctx, cp.nextTransientID(), false)
 	if err == nil {
 		return conn, nil
@@ -222,7 +224,7 @@ func (cp *ConnectionPool) GetTransientConnection(ctx context.Context) (conn *Con
 // If the connection is flagged, it will be recovered and returned to the pool.
 // If the context is canceled, the connection will be immediately returned to the pool
 // without any recovery attempt.
-func (cp *ConnectionPool) ReturnConnection(conn *Connection, err error) {
+func (cp *ConnectionPool) ReturnConnection(conn *types.Connection, err error) {
 	// close transient connections
 	if !conn.IsCached() {
 		_ = conn.Close()
