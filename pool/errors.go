@@ -1,91 +1,15 @@
 package pool
 
-import (
-	"errors"
-
-	"github.com/rabbitmq/amqp091-go"
-)
+import "errors"
 
 var (
-	ErrInvalidConnectURL = errors.New("invalid connection url")
+	errInvalidPoolSize = errors.New("invalid pool size")
 
-	// ErrConnectionFailed is just a generic error that is not checked
-	// explicitly against in the code.
-	ErrConnectionFailed = errors.New("connection failed")
-
-	errInvalidPoolSize          = errors.New("invalid pool size")
 	ErrPoolInitializationFailed = errors.New("pool initialization failed")
-	ErrClosed                   = errors.New("closed")
 
-	// ErrNotFound is returned by ExchangeDeclarePassive or QueueDeclarePassive in the case that
-	// the queue was not found.
-	ErrNotFound = errors.New("not found")
+	// ErrPauseFailed is returned by (Batch)Handler.Pause in case that the passed context is canceled
+	ErrPauseFailed = errors.New("failed to pause handler")
 
-	// ErrBlockingFlowControl is returned when the server is under flow control
-	// Your HTTP api may return 503 Service Unavailable or 429 Too Many Requests with a Retry-After header (https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Retry-After)
-	ErrBlockingFlowControl = errors.New("blocking flow control")
-
-	// errBlockingFlowControlClosed is returned when the flow control channel is closed
-	// Specifically interesting when awaiting publish confirms
-	// TODO: make public api after a while
-	errBlockingFlowControlClosed = errors.New("blocking flow control channel closed")
-
-	// ErrReturned is returned when a message is returned by the server when publishing
-	ErrReturned = errors.New("returned")
-
-	// errReturnedClosed
-	errReturnedClosed = errors.New("returned channel closed")
-
-	// ErrReject can be used to reject a specific message
-	// This is a special error that negatively acknowledges messages and does not reuque them.
-	ErrReject = errors.New("message rejected")
+	// ErrResumeFailed is returned by (Batch)Handler.Resume in case that the passed context is canceled
+	ErrResumeFailed = errors.New("failed to resume handler")
 )
-
-var (
-	// ErrNack is returned in case the broker did not acknowledge a published message
-	ErrNack = errors.New("message not acked")
-
-	// returned when a user tries to await confirmations without configuring them for the session
-	ErrNoConfirms = errors.New("confirmations are disabled for this session")
-
-	// ErrDeliveryTagMismatch is returne din case we receive a publishing confirmation that
-	// contains a delivery tag that doe snot match the one we expect.
-	ErrDeliveryTagMismatch = errors.New("delivery tag mismatch")
-
-	ErrDeliveryClosed = errors.New("delivery channel closed")
-)
-
-func recoverable(err error) bool {
-	if err == nil {
-		panic("checking nil error for recoverability")
-	}
-
-	//  INFO:
-	// - ErrClosed, context.Canceled and context.DeadlineExceeded MUST be handled outside of this function
-	// bacause network io timeouts are now also considered as context.DeadlineExceeded, we do want them to be recoverable but
-	// explicit shutdowns or context cancelations when calling methods, not to be recoverable.
-	// - flow control errors are recoverable and are NOT supposed to be handled here
-
-	// invalid usage of the amqp protocol is not recoverable
-	// INFO: this should be checked last.
-	ae := &amqp091.Error{}
-	if errors.As(err, &ae) {
-		switch ae.Code {
-		case notImplemented:
-			return false
-		default:
-			// recoverability according to amqp091 is when
-			// the result can be changing by changing use rinput.
-
-			// recoverability according to this library is
-			// changing the result by reconnecting
-
-			// not recoverable by changing user input
-			// because of potential connection loss
-			return !ae.Recover
-		}
-	}
-
-	// every other unknown error is recoverable
-	return true
-}

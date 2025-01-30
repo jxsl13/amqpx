@@ -1,4 +1,4 @@
-package pool
+package types
 
 import (
 	"testing"
@@ -25,7 +25,7 @@ func backoffMultiTest(t *testing.T, factor int, iterations int) {
 
 func backoffTest(t *testing.T, min, max time.Duration, expectedInterations int) {
 	for i := 0; i < 5000; i++ {
-		backoff := newDefaultBackoffPolicy(min, max)
+		backoff := NewBackoffPolicy(min, max)
 
 		previous := time.Duration(0)
 		iterations := 0

@@ -45,6 +45,7 @@ import (
 	"github.com/jxsl13/amqpx"
 	"github.com/jxsl13/amqpx/logging"
 	"github.com/jxsl13/amqpx/pool"
+	"github.com/jxsl13/amqpx/types"
 )
 
 func main() {
@@ -65,7 +66,7 @@ func main() {
 		return nil
 	})
 
-	amqpx.RegisterHandler("example-queue", func(ctx context.Context, msg pool.Delivery) error {
+	amqpx.RegisterHandler("example-queue", func(ctx context.Context, msg types.Delivery) error {
 		fmt.Println("received message:", string(msg.Body))
 		fmt.Println("canceling context")
 		cancel()
@@ -81,7 +82,7 @@ func main() {
 	)
 	defer amqpx.Close()
 
-	_ = amqpx.Publish(ctx, "example-exchange", "route.name.v1.event", pool.Publishing{
+	_ = amqpx.Publish(ctx, "example-exchange", "route.name.v1.event", types.Publishing{
 		ContentType: "application/json",
 		Body:        []byte("my test event"),
 	})
@@ -106,10 +107,11 @@ import (
 	"github.com/jxsl13/amqpx"
 	"github.com/jxsl13/amqpx/logging"
 	"github.com/jxsl13/amqpx/pool"
+	"github.com/jxsl13/amqpx/types"
 )
 
 func SomeConsumer(cancel func()) pool.HandlerFunc {
-	return func(ctx context.Context, msg pool.Delivery) error {
+	return func(ctx context.Context, msg types.Delivery) error {
 		fmt.Println("received message:", string(msg.Body))
 		fmt.Println("canceling context")
 		cancel()
@@ -127,14 +129,14 @@ func main() {
 		// error handling omitted for brevity
 
 		_ = t.ExchangeDeclare(ctx, "example-exchange", "topic",
-			pool.ExchangeDeclareOptions{
+			types.ExchangeDeclareOptions{
 				Durable: true,
 			},
 		)
 		_, _ = t.QueueDeclare(ctx, "example-queue",
-			pool.QueueDeclareOptions{
+			types.QueueDeclareOptions{
 				Durable: true,
-				Args:    pool.QuorumQueue,
+				Args:    types.QuorumQueue,
 			},
 		)
 		t.QueueBind(ctx, "example-queue", "route.name.v1.event", "example-exchange")
@@ -149,7 +151,7 @@ func main() {
 
 	amqpx.RegisterHandler("example-queue",
 		SomeConsumer(cancel),
-		pool.ConsumeOptions{
+		types.ConsumeOptions{
 			ConsumerTag: "example-queue-cunsumer",
 			Exclusive:   true,
 		},
@@ -162,7 +164,7 @@ func main() {
 	)
 	defer amqpx.Close()
 
-	_ = amqpx.Publish(ctx, "example-exchange", "route.name.v1.event", pool.Publishing{
+	_ = amqpx.Publish(ctx, "example-exchange", "route.name.v1.event", types.Publishing{
 		ContentType: "application/json",
 		Body:        []byte("my test event"),
 	})

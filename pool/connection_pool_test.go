@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jxsl13/amqpx/internal/proxyutils"
 	"github.com/jxsl13/amqpx/internal/testutils"
 	"github.com/jxsl13/amqpx/logging"
 	"github.com/jxsl13/amqpx/pool"
@@ -123,7 +124,7 @@ func TestNewConnectionPoolWithDisconnect(t *testing.T) {
 
 	disconnectDuration := 5 * time.Second
 
-	awaitStarted, awaitStopped := DisconnectWithStartedStopped(
+	awaitStarted, awaitStopped := proxyutils.DisconnectWithStartedStopped(
 		t,
 		proxyName,
 		0,

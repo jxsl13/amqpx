@@ -6,13 +6,17 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jxsl13/amqpx/internal/contextutils"
+	"github.com/jxsl13/amqpx/internal/errorutils"
+	"github.com/jxsl13/amqpx/internal/timerutils"
 	"github.com/jxsl13/amqpx/logging"
+	"github.com/jxsl13/amqpx/types"
 )
 
 type Publisher struct {
 	pool          *Pool
 	autoClosePool bool
-	backoff       BackoffFunc
+	backoff       types.BackoffFunc
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -41,8 +45,8 @@ func NewPublisher(p *Pool, options ...PublisherOption) *Publisher {
 		Ctx: p.Context(),
 
 		AutoClosePool: false,
-		BackoffPolicy: newDefaultBackoffPolicy(1*time.Millisecond, 5*time.Second), // currently only affects publishing with confirms
-		Logger:        p.sp.log,                                                   // derive logger from session pool
+		BackoffPolicy: types.NewBackoffPolicy(1*time.Millisecond, 5*time.Second), // currently only affects publishing with confirms
+		Logger:        p.sp.log,                                                  // derive logger from session pool
 	}
 
 	for _, o := range options {
@@ -50,7 +54,7 @@ func NewPublisher(p *Pool, options ...PublisherOption) *Publisher {
 	}
 
 	ctx, cc := context.WithCancelCause(option.Ctx)
-	cancel := toCancelFunc(fmt.Errorf("publisher %w", ErrClosed), cc)
+	cancel := contextutils.ToCancelFunc(fmt.Errorf("publisher %w", types.ErrClosed), cc)
 
 	pub := &Publisher{
 		pool:          p,
@@ -68,15 +72,15 @@ func NewPublisher(p *Pool, options ...PublisherOption) *Publisher {
 
 // Publish a message to a specific exchange with a given routingKey.
 // You may set exchange to "" and routingKey to your queue name in order to publish directly to a queue.
-func (p *Publisher) Publish(ctx context.Context, exchange string, routingKey string, msg Publishing) error {
+func (p *Publisher) Publish(ctx context.Context, exchange string, routingKey string, msg types.Publishing) error {
 	return p.retry(ctx, func() (cont bool, err error) {
 		err = p.publish(ctx, exchange, routingKey, msg)
 		switch {
 		case err == nil:
 			return false, nil
-		case errors.Is(err, ErrNack):
+		case errors.Is(err, types.ErrNack):
 			return false, err
-		case !recoverable(err):
+		case !errorutils.Recoverable(err):
 			// not recoverable
 			return false, err
 		default:
@@ -87,7 +91,7 @@ func (p *Publisher) Publish(ctx context.Context, exchange string, routingKey str
 	})
 }
 
-func (p *Publisher) publish(ctx context.Context, exchange string, routingKey string, msg Publishing) (err error) {
+func (p *Publisher) publish(ctx context.Context, exchange string, routingKey string, msg types.Publishing) (err error) {
 	defer func() {
 		if err != nil {
 			p.warn(exchange, routingKey, err, "failed to publish message")
@@ -132,7 +136,7 @@ func (p *Publisher) retry(ctx context.Context, f func() (cont bool, err error)) 
 		timer   = time.NewTimer(p.backoff(retry))
 		drained = false
 	)
-	defer closeTimer(timer, &drained)
+	defer timerutils.CloseTimer(timer, &drained)
 
 	for {
 
@@ -151,7 +155,7 @@ func (p *Publisher) retry(ctx context.Context, f func() (cont bool, err error)) 
 			}
 
 			retry++
-			resetTimer(timer, p.backoff(retry), &drained)
+			timerutils.ResetTimer(timer, p.backoff(retry), &drained)
 
 		case <-ctx.Done():
 			return errors.Join(err, ctx.Err())
@@ -162,10 +166,10 @@ func (p *Publisher) retry(ctx context.Context, f func() (cont bool, err error)) 
 }
 
 // Get is only supposed to be used for testing, do not use get for polling any broker queues.
-func (p *Publisher) Get(ctx context.Context, queue string, autoAck bool) (msg Delivery, ok bool, err error) {
+func (p *Publisher) Get(ctx context.Context, queue string, autoAck bool) (msg types.Delivery, ok bool, err error) {
 	s, err := p.pool.GetSession(ctx)
 	if err != nil {
-		return Delivery{}, false, err
+		return types.Delivery{}, false, err
 	}
 	defer func() {
 		p.pool.ReturnSession(s, err)

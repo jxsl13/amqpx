@@ -12,6 +12,7 @@ import (
 	"github.com/jxsl13/amqpx/internal/testutils"
 	"github.com/jxsl13/amqpx/logging"
 	"github.com/jxsl13/amqpx/pool"
+	"github.com/jxsl13/amqpx/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -129,7 +130,7 @@ func TestAMQPXPub(t *testing.T) {
 	}()
 
 	// publish event to first queue
-	err = amqp.Publish(ctx, eq1.Exchange, eq1.RoutingKey, pool.Publishing{
+	err = amqp.Publish(ctx, eq1.Exchange, eq1.RoutingKey, types.Publishing{
 		ContentType: "text/plain",
 		Body:        []byte(eq1.NextPubMsg()),
 	})
@@ -139,7 +140,7 @@ func TestAMQPXPub(t *testing.T) {
 	}
 
 	var (
-		msg pool.Delivery
+		msg types.Delivery
 		ok  bool
 	)
 
@@ -186,7 +187,7 @@ func TestAMQPXSubAndPub(t *testing.T) {
 	// we only expect a single message to arrive or
 	// a duplicate message due to network issues.
 	expectedMsg := eq1.NextSubMsg()
-	amqp.RegisterHandler(eq1.Queue, func(ctx context.Context, d pool.Delivery) error {
+	amqp.RegisterHandler(eq1.Queue, func(ctx context.Context, d types.Delivery) error {
 		msg := string(d.Body)
 		log.Infof("subscriber of %s received message: %s", eq1.Queue, msg)
 		assert.Equal(t, expectedMsg, msg)
@@ -214,7 +215,7 @@ func TestAMQPXSubAndPub(t *testing.T) {
 	// aborting a secondary retry which would return an error here.
 	tctx, tcancel := context.WithTimeout(context.TODO(), 10*time.Second)
 	defer tcancel()
-	err = amqp.Publish(tctx, eq1.Exchange, eq1.RoutingKey, pool.Publishing{
+	err = amqp.Publish(tctx, eq1.Exchange, eq1.RoutingKey, types.Publishing{
 		ContentType: "text/plain",
 		Body:        []byte(eq1.NextPubMsg()),
 	})
@@ -251,12 +252,12 @@ func TestAMQPXSubAndPubMulti(t *testing.T) {
 	amqp.RegisterTopologyDeleter(deleteTopology(log, eq1, eq2, eq3))
 
 	// publish -> queue-01 -> subscriber-01 -> queue-02 -> subscriber-02 -> queue-03 -> subscriber-03 -> cancel context
-	amqp.RegisterHandler(eq1.Queue, func(ctx context.Context, msg pool.Delivery) error {
+	amqp.RegisterHandler(eq1.Queue, func(ctx context.Context, msg types.Delivery) error {
 		log.Infof("handler of %s", eq1.Queue)
 
 		assert.Equal(t, eq1.NextSubMsg(), string(msg.Body))
 
-		err := amqp.Publish(ctx, eq2.Exchange, eq2.RoutingKey, pool.Publishing{
+		err := amqp.Publish(ctx, eq2.Exchange, eq2.RoutingKey, types.Publishing{
 			ContentType: msg.ContentType,
 			Body:        msg.Body,
 		})
@@ -268,15 +269,15 @@ func TestAMQPXSubAndPubMulti(t *testing.T) {
 
 		return nil
 	},
-		pool.ConsumeOptions{
+		types.ConsumeOptions{
 			ConsumerTag: eq1.ConsumerTag,
 		},
 	)
 
-	amqp.RegisterHandler(eq2.Queue, func(ctx context.Context, msg pool.Delivery) error {
+	amqp.RegisterHandler(eq2.Queue, func(ctx context.Context, msg types.Delivery) error {
 		log.Infof("handler of %s", eq2.Queue)
 
-		err := amqp.Publish(ctx, eq3.Exchange, eq3.RoutingKey, pool.Publishing{
+		err := amqp.Publish(ctx, eq3.Exchange, eq3.RoutingKey, types.Publishing{
 			ContentType: msg.ContentType,
 			Body:        msg.Body,
 		})
@@ -286,13 +287,13 @@ func TestAMQPXSubAndPubMulti(t *testing.T) {
 		}
 
 		return nil
-	}, pool.ConsumeOptions{ConsumerTag: eq2.ConsumerTag})
+	}, types.ConsumeOptions{ConsumerTag: eq2.ConsumerTag})
 
-	amqp.RegisterHandler(eq3.Queue, func(ctx context.Context, msg pool.Delivery) error {
+	amqp.RegisterHandler(eq3.Queue, func(ctx context.Context, msg types.Delivery) error {
 		log.Infof("handler of %s: canceling context!", eq3.Queue)
 		cancel()
 		return nil
-	}, pool.ConsumeOptions{ConsumerTag: eq3.ConsumerTag})
+	}, types.ConsumeOptions{ConsumerTag: eq3.ConsumerTag})
 
 	err := amqp.Start(
 		cctx,
@@ -310,7 +311,7 @@ func TestAMQPXSubAndPubMulti(t *testing.T) {
 
 	// publish event to first queue
 
-	err = amqp.Publish(cctx, eq1.Exchange, eq1.RoutingKey, pool.Publishing{
+	err = amqp.Publish(cctx, eq1.Exchange, eq1.RoutingKey, types.Publishing{
 		ContentType: "text/plain",
 		Body:        []byte(eq1.NextPubMsg()),
 	})
@@ -347,7 +348,7 @@ func TestAMQPXSubHandler(t *testing.T) {
 
 	// we want to only receive one message or one duplicate message
 	expectedMsg := eq1.NextSubMsg()
-	amqp.RegisterHandler(eq1.Queue, func(ctx context.Context, d pool.Delivery) error {
+	amqp.RegisterHandler(eq1.Queue, func(ctx context.Context, d types.Delivery) error {
 		msg := string(d.Body)
 		log.Infof("subscriber of %s: received message: %s", eq1.Queue, msg)
 		assert.Equal(t, expectedMsg, msg)
@@ -376,7 +377,7 @@ func TestAMQPXSubHandler(t *testing.T) {
 	// aborting a secondary retry which would return an error here.
 	tctx, tcancel := context.WithTimeout(context.TODO(), 10*time.Second)
 	defer tcancel()
-	err = amqp.Publish(tctx, eq1.Exchange, eq1.RoutingKey, pool.Publishing{
+	err = amqp.Publish(tctx, eq1.Exchange, eq1.RoutingKey, types.Publishing{
 		ContentType: "text/plain",
 		Body:        []byte(eq1.NextPubMsg()),
 	})
@@ -453,7 +454,7 @@ func TestPauseResumeHandlerNoProcessing(t *testing.T) {
 		return nil
 	})
 
-	handler := amqp.RegisterHandler(queueName, func(ctx context.Context, d pool.Delivery) error {
+	handler := amqp.RegisterHandler(queueName, func(ctx context.Context, d types.Delivery) error {
 		log.Info("received message")
 		return nil
 	})
@@ -538,7 +539,7 @@ func TestHandlerPauseAndResumeSubscriber(t *testing.T) {
 		finalBatchSize         = 1
 	)
 	// step 2 - process messages, pause, wait, resume, process rest, cancel context
-	handler := amqp.RegisterBatchHandler(eq1.Queue, func(hctx context.Context, msgs []pool.Delivery) (err error) {
+	handler := amqp.RegisterBatchHandler(eq1.Queue, func(hctx context.Context, msgs []types.Delivery) (err error) {
 		select {
 		case <-hctx.Done():
 			return fmt.Errorf("handler context canceled before processing: %w", hctx.Err())
@@ -573,7 +574,7 @@ func TestHandlerPauseAndResumeSubscriber(t *testing.T) {
 
 	// publish half of the messages
 	for i := 0; i < publish/2; i++ {
-		err := amqpPub.Publish(cctx, eq1.Exchange, eq1.RoutingKey, pool.Publishing{
+		err := amqpPub.Publish(cctx, eq1.Exchange, eq1.RoutingKey, types.Publishing{
 			ContentType: "text/plain",
 			Body:        []byte(eq1.NextPubMsg()),
 		})
@@ -602,7 +603,7 @@ func TestHandlerPauseAndResumeSubscriber(t *testing.T) {
 
 	// publish rest of messages
 	for i := 0; i < publish/2; i++ {
-		err := amqpPub.Publish(cctx, eq1.Exchange, eq1.RoutingKey, pool.Publishing{
+		err := amqpPub.Publish(cctx, eq1.Exchange, eq1.RoutingKey, types.Publishing{
 			ContentType: "text/plain",
 			Body:        []byte(eq1.NextPubMsg()),
 		})
@@ -641,7 +642,7 @@ func TestHandlerPauseAndResumeInFlightNackSubscriber(t *testing.T) {
 		cnt                    = 0
 		processingFinshed      = make(chan struct{})
 		finalBatchSize         = 1
-		redeliveryLimit        = pool.DefaultQueueDeliveryLimit - 1
+		redeliveryLimit        = types.DefaultQueueDeliveryLimit - 1
 		redeliveryChan         = make(chan struct{}, redeliveryLimit)
 	)
 
@@ -670,7 +671,7 @@ func TestHandlerPauseAndResumeInFlightNackSubscriber(t *testing.T) {
 	}()
 
 	for i := 0; i < publish; i++ {
-		err := amqpPub.Publish(cctx, eq1.Exchange, eq1.RoutingKey, pool.Publishing{
+		err := amqpPub.Publish(cctx, eq1.Exchange, eq1.RoutingKey, types.Publishing{
 			ContentType: "text/plain",
 			Body:        []byte(eq1.NextPubMsg()),
 		})
@@ -686,7 +687,7 @@ func TestHandlerPauseAndResumeInFlightNackSubscriber(t *testing.T) {
 
 	proceedChan := make(chan struct{})
 	once := sync.Once{}
-	handler := amqp.RegisterBatchHandler(eq1.Queue, func(hctx context.Context, msgs []pool.Delivery) (err error) {
+	handler := amqp.RegisterBatchHandler(eq1.Queue, func(hctx context.Context, msgs []types.Delivery) (err error) {
 
 		select {
 		case <-hctx.Done():
@@ -803,7 +804,7 @@ func TestRequeueLimitPreserveOrderOK(t *testing.T) {
 		// in case that this value is changed to a higher value, the test will fail, which is when the number of allowed requeues is exceeded.
 		// aftet that requeue limit is reached, messages are not returned back to the front of the queue but at the end.
 		// This prevents the raft log from growing indefinitely.
-		redeliveryLimit        = pool.DefaultQueueDeliveryLimit
+		redeliveryLimit        = types.DefaultQueueDeliveryLimit
 		nackProcessingFinished = make(chan struct{})
 		processingFinshed      = make(chan struct{})
 	)
@@ -831,7 +832,7 @@ func TestRequeueLimitPreserveOrderOK(t *testing.T) {
 	}()
 
 	for i := 0; i < publish; i++ {
-		err := pub.Publish(cctx, eq1.Exchange, eq1.RoutingKey, pool.Publishing{
+		err := pub.Publish(cctx, eq1.Exchange, eq1.RoutingKey, types.Publishing{
 			ContentType: "text/plain",
 			Body:        []byte(eq1.NextPubMsg()),
 		})
@@ -847,7 +848,7 @@ func TestRequeueLimitPreserveOrderOK(t *testing.T) {
 
 	redeliveryCounter := 0
 	var once sync.Once
-	handler := sub.RegisterBatchHandler(eq1.Queue, func(bctx context.Context, msgs []pool.Delivery) (err error) {
+	handler := sub.RegisterBatchHandler(eq1.Queue, func(bctx context.Context, msgs []types.Delivery) (err error) {
 
 		redeliveryCounter++
 
@@ -912,7 +913,7 @@ func TestRequeueLimitPreserveOrderOK(t *testing.T) {
 	handler.SetMaxBatchSize(finalBatchSize)
 
 	// INFO: additional redilivery for final consumption
-	handler.SetHandlerFunc(func(hctx context.Context, msgs []pool.Delivery) error {
+	handler.SetHandlerFunc(func(hctx context.Context, msgs []types.Delivery) error {
 		select {
 		case <-hctx.Done():
 			return fmt.Errorf("handler context canceled before processing: %w", hctx.Err())
@@ -1018,7 +1019,7 @@ func testHandlerPauseAndResume(t *testing.T, i int, closeTimeout time.Duration) 
 
 	// fill queue with messages
 	for i := 0; i < publish; i++ {
-		err := amqpPub.Publish(cctx, eq1.Exchange, eq1.RoutingKey, pool.Publishing{
+		err := amqpPub.Publish(cctx, eq1.Exchange, eq1.RoutingKey, types.Publishing{
 			ContentType: "text/plain",
 			Body:        []byte(eq1.NextPubMsg()),
 		})
@@ -1029,12 +1030,12 @@ func testHandlerPauseAndResume(t *testing.T, i int, closeTimeout time.Duration) 
 	}
 
 	// step 2 - process messages, pause, wait, resume, process rest, cancel context
-	handler01 := amqp.RegisterHandler(eq1.Queue, func(_ context.Context, msg pool.Delivery) (err error) {
+	handler01 := amqp.RegisterHandler(eq1.Queue, func(_ context.Context, msg types.Delivery) (err error) {
 		assert.Equal(t, eq1.NextSubMsg(), string(msg.Body))
 
 		cnt++
 		if cnt == publish/3 || cnt == publish/3*2 {
-			err = amqp.Publish(cctx, eq2.Exchange, eq2.RoutingKey, pool.Publishing{
+			err = amqp.Publish(cctx, eq2.Exchange, eq2.RoutingKey, types.Publishing{
 				ContentType: "text/plain",
 				Body:        []byte(eq2.NextPubMsg()),
 			})
@@ -1045,7 +1046,7 @@ func testHandlerPauseAndResume(t *testing.T, i int, closeTimeout time.Duration) 
 	})
 
 	running := true
-	amqp.RegisterHandler(eq2.Queue, func(_ context.Context, msg pool.Delivery) (err error) {
+	amqp.RegisterHandler(eq2.Queue, func(_ context.Context, msg types.Delivery) (err error) {
 		assert.Equal(t, eq2.NextSubMsg(), string(msg.Body))
 		log.Infof("received toggle request: %s", string(msg.Body))
 		queue := handler01.Queue()
@@ -1071,7 +1072,7 @@ func testHandlerPauseAndResume(t *testing.T, i int, closeTimeout time.Duration) 
 			assertActive(t, handler01, true)
 
 			// trigger cancelation
-			err = amqpPub.Publish(cctx, eq3.Exchange, eq3.RoutingKey, pool.Publishing{
+			err = amqpPub.Publish(cctx, eq3.Exchange, eq3.RoutingKey, types.Publishing{
 				ContentType: "text/plain",
 				Body:        []byte(eq3.NextPubMsg()),
 			})
@@ -1081,7 +1082,7 @@ func testHandlerPauseAndResume(t *testing.T, i int, closeTimeout time.Duration) 
 	})
 
 	var once sync.Once
-	amqp.RegisterHandler(eq3.Queue, func(_ context.Context, msg pool.Delivery) (err error) {
+	amqp.RegisterHandler(eq3.Queue, func(_ context.Context, msg types.Delivery) (err error) {
 		once.Do(func() {
 
 			log.Info("pausing handler")
@@ -1168,7 +1169,12 @@ func testBatchHandlerPauseAndResume(t *testing.T, i int) {
 		testutils.HealthyConnectURL,
 		append(options, amqpx.WithName(funcName+"-pub"))...,
 	)
-	require.NoError(t, err)
+	if !assert.NoError(t, err) {
+		return
+	}
+	defer func() {
+		assert.NoError(t, amqpxPublish.Close())
+	}()
 
 	var (
 		publish = 500
@@ -1178,7 +1184,7 @@ func testBatchHandlerPauseAndResume(t *testing.T, i int) {
 	// step 1 - fill queue with messages
 	// fill queue with messages
 	for i := 0; i < publish; i++ {
-		err := amqpxPublish.Publish(cctx, eq1.Exchange, eq1.RoutingKey, pool.Publishing{
+		err := amqpxPublish.Publish(cctx, eq1.Exchange, eq1.RoutingKey, types.Publishing{
 			ContentType: "text/plain",
 			Body:        []byte(eq1.NextPubMsg()),
 		})
@@ -1189,12 +1195,12 @@ func testBatchHandlerPauseAndResume(t *testing.T, i int) {
 	}
 
 	// step 2 - process messages, pause, wait, resume, process rest, cancel context
-	handler01 := amqp.RegisterBatchHandler(eq1.Queue, func(_ context.Context, msgs []pool.Delivery) (err error) {
+	handler01 := amqp.RegisterBatchHandler(eq1.Queue, func(_ context.Context, msgs []types.Delivery) (err error) {
 		for _, msg := range msgs {
 			assert.NoError(t, eq1.ValidateNextSubMsg(string(msg.Body)))
 			cnt++
 			if cnt == publish/3 || cnt == publish/3*2 {
-				err = amqp.Publish(cctx, eq2.Exchange, eq2.RoutingKey, pool.Publishing{
+				err = amqp.Publish(cctx, eq2.Exchange, eq2.RoutingKey, types.Publishing{
 					ContentType: "text/plain",
 					Body:        []byte(eq2.NextPubMsg()),
 				})
@@ -1205,7 +1211,7 @@ func testBatchHandlerPauseAndResume(t *testing.T, i int) {
 	})
 
 	running := true
-	amqp.RegisterBatchHandler(eq2.Queue, func(_ context.Context, msgs []pool.Delivery) (err error) {
+	amqp.RegisterBatchHandler(eq2.Queue, func(_ context.Context, msgs []types.Delivery) (err error) {
 		queue := handler01.Queue()
 
 		for _, msg := range msgs {
@@ -1231,7 +1237,7 @@ func testBatchHandlerPauseAndResume(t *testing.T, i int) {
 				assertActive(t, handler01, true)
 
 				// trigger cancelation
-				err = amqpxPublish.Publish(cctx, eq3.Exchange, eq3.RoutingKey, pool.Publishing{
+				err = amqpxPublish.Publish(cctx, eq3.Exchange, eq3.RoutingKey, types.Publishing{
 					ContentType: "text/plain",
 					Body:        []byte(eq3.NextPubMsg()),
 				})
@@ -1242,7 +1248,7 @@ func testBatchHandlerPauseAndResume(t *testing.T, i int) {
 	})
 
 	var once sync.Once
-	amqp.RegisterBatchHandler(eq3.Queue, func(_ context.Context, msgs []pool.Delivery) (err error) {
+	amqp.RegisterBatchHandler(eq3.Queue, func(_ context.Context, msgs []types.Delivery) (err error) {
 		_ = msgs[0]
 		once.Do(func() {
 
@@ -1318,7 +1324,7 @@ func TestQueueDeletedConsumerReconnect(t *testing.T) {
 		return nil
 	})
 
-	h := amqp.RegisterHandler(queueName, func(ctx context.Context, msg pool.Delivery) (err error) {
+	h := amqp.RegisterHandler(queueName, func(ctx context.Context, msg types.Delivery) (err error) {
 		return nil
 	})
 
@@ -1392,7 +1398,7 @@ func TestQueueDeletedBatchConsumerReconnect(t *testing.T) {
 		return nil
 	})
 
-	h := amqp.RegisterBatchHandler(queueName, func(ctx context.Context, msg []pool.Delivery) (err error) {
+	h := amqp.RegisterBatchHandler(queueName, func(ctx context.Context, msg []types.Delivery) (err error) {
 		return nil
 	})
 
@@ -1431,7 +1437,7 @@ func TestQueueDeletedBatchConsumerReconnect(t *testing.T) {
 	assertActive(t, h, true)
 }
 
-func newTransientSession(t *testing.T, ctx context.Context, connectUrl string) (session *pool.Session, closer func()) {
+func newTransientSession(t *testing.T, ctx context.Context, connectUrl string) (session *types.Session, closer func()) {
 	p, err := pool.New(ctx, connectUrl, 1, 1, pool.WithLogger(logging.NewTestLogger(t)))
 	require.NoError(t, err)
 
@@ -1503,7 +1509,7 @@ func testHandlerReset(t *testing.T, i int) {
 
 	// fill queue with messages
 	for i := 0; i < publish; i++ {
-		err := amqpxPublish.Publish(cctx, eq1.Exchange, eq1.RoutingKey, pool.Publishing{
+		err := amqpxPublish.Publish(cctx, eq1.Exchange, eq1.RoutingKey, types.Publishing{
 			ContentType: "text/plain",
 			Body:        []byte(eq1.NextPubMsg()),
 		})
@@ -1515,7 +1521,7 @@ func testHandlerReset(t *testing.T, i int) {
 
 	done := make(chan struct{})
 	// step 2 - process messages, pause, wait, resume, process rest, cancel context
-	handler01 := amqp.RegisterHandler(eq1.Queue, func(_ context.Context, msgs pool.Delivery) (err error) {
+	handler01 := amqp.RegisterHandler(eq1.Queue, func(_ context.Context, msgs types.Delivery) (err error) {
 		cnt++
 		if cnt == publish {
 			close(done)
@@ -1599,7 +1605,7 @@ func testBatchHandlerReset(t *testing.T, i int) {
 
 	// fill queue with messages
 	for i := 0; i < publish; i++ {
-		err := amqpxPublish.Publish(cctx, eq1.Exchange, eq1.RoutingKey, pool.Publishing{
+		err := amqpxPublish.Publish(cctx, eq1.Exchange, eq1.RoutingKey, types.Publishing{
 			ContentType: "text/plain",
 			Body:        []byte(eq1.NextPubMsg()),
 		})
@@ -1611,7 +1617,7 @@ func testBatchHandlerReset(t *testing.T, i int) {
 
 	done := make(chan struct{})
 	// step 2 - process messages, pause, wait, resume, process rest, cancel context
-	handler01 := amqp.RegisterBatchHandler(eq1.Queue, func(_ context.Context, msgs []pool.Delivery) (err error) {
+	handler01 := amqp.RegisterBatchHandler(eq1.Queue, func(_ context.Context, msgs []types.Delivery) (err error) {
 		cnt += len(msgs)
 
 		if cnt == publish {

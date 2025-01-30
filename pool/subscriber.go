@@ -7,7 +7,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jxsl13/amqpx/internal/contextutils"
+	"github.com/jxsl13/amqpx/internal/timerutils"
 	"github.com/jxsl13/amqpx/logging"
+	"github.com/jxsl13/amqpx/types"
+	"github.com/rabbitmq/amqp091-go"
 )
 
 type Subscriber struct {
@@ -65,7 +69,7 @@ func NewSubscriber(p *Pool, options ...SubscriberOption) *Subscriber {
 
 	// decouple from parent in order to individually close the context
 	ctx, cc := context.WithCancelCause(option.Ctx)
-	cancel := toCancelFunc(fmt.Errorf("subscriber %w", ErrClosed), cc)
+	cancel := contextutils.ToCancelFunc(fmt.Errorf("subscriber %w", types.ErrClosed), cc)
 
 	sub := &Subscriber{
 		pool:          p,
@@ -80,10 +84,10 @@ func NewSubscriber(p *Pool, options ...SubscriberOption) *Subscriber {
 }
 
 // HandlerFunc is basically a handler for incoming messages/events.
-type HandlerFunc func(context.Context, Delivery) error
+type HandlerFunc func(context.Context, types.Delivery) error
 
 // BatchHandlerFunc is a handler for incoming batches of messages/events
-type BatchHandlerFunc func(context.Context, []Delivery) error
+type BatchHandlerFunc func(context.Context, []types.Delivery) error
 
 // RegisterHandlerFunc registers a consumer function that starts a consumer upon subscriber startup.
 // The consumer is identified by a string that is unique and scoped for all consumers on this channel.
@@ -104,8 +108,8 @@ type BatchHandlerFunc func(context.Context, []Delivery) error
 // Inflight messages, limited by Channel.Qos will be buffered until received from the returned chan.
 // When the Channel or Connection is closed, all buffered and inflight messages will be dropped.
 // When the consumer identifier tag is cancelled, all inflight messages will be delivered until the returned chan is closed.
-func (s *Subscriber) RegisterHandlerFunc(queue string, hf HandlerFunc, options ...ConsumeOptions) *Handler {
-	option := ConsumeOptions{
+func (s *Subscriber) RegisterHandlerFunc(queue string, hf HandlerFunc, options ...types.ConsumeOptions) *Handler {
+	option := types.ConsumeOptions{
 		ConsumerTag: "",
 		AutoAck:     false,
 		Exclusive:   false,
@@ -214,20 +218,20 @@ func (s *Subscriber) Start(ctx context.Context) (err error) {
 
 func (s *Subscriber) retry(consumerType string, h handler, f func() (err error)) {
 	var (
-		backoff = newDefaultBackoffPolicy(1*time.Millisecond, 5*time.Second)
+		backoff = types.NewBackoffPolicy(1*time.Millisecond, 5*time.Second)
 		retry   = 0
 		err     error
 		timer   = time.NewTimer(0)
 		drained = false
 	)
-	defer closeTimer(timer, &drained)
+	defer timerutils.CloseTimer(timer, &drained)
 
 	for {
 		opts := h.QueueConfig()
 
 		err = f()
 		// only return if closed
-		if errors.Is(err, ErrClosed) {
+		if errors.Is(err, types.ErrClosed) {
 			return
 		}
 		// consume was canceled due to context being closed (paused)
@@ -236,7 +240,7 @@ func (s *Subscriber) retry(consumerType string, h handler, f func() (err error))
 			continue
 		}
 
-		if errors.Is(err, ErrDeliveryClosed) {
+		if errors.Is(err, types.ErrDeliveryClosed) {
 			select {
 			case <-h.pausing().Done():
 				s.infoConsumer(opts.ConsumerTag, fmt.Sprintf("%s paused: %v", consumerType, err))
@@ -249,7 +253,7 @@ func (s *Subscriber) retry(consumerType string, h handler, f func() (err error))
 		s.error(opts.ConsumerTag, opts.Queue, err, fmt.Sprintf("%s closed unexpectedly: %v", consumerType, err))
 
 		retry++
-		resetTimer(timer, backoff(retry), &drained)
+		timerutils.ResetTimer(timer, backoff(retry), &drained)
 
 		select {
 		case <-s.catchShutdown():
@@ -321,11 +325,11 @@ func (s *Subscriber) consume(h *Handler) (err error) {
 			return s.shutdownErr()
 		case msg, ok := <-delivery:
 			if !ok {
-				return ErrDeliveryClosed
+				return types.ErrDeliveryClosed
 			}
 
 			s.infoHandler(opts.ConsumerTag, msg.Exchange, msg.RoutingKey, opts.Queue, "received message")
-			err = opts.HandlerFunc(h.pausing(), NewDeliveryFromAMQP091(msg))
+			err = opts.HandlerFunc(h.pausing(), newDeliveryFromAMQP091(msg))
 			if opts.AutoAck {
 				if err != nil {
 					// we cannot really do anything to recover from a processing error in this case
@@ -344,7 +348,7 @@ func (s *Subscriber) consume(h *Handler) (err error) {
 }
 
 // (n)ack delivery and signal that message was processed by the service
-func (s *Subscriber) postProcessing(opts HandlerConfig, deliveryTag uint64, session *Session, handlerErr error) (err error) {
+func (s *Subscriber) postProcessing(opts HandlerConfig, deliveryTag uint64, session *types.Session, handlerErr error) (err error) {
 	if handlerErr == nil {
 		err = session.Ack(deliveryTag, false)
 		if err != nil {
@@ -353,7 +357,7 @@ func (s *Subscriber) postProcessing(opts HandlerConfig, deliveryTag uint64, sess
 		}
 		s.infoConsumer(opts.ConsumerTag, "acked message")
 		return nil
-	} else if errors.Is(handlerErr, ErrReject) {
+	} else if errors.Is(handlerErr, types.ErrReject) {
 		err = session.Nack(deliveryTag, false, false)
 		if err != nil {
 			// cannot do anything at this point
@@ -441,61 +445,15 @@ func (s *Subscriber) batchConsume(h *BatchHandler) (err error) {
 
 	var (
 		// preallocate memory for batch
-		batch      = make([]Delivery, 0, max(1, opts.MaxBatchSize))
+		batch      = make([]types.Delivery, 0, max(1, opts.MaxBatchSize))
 		batchBytes = 0
 	)
-	defer func() {
-		adj := "partial"
-		batchLen := len(batch)
-		if batchLen == opts.MaxBatchSize {
-			adj = "full"
-		}
-
-		if errors.Is(err, ErrClosed) {
-			// requeue all not yet processed messages in batch slice
-			// we can only nack these messages in case the session has not been closed
-			// Its does not make sense to use session.Nack at this point because in case that the sessison dies
-			// the delivery tags also die with it.
-			// There is no way to recover form this state in case an error is returned from the Nack call.
-			reqErr := s.requeueBatch(opts, session, batch, batchBytes)
-			if reqErr != nil {
-				s.errorBatchHandler(
-					opts,
-					fmt.Errorf("failed to requeue %s batch with %d messages upon shutdown: %w", adj, batchLen, reqErr),
-				)
-			} else {
-				s.infofBatchHandler(
-					opts,
-					"requeued %s batch with %d messages upon shutdown",
-					adj,
-					batchLen,
-				)
-			}
-
-		} else if errors.Is(err, ErrDeliveryClosed) && isContextClosed(h.pausing()) {
-			reqErr := s.requeueBatch(opts, session, batch, batchBytes)
-			if reqErr != nil {
-				s.errorBatchHandler(
-					opts,
-					fmt.Errorf("failed to requeue %s batch with %d messages upon pausing: %w", adj, batchLen, reqErr),
-				)
-			} else {
-				s.infofBatchHandler(
-					opts,
-					"requeued %s batch with %d messages upon pausing",
-					adj,
-					batchLen,
-				)
-			}
-		}
-
-	}()
 
 	var (
 		timer   = time.NewTimer(opts.FlushTimeout)
 		drained = false
 	)
-	defer closeTimer(timer, &drained)
+	defer timerutils.CloseTimer(timer, &drained)
 
 	for {
 		// reset batch slice
@@ -507,18 +465,66 @@ func (s *Subscriber) batchConsume(h *BatchHandler) (err error) {
 		for {
 
 			// reset the timer
-			resetTimer(timer, opts.FlushTimeout, &drained)
+			timerutils.ResetTimer(timer, opts.FlushTimeout, &drained)
 
 			select {
 			case <-s.catchShutdown():
-				return s.shutdownErr()
+
+				// shutdown handling
+				err := s.shutdownErr()
+				batchLen := len(batch)
+
+				if batchLen == 0 {
+					// nothing to do, batch is empty
+					return err
+				}
+
+				adj := batchAdjective(batchLen, opts.MaxBatchSize, batchBytes, opts.MaxBatchBytes)
+				// requeue all not yet processed messages in batch slice
+				// we can only nack these messages in case the session has not been closed
+				// Its does not make sense to use session.Nack at this point because in case that the sessison dies
+				// the delivery tags also die with it.
+				// There is no way to recover form this state in case an error is returned from the Nack call.
+				reqErr := s.requeueBatch(opts, session, batch, batchBytes)
+				if reqErr != nil {
+					s.errorBatchHandler(opts, fmt.Errorf("failed to requeue %s batch with %d message(s) upon shutdown: %w", adj, batchLen, reqErr))
+				} else {
+					s.infofBatchHandler(opts, "requeued %s batch with %d message(s) upon shutdown", adj, batchLen)
+				}
+
+				return err
 			case msg, ok := <-delivery:
 				if !ok {
-					return ErrDeliveryClosed
+					// network error or explicit pausing of the consumer
+					var (
+						err      = types.ErrDeliveryClosed
+						batchLen = len(batch)
+					)
+					if batchLen == 0 {
+						// nothing to do, batch is empty
+						return err
+					}
+
+					if !isContextClosed(h.pausing()) {
+						// unexpected reason for delivery being closed
+						// most likely network issues that break the connection
+						return err
+					}
+
+					// requeue uprocessed messages in batch slice
+					adj := batchAdjective(batchLen, opts.MaxBatchSize, batchBytes, opts.MaxBatchBytes)
+					reqErr := s.requeueBatch(opts, session, batch, batchBytes)
+					if reqErr != nil {
+						s.errorBatchHandler(opts, fmt.Errorf("failed to requeue %s batch with %d message(s) upon pausing: %w", adj, batchLen, reqErr))
+					} else {
+						s.infofBatchHandler(opts, "requeued %s batch with %d message(s) upon pausing", adj, batchLen)
+					}
+
+					return err
 				}
 
 				batchBytes += len(msg.Body)
-				batch = append(batch, NewDeliveryFromAMQP091(msg))
+				batch = append(batch, newDeliveryFromAMQP091(msg))
 				if opts.MaxBatchSize > 0 && len(batch) == opts.MaxBatchSize {
 					break collectBatch
 				}
@@ -550,9 +556,9 @@ func (s *Subscriber) batchConsume(h *BatchHandler) (err error) {
 		)
 
 		if batchSize < opts.MaxBatchSize && batchBytes < opts.MaxBatchBytes {
-			s.infofBatchHandler(opts, "processing partial batch with %d messages and %d bytes", batchSize, batchBytes)
+			s.infofBatchHandler(opts, "processing partial batch with %d message(s) and %d bytes", batchSize, batchBytes)
 		} else {
-			s.infofBatchHandler(opts, "processing batch with %d messages and %d bytes", batchSize, batchBytes)
+			s.infofBatchHandler(opts, "processing batch with %d message(s) and %d bytes", batchSize, batchBytes)
 		}
 
 		err = opts.HandlerFunc(h.pausing(), batch)
@@ -560,25 +566,29 @@ func (s *Subscriber) batchConsume(h *BatchHandler) (err error) {
 			// no acks required
 			if err != nil {
 				// we cannot really do anything to recover from a processing error in this case
-				s.errorBatchHandler(
-					opts,
-					fmt.Errorf("processing failed: dropping batch: %w", err),
-				)
+				s.errorBatchHandler(opts, fmt.Errorf("processing failed: dropping batch: %w", err))
 			} else {
-				s.debugfBatchHandler(opts, "processed batch with %d messages and %d bytes", batchSize, batchBytes)
+				s.debugfBatchHandler(opts, "processed batch with %d message(s) and %d bytes", batchSize, batchBytes)
 			}
 		} else {
 			poolErr := s.batchPostProcessing(opts, session, batch, batchBytes, err)
 			if poolErr != nil {
-				batch = batch[:0] // reset batch because in thise case it is already n/acked
+				// at this point we cannot requeue anything, because the connection died
 				return poolErr
 			}
-			s.debugfBatchHandler(opts, "processed batch with %d messages and %d bytes", batchSize, batchBytes)
+			s.debugfBatchHandler(opts, "processed batch with %d message(s) and %d bytes", batchSize, batchBytes)
 		}
 	}
 }
 
-func (s *Subscriber) ackBatch(opts BatchHandlerConfig, session *Session, batch []Delivery) (err error) {
+func batchAdjective(batchSize, maxBatchSize, batchBytes, maxBatchBytes int) string {
+	if batchSize < maxBatchSize && batchBytes < maxBatchBytes {
+		return "partial"
+	}
+	return "full"
+}
+
+func (s *Subscriber) ackBatch(opts BatchHandlerConfig, session *types.Session, batch []types.Delivery) (err error) {
 	batchSize := len(batch)
 	if batchSize == 0 {
 		return nil
@@ -610,11 +620,11 @@ func (s *Subscriber) ackBatch(opts BatchHandlerConfig, session *Session, batch [
 	return nil
 }
 
-func (s *Subscriber) requeueBatch(opts BatchHandlerConfig, session *Session, batch []Delivery, bytes int) error {
+func (s *Subscriber) requeueBatch(opts BatchHandlerConfig, session *types.Session, batch []types.Delivery, bytes int) error {
 	return s.nackBatch(opts, session, batch, bytes, true)
 }
 
-func (s *Subscriber) rejectBatch(opts BatchHandlerConfig, session *Session, batch []Delivery, bytes int) error {
+func (s *Subscriber) rejectBatch(opts BatchHandlerConfig, session *types.Session, batch []types.Delivery, bytes int) error {
 	return s.nackBatch(opts, session, batch, bytes, false)
 }
 
@@ -623,7 +633,7 @@ func (s *Subscriber) rejectBatch(opts BatchHandlerConfig, session *Session, batc
 // batchBytes is only used for logging purposes
 // This requeue works with the assumption that it is not possible to (n)ack messages of partial batches whose size is smaller than the prefetch_count without
 // changing the prefetch_count of the Qos setting.
-func (s *Subscriber) nackBatch(opts BatchHandlerConfig, session *Session, batch []Delivery, bytes int, requeue bool) (err error) {
+func (s *Subscriber) nackBatch(opts BatchHandlerConfig, session *types.Session, batch []types.Delivery, bytes int, requeue bool) (err error) {
 	batchSize := len(batch)
 	if batchSize == 0 {
 		return
@@ -653,16 +663,16 @@ func (s *Subscriber) nackBatch(opts BatchHandlerConfig, session *Session, batch 
 	err = session.Nack(lastDeliveryTag, true, requeue)
 	if err != nil {
 		if requeue {
-			return fmt.Errorf("failed to requeue partial batch with %d messages and %d bytes: %w", batchSize, bytes, err)
+			return fmt.Errorf("failed to requeue partial batch with %d message(s) and %d bytes: %w", batchSize, bytes, err)
 		} else {
-			return fmt.Errorf("failed to reject partial batch with %d messages and %d bytes: %w", batchSize, bytes, err)
+			return fmt.Errorf("failed to reject partial batch with %d message(s) and %d bytes: %w", batchSize, bytes, err)
 		}
 	}
 
 	if requeue {
-		s.infofBatchHandler(opts, "requeued partial batch with %d messages and %d bytes", batchSize, bytes)
+		s.infofBatchHandler(opts, "requeued partial batch with %d message(s) and %d bytes", batchSize, bytes)
 	} else {
-		s.infofBatchHandler(opts, "rejected partial batch with %d messages and %d bytes", batchSize, bytes)
+		s.infofBatchHandler(opts, "rejected partial batch with %d message(s) and %d bytes", batchSize, bytes)
 	}
 	return nil
 }
@@ -676,12 +686,12 @@ func isContextClosed(ctx context.Context) bool {
 	}
 }
 
-func (s *Subscriber) batchPostProcessing(opts BatchHandlerConfig, session *Session, batch []Delivery, bytes int, handlerErr error) (err error) {
+func (s *Subscriber) batchPostProcessing(opts BatchHandlerConfig, session *types.Session, batch []types.Delivery, bytes int, handlerErr error) (err error) {
 
 	// processing failed
 	if handlerErr == nil {
 		return s.ackBatch(opts, session, batch)
-	} else if errors.Is(handlerErr, ErrReject) {
+	} else if errors.Is(handlerErr, types.ErrReject) {
 		// reject multiple
 		return s.rejectBatch(opts, session, batch, bytes)
 	}
@@ -694,10 +704,10 @@ type handler interface {
 	pausing() context.Context
 }
 
-func (s *Subscriber) returnSession(h handler, session *Session, err error) {
+func (s *Subscriber) returnSession(h handler, session *types.Session, err error) {
 	opts := h.QueueConfig()
 
-	if errors.Is(err, ErrClosed) {
+	if errors.Is(err, types.ErrClosed) {
 		// graceful shutdown
 		s.pool.ReturnSession(session, err)
 		s.infoConsumer(opts.ConsumerTag, "closed")
@@ -805,12 +815,6 @@ func (s *Subscriber) debugConsumer(consumer string, a ...any) {
 	})).Debug(a...)
 }
 
-func (s *Subscriber) debugfConsumer(consumer string, format string, a ...any) {
-	s.log.WithFields(withConsumerIfSet(consumer, map[string]any{
-		"subscriber": s.pool.Name(),
-	})).Debugf(format, a...)
-}
-
 func (s *Subscriber) warnConsumer(consumer string, err error, a ...any) {
 	s.log.WithFields(withConsumerIfSet(consumer, map[string]any{
 		"subscriber": s.pool.Name(),
@@ -843,4 +847,29 @@ func (s *Subscriber) error(consumer, queue string, err error, a ...any) {
 		"queue":      queue,
 		"error":      err,
 	})).Error(a...)
+}
+
+func newDeliveryFromAMQP091(delivery amqp091.Delivery) types.Delivery {
+	return types.Delivery{
+		Headers:         types.Table(delivery.Headers),
+		ContentType:     delivery.ContentType,
+		ContentEncoding: delivery.ContentEncoding,
+		DeliveryMode:    delivery.DeliveryMode,
+		Priority:        delivery.Priority,
+		CorrelationId:   delivery.CorrelationId,
+		ReplyTo:         delivery.ReplyTo,
+		Expiration:      delivery.Expiration,
+		MessageId:       delivery.MessageId,
+		Timestamp:       delivery.Timestamp,
+		Type:            delivery.Type,
+		UserId:          delivery.UserId,
+		AppId:           delivery.AppId,
+		ConsumerTag:     delivery.ConsumerTag,
+		MessageCount:    delivery.MessageCount,
+		DeliveryTag:     delivery.DeliveryTag,
+		Redelivered:     delivery.Redelivered,
+		Exchange:        delivery.Exchange,
+		RoutingKey:      delivery.RoutingKey,
+		Body:            delivery.Body,
+	}
 }

@@ -2,26 +2,19 @@ package pool
 
 import (
 	"context"
-	"errors"
 	"sync"
-)
 
-var (
-	// ErrPauseFailed is returned by (Batch)Handler.Pause in case that the passed context is canceled
-	ErrPauseFailed = errors.New("failed to pause handler")
-
-	// ErrResumeFailed is returned by (Batch)Handler.Resume in case that the passed context is canceled
-	ErrResumeFailed = errors.New("failed to resume handler")
+	"github.com/jxsl13/amqpx/types"
 )
 
 // NewHandler creates a new handler which is primarily a combination of your passed
 // handler function and the queue name from which the handler fetches messages and processes those.
 // Additionally, the handler allows you to pause and resume processing from the provided queue.
-func NewHandler(queue string, hf HandlerFunc, option ...ConsumeOptions) *Handler {
+func NewHandler(queue string, hf HandlerFunc, option ...types.ConsumeOptions) *Handler {
 	if hf == nil {
 		panic("handlerFunc must not be nil")
 	}
-	copt := ConsumeOptions{
+	copt := types.ConsumeOptions{
 		ConsumerTag: "",
 		AutoAck:     false,
 		Exclusive:   false,
@@ -49,7 +42,7 @@ type Handler struct {
 	mu          sync.RWMutex
 	queue       string
 	handlerFunc HandlerFunc
-	consumeOpts ConsumeOptions
+	consumeOpts types.ConsumeOptions
 
 	// not guarded by mutex
 	sc *stateContext
@@ -59,7 +52,7 @@ type Handler struct {
 // This internal data structure is used in the corresponsing consumer.
 type HandlerConfig struct {
 	Queue string
-	ConsumeOptions
+	types.ConsumeOptions
 
 	HandlerFunc HandlerFunc
 }
@@ -169,7 +162,7 @@ func (h *Handler) SetHandlerFunc(hf HandlerFunc) {
 	h.handlerFunc = hf
 }
 
-func (h *Handler) ConsumeOptions() ConsumeOptions {
+func (h *Handler) ConsumeOptions() types.ConsumeOptions {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	return h.consumeOpts
@@ -178,7 +171,7 @@ func (h *Handler) ConsumeOptions() ConsumeOptions {
 // SetConsumeOptions changes the current handler function                    to another
 // handler function which processes messages..
 // The actual change is effective after pausing and resuming the handler.
-func (h *Handler) SetConsumeOptions(consumeOpts ConsumeOptions) {
+func (h *Handler) SetConsumeOptions(consumeOpts types.ConsumeOptions) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.consumeOpts = consumeOpts
@@ -188,5 +181,5 @@ func (h *Handler) SetConsumeOptions(consumeOpts ConsumeOptions) {
 // It is the common configuration between the handler and the batch handler.
 type QueueConfig struct {
 	Queue string
-	ConsumeOptions
+	types.ConsumeOptions
 }

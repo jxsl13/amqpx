@@ -9,6 +9,7 @@ import (
 	"github.com/jxsl13/amqpx/internal/testutils"
 	"github.com/jxsl13/amqpx/logging"
 	"github.com/jxsl13/amqpx/pool"
+	"github.com/jxsl13/amqpx/types"
 )
 
 func declareExchangeQueue(ctx context.Context, eq testutils.ExchangeQueue, t *pool.Topologer, log logging.Logger) (err error) {
@@ -78,7 +79,7 @@ func createQueue(ctx context.Context, name string, t *pool.Topologer, log loggin
 	log.Infof("topology: creating queue: %s", name)
 
 	_, err = t.QueueDeclarePassive(ctx, name)
-	if !errors.Is(err, pool.ErrNotFound) {
+	if !errors.Is(err, types.ErrNotFound) {
 		if err != nil {
 			return fmt.Errorf("queue %s was found even tho it should not exist: %w", name, err)
 		}
@@ -120,20 +121,20 @@ func deleteQueue(ctx context.Context, name string, t *pool.Topologer, log loggin
 func createExchange(ctx context.Context, name string, t *pool.Topologer, log logging.Logger) (err error) {
 	log.Infof("topology: creating exchange: %s", name)
 
-	err = t.ExchangeDeclarePassive(ctx, name, pool.ExchangeKindTopic)
-	if !errors.Is(err, pool.ErrNotFound) {
+	err = t.ExchangeDeclarePassive(ctx, name, types.ExchangeKindTopic)
+	if !errors.Is(err, types.ErrNotFound) {
 		if err != nil {
 			return fmt.Errorf("exchange %s was found even tho it should not exist: %w", name, err)
 		}
 		return fmt.Errorf("exchange %s was found even tho it should not exist", name)
 	}
 
-	err = t.ExchangeDeclare(ctx, name, pool.ExchangeKindTopic)
+	err = t.ExchangeDeclare(ctx, name, types.ExchangeKindTopic)
 	if err != nil {
 		return err
 	}
 
-	err = t.ExchangeDeclarePassive(ctx, name, pool.ExchangeKindTopic)
+	err = t.ExchangeDeclarePassive(ctx, name, types.ExchangeKindTopic)
 	if err != nil {
 		return fmt.Errorf("exchange %s was not found even tho it should exist: %w", name, err)
 	}
@@ -143,7 +144,7 @@ func createExchange(ctx context.Context, name string, t *pool.Topologer, log log
 func deleteExchange(ctx context.Context, name string, t *pool.Topologer, log logging.Logger) (err error) {
 	log.Infof("topology: deleting exchange: %s", name)
 
-	err = t.ExchangeDeclarePassive(ctx, name, pool.ExchangeKindTopic)
+	err = t.ExchangeDeclarePassive(ctx, name, types.ExchangeKindTopic)
 	if err != nil {
 		return fmt.Errorf("exchange %s was not found even tho it should exist: %w", name, err)
 	}
@@ -153,8 +154,8 @@ func deleteExchange(ctx context.Context, name string, t *pool.Topologer, log log
 		return err
 	}
 
-	err = t.ExchangeDeclarePassive(ctx, name, pool.ExchangeKindTopic)
-	if !errors.Is(err, pool.ErrNotFound) {
+	err = t.ExchangeDeclarePassive(ctx, name, types.ExchangeKindTopic)
+	if !errors.Is(err, types.ErrNotFound) {
 		return fmt.Errorf("exchange %s was found even tho it should not exist: %w", name, err)
 	}
 	return nil

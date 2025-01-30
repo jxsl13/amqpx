@@ -1,4 +1,4 @@
-package pool
+package types
 
 import (
 	"context"
@@ -17,7 +17,6 @@ type sessionOption struct {
 	RecoverCallback                     SessionRetryCallback
 	PublishRetryCallback                SessionRetryCallback
 	GetRetryCallback                    SessionRetryCallback
-	ConsumeRetryCallback                SessionRetryCallback
 	ConsumeContextRetryCallback         SessionRetryCallback
 	ExchangeDeclareRetryCallback        SessionRetryCallback
 	ExchangeDeclarePassiveRetryCallback SessionRetryCallback
@@ -95,7 +94,6 @@ func SessionWithRetryCallback(callback SessionRetryCallback) SessionOption {
 		so.RecoverCallback = callback
 		so.PublishRetryCallback = callback
 		so.GetRetryCallback = callback
-		so.ConsumeRetryCallback = callback
 		so.ConsumeContextRetryCallback = callback
 		so.ExchangeDeclareRetryCallback = callback
 		so.ExchangeDeclarePassiveRetryCallback = callback
@@ -137,15 +135,6 @@ func SessionWithPublishRetryCallback(callback SessionRetryCallback) SessionOptio
 func SessionWithGetRetryCallback(callback SessionRetryCallback) SessionOption {
 	return func(so *sessionOption) {
 		so.GetRetryCallback = callback
-	}
-}
-
-// SessionWithConsumeRetryCallback allows to set a custom consume retry callback.
-// The callback should not interact with anything that may lead to any kind of errors.
-// It should preferrably delegate its work to a separate goroutine.
-func SessionWithConsumeRetryCallback(callback SessionRetryCallback) SessionOption {
-	return func(so *sessionOption) {
-		so.ConsumeRetryCallback = callback
 	}
 }
 

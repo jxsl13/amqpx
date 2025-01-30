@@ -4,6 +4,8 @@ import (
 	"context"
 	"sync"
 	"time"
+
+	"github.com/jxsl13/amqpx/types"
 )
 
 const (
@@ -27,7 +29,7 @@ func NewBatchHandler(queue string, hf BatchHandlerFunc, options ...BatchHandlerO
 		maxBatchSize:  defaultMaxBatchSize,
 		maxBatchBytes: 0, // unlimited by default
 		flushTimeout:  defaultFlushTimeout,
-		consumeOpts: ConsumeOptions{
+		consumeOpts: types.ConsumeOptions{
 			ConsumerTag: "",
 			AutoAck:     false,
 			Exclusive:   false,
@@ -49,7 +51,7 @@ type BatchHandler struct {
 	mu          sync.RWMutex
 	queue       string
 	handlerFunc BatchHandlerFunc
-	consumeOpts ConsumeOptions
+	consumeOpts types.ConsumeOptions
 
 	// When <= 0, will be set to 50
 	// Number of messages a batch may contain at most
@@ -73,7 +75,7 @@ type BatchHandler struct {
 // BatchHandlerConfig is a read only snapshot of the current handler's configuration.
 type BatchHandlerConfig struct {
 	Queue string
-	ConsumeOptions
+	types.ConsumeOptions
 
 	HandlerFunc BatchHandlerFunc
 
@@ -193,13 +195,13 @@ func (h *BatchHandler) SetHandlerFunc(hf BatchHandlerFunc) {
 	h.handlerFunc = hf
 }
 
-func (h *BatchHandler) ConsumeOptions() ConsumeOptions {
+func (h *BatchHandler) ConsumeOptions() types.ConsumeOptions {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	return h.consumeOpts
 }
 
-func (h *BatchHandler) SetConsumeOptions(consumeOpts ConsumeOptions) {
+func (h *BatchHandler) SetConsumeOptions(consumeOpts types.ConsumeOptions) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	WithBatchConsumeOptions(consumeOpts)(h)

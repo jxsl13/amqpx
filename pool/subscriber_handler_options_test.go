@@ -4,13 +4,14 @@ import (
 	"context"
 	"testing"
 
+	"github.com/jxsl13/amqpx/types"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestWithMaxBatchSize(t *testing.T) {
 	t.Parallel()
 
-	dummyHandler := func(context.Context, []Delivery) error { return nil }
+	dummyHandler := func(context.Context, []types.Delivery) error { return nil }
 	bh := NewBatchHandler("test", dummyHandler, WithMaxBatchSize(0), WithMaxBatchBytes(0))
 
 	assert.Equal(t, defaultMaxBatchSize, bh.MaxBatchSize())

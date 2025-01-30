@@ -1,4 +1,4 @@
-package pool_test
+package proxyutils
 
 import (
 	"sync"

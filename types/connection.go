@@ -1,4 +1,4 @@
-package pool
+package types
 
 import (
 	"context"
@@ -10,6 +10,9 @@ import (
 
 	"net/url"
 
+	"github.com/jxsl13/amqpx/internal/contextutils"
+	"github.com/jxsl13/amqpx/internal/errorutils"
+	"github.com/jxsl13/amqpx/internal/timerutils"
 	"github.com/jxsl13/amqpx/logging"
 	amqp "github.com/rabbitmq/amqp091-go"
 )
@@ -65,7 +68,7 @@ func NewConnection(ctx context.Context, connectUrl, name string, options ...Conn
 		Cached:            false,
 		HeartbeatInterval: 15 * time.Second,
 		ConnectionTimeout: 30 * time.Second,
-		BackoffPolicy:     newDefaultBackoffPolicy(time.Second, 15*time.Second),
+		BackoffPolicy:     NewBackoffPolicy(time.Second, 15*time.Second),
 		Ctx:               ctx,
 		RecoverCallback:   nil,
 	}
@@ -87,7 +90,7 @@ func NewConnection(ctx context.Context, connectUrl, name string, options ...Conn
 	// we derive a new context from the parent one in order to
 	// be able to close it without affecting the parent
 	cCtx, cc := context.WithCancelCause(option.Ctx)
-	cancel := toCancelFunc(fmt.Errorf("connection %w", ErrClosed), cc)
+	cancel := contextutils.ToCancelFunc(fmt.Errorf("connection %w", ErrClosed), cc)
 
 	conn := &Connection{
 		url:     u.String(),
@@ -127,7 +130,7 @@ func NewConnection(ctx context.Context, connectUrl, name string, options ...Conn
 		// continue
 	}
 
-	if !recoverable(err) {
+	if !errorutils.Recoverable(err) {
 		return nil, err
 	}
 
@@ -172,7 +175,7 @@ func (ch *Connection) Flag(err error) {
 	ch.mu.Lock()
 	defer ch.mu.Unlock()
 
-	flagged := err != nil && recoverable(err)
+	flagged := err != nil && errorutils.Recoverable(err)
 
 	if !ch.flagged && flagged {
 		ch.flagged = flagged
@@ -316,7 +319,7 @@ func (ch *Connection) recover(ctx context.Context) (err error) {
 		timer   = time.NewTimer(0)
 		drained = false
 	)
-	defer closeTimer(timer, &drained)
+	defer timerutils.CloseTimer(timer, &drained)
 
 	ch.info("recovering")
 	for try := 0; ; try++ {
@@ -337,7 +340,7 @@ func (ch *Connection) recover(ctx context.Context) (err error) {
 		default:
 
 			// context cancelation is not handle din the recoverable function
-			if !recoverable(err) {
+			if !errorutils.Recoverable(err) {
 				return err
 			}
 
@@ -349,7 +352,7 @@ func (ch *Connection) recover(ctx context.Context) (err error) {
 		}
 
 		// reset to exponential backoff
-		resetTimer(timer, ch.errorBackoff(try), &drained)
+		timerutils.ResetTimer(timer, ch.errorBackoff(try), &drained)
 
 		select {
 		case <-ch.catchShutdown():

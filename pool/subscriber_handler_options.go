@@ -1,6 +1,10 @@
 package pool
 
-import "time"
+import (
+	"time"
+
+	"github.com/jxsl13/amqpx/types"
+)
 
 type BatchHandlerOption func(*BatchHandler)
 
@@ -55,7 +59,7 @@ func WithBatchFlushTimeout(d time.Duration) BatchHandlerOption {
 	}
 }
 
-func WithBatchConsumeOptions(opts ConsumeOptions) BatchHandlerOption {
+func WithBatchConsumeOptions(opts types.ConsumeOptions) BatchHandlerOption {
 	return func(bh *BatchHandler) {
 		bh.consumeOpts = opts
 	}
