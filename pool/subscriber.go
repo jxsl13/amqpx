@@ -448,52 +448,6 @@ func (s *Subscriber) batchConsume(h *BatchHandler) (err error) {
 		batch      = make([]types.Delivery, 0, max(1, opts.MaxBatchSize))
 		batchBytes = 0
 	)
-	defer func() {
-		adj := "partial"
-		batchLen := len(batch)
-		if batchLen == opts.MaxBatchSize {
-			adj = "full"
-		}
-
-		if errors.Is(err, types.ErrClosed) {
-			// requeue all not yet processed messages in batch slice
-			// we can only nack these messages in case the session has not been closed
-			// Its does not make sense to use session.Nack at this point because in case that the sessison dies
-			// the delivery tags also die with it.
-			// There is no way to recover form this state in case an error is returned from the Nack call.
-			reqErr := s.requeueBatch(opts, session, batch, batchBytes)
-			if reqErr != nil {
-				s.errorBatchHandler(
-					opts,
-					fmt.Errorf("failed to requeue %s batch with %d messages upon shutdown: %w", adj, batchLen, reqErr),
-				)
-			} else {
-				s.infofBatchHandler(
-					opts,
-					"requeued %s batch with %d messages upon shutdown",
-					adj,
-					batchLen,
-				)
-			}
-
-		} else if errors.Is(err, types.ErrDeliveryClosed) && isContextClosed(h.pausing()) {
-			reqErr := s.requeueBatch(opts, session, batch, batchBytes)
-			if reqErr != nil {
-				s.errorBatchHandler(
-					opts,
-					fmt.Errorf("failed to requeue %s batch with %d messages upon pausing: %w", adj, batchLen, reqErr),
-				)
-			} else {
-				s.infofBatchHandler(
-					opts,
-					"requeued %s batch with %d messages upon pausing",
-					adj,
-					batchLen,
-				)
-			}
-		}
-
-	}()
 
 	var (
 		timer   = time.NewTimer(opts.FlushTimeout)
@@ -515,10 +469,58 @@ func (s *Subscriber) batchConsume(h *BatchHandler) (err error) {
 
 			select {
 			case <-s.catchShutdown():
-				return s.shutdownErr()
+
+				// shutdown handling
+				err := s.shutdownErr()
+				batchLen := len(batch)
+
+				if batchLen == 0 {
+					// nothing to do, batch is empty
+					return err
+				}
+
+				adj := batchAdjective(batchLen, opts.MaxBatchSize, batchBytes, opts.MaxBatchBytes)
+				// requeue all not yet processed messages in batch slice
+				// we can only nack these messages in case the session has not been closed
+				// Its does not make sense to use session.Nack at this point because in case that the sessison dies
+				// the delivery tags also die with it.
+				// There is no way to recover form this state in case an error is returned from the Nack call.
+				reqErr := s.requeueBatch(opts, session, batch, batchBytes)
+				if reqErr != nil {
+					s.errorBatchHandler(opts, fmt.Errorf("failed to requeue %s batch with %d message(s) upon shutdown: %w", adj, batchLen, reqErr))
+				} else {
+					s.infofBatchHandler(opts, "requeued %s batch with %d message(s) upon shutdown", adj, batchLen)
+				}
+
+				return err
 			case msg, ok := <-delivery:
 				if !ok {
-					return types.ErrDeliveryClosed
+					// network error or explicit pausing of the consumer
+					var (
+						err      = types.ErrDeliveryClosed
+						batchLen = len(batch)
+					)
+					if batchLen == 0 {
+						// nothing to do, batch is empty
+						return err
+					}
+
+					if !isContextClosed(h.pausing()) {
+						// unexpected reason for delivery being closed
+						// most likely network issues that break the connection
+						return err
+					}
+
+					// requeue uprocessed messages in batch slice
+					adj := batchAdjective(batchLen, opts.MaxBatchSize, batchBytes, opts.MaxBatchBytes)
+					reqErr := s.requeueBatch(opts, session, batch, batchBytes)
+					if reqErr != nil {
+						s.errorBatchHandler(opts, fmt.Errorf("failed to requeue %s batch with %d message(s) upon pausing: %w", adj, batchLen, reqErr))
+					} else {
+						s.infofBatchHandler(opts, "requeued %s batch with %d message(s) upon pausing", adj, batchLen)
+					}
+
+					return err
 				}
 
 				batchBytes += len(msg.Body)
@@ -554,9 +556,9 @@ func (s *Subscriber) batchConsume(h *BatchHandler) (err error) {
 		)
 
 		if batchSize < opts.MaxBatchSize && batchBytes < opts.MaxBatchBytes {
-			s.infofBatchHandler(opts, "processing partial batch with %d messages and %d bytes", batchSize, batchBytes)
+			s.infofBatchHandler(opts, "processing partial batch with %d message(s) and %d bytes", batchSize, batchBytes)
 		} else {
-			s.infofBatchHandler(opts, "processing batch with %d messages and %d bytes", batchSize, batchBytes)
+			s.infofBatchHandler(opts, "processing batch with %d message(s) and %d bytes", batchSize, batchBytes)
 		}
 
 		err = opts.HandlerFunc(h.pausing(), batch)
@@ -564,22 +566,26 @@ func (s *Subscriber) batchConsume(h *BatchHandler) (err error) {
 			// no acks required
 			if err != nil {
 				// we cannot really do anything to recover from a processing error in this case
-				s.errorBatchHandler(
-					opts,
-					fmt.Errorf("processing failed: dropping batch: %w", err),
-				)
+				s.errorBatchHandler(opts, fmt.Errorf("processing failed: dropping batch: %w", err))
 			} else {
-				s.debugfBatchHandler(opts, "processed batch with %d messages and %d bytes", batchSize, batchBytes)
+				s.debugfBatchHandler(opts, "processed batch with %d message(s) and %d bytes", batchSize, batchBytes)
 			}
 		} else {
 			poolErr := s.batchPostProcessing(opts, session, batch, batchBytes, err)
 			if poolErr != nil {
-				batch = batch[:0] // reset batch because in thise case it is already n/acked
+				// at this point we cannot requeue anything, because the connection died
 				return poolErr
 			}
-			s.debugfBatchHandler(opts, "processed batch with %d messages and %d bytes", batchSize, batchBytes)
+			s.debugfBatchHandler(opts, "processed batch with %d message(s) and %d bytes", batchSize, batchBytes)
 		}
 	}
+}
+
+func batchAdjective(batchSize, maxBatchSize, batchBytes, maxBatchBytes int) string {
+	if batchSize < maxBatchSize && batchBytes < maxBatchBytes {
+		return "partial"
+	}
+	return "full"
 }
 
 func (s *Subscriber) ackBatch(opts BatchHandlerConfig, session *types.Session, batch []types.Delivery) (err error) {
@@ -657,16 +663,16 @@ func (s *Subscriber) nackBatch(opts BatchHandlerConfig, session *types.Session, 
 	err = session.Nack(lastDeliveryTag, true, requeue)
 	if err != nil {
 		if requeue {
-			return fmt.Errorf("failed to requeue partial batch with %d messages and %d bytes: %w", batchSize, bytes, err)
+			return fmt.Errorf("failed to requeue partial batch with %d message(s) and %d bytes: %w", batchSize, bytes, err)
 		} else {
-			return fmt.Errorf("failed to reject partial batch with %d messages and %d bytes: %w", batchSize, bytes, err)
+			return fmt.Errorf("failed to reject partial batch with %d message(s) and %d bytes: %w", batchSize, bytes, err)
 		}
 	}
 
 	if requeue {
-		s.infofBatchHandler(opts, "requeued partial batch with %d messages and %d bytes", batchSize, bytes)
+		s.infofBatchHandler(opts, "requeued partial batch with %d message(s) and %d bytes", batchSize, bytes)
 	} else {
-		s.infofBatchHandler(opts, "rejected partial batch with %d messages and %d bytes", batchSize, bytes)
+		s.infofBatchHandler(opts, "rejected partial batch with %d message(s) and %d bytes", batchSize, bytes)
 	}
 	return nil
 }
@@ -807,12 +813,6 @@ func (s *Subscriber) debugConsumer(consumer string, a ...any) {
 	s.log.WithFields(withConsumerIfSet(consumer, map[string]any{
 		"subscriber": s.pool.Name(),
 	})).Debug(a...)
-}
-
-func (s *Subscriber) debugfConsumer(consumer string, format string, a ...any) {
-	s.log.WithFields(withConsumerIfSet(consumer, map[string]any{
-		"subscriber": s.pool.Name(),
-	})).Debugf(format, a...)
 }
 
 func (s *Subscriber) warnConsumer(consumer string, err error, a ...any) {

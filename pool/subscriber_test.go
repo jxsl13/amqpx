@@ -620,11 +620,11 @@ all:
 				batch = append(batch, &d)
 				batchCounter++
 				if batchCounter >= batchSize {
-					log.Infof("Batch is full with %d messages", len(batch))
+					log.Infof("Batch is full with %d message(s)", len(batch))
 					break collect
 				}
 			case <-c:
-				log.Infof("Batch timeout with %d messages", len(batch))
+				log.Infof("Batch timeout with %d message(s)", len(batch))
 				break collect
 			case <-chDone:
 				break all
