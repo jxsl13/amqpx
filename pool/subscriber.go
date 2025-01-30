@@ -11,6 +11,7 @@ import (
 	"github.com/jxsl13/amqpx/internal/timerutils"
 	"github.com/jxsl13/amqpx/logging"
 	"github.com/jxsl13/amqpx/types"
+	"github.com/rabbitmq/amqp091-go"
 )
 
 type Subscriber struct {
@@ -328,7 +329,7 @@ func (s *Subscriber) consume(h *Handler) (err error) {
 			}
 
 			s.infoHandler(opts.ConsumerTag, msg.Exchange, msg.RoutingKey, opts.Queue, "received message")
-			err = opts.HandlerFunc(h.pausing(), types.NewDeliveryFromAMQP091(msg))
+			err = opts.HandlerFunc(h.pausing(), newDeliveryFromAMQP091(msg))
 			if opts.AutoAck {
 				if err != nil {
 					// we cannot really do anything to recover from a processing error in this case
@@ -521,7 +522,7 @@ func (s *Subscriber) batchConsume(h *BatchHandler) (err error) {
 				}
 
 				batchBytes += len(msg.Body)
-				batch = append(batch, types.NewDeliveryFromAMQP091(msg))
+				batch = append(batch, newDeliveryFromAMQP091(msg))
 				if opts.MaxBatchSize > 0 && len(batch) == opts.MaxBatchSize {
 					break collectBatch
 				}
@@ -846,4 +847,29 @@ func (s *Subscriber) error(consumer, queue string, err error, a ...any) {
 		"queue":      queue,
 		"error":      err,
 	})).Error(a...)
+}
+
+func newDeliveryFromAMQP091(delivery amqp091.Delivery) types.Delivery {
+	return types.Delivery{
+		Headers:         types.Table(delivery.Headers),
+		ContentType:     delivery.ContentType,
+		ContentEncoding: delivery.ContentEncoding,
+		DeliveryMode:    delivery.DeliveryMode,
+		Priority:        delivery.Priority,
+		CorrelationId:   delivery.CorrelationId,
+		ReplyTo:         delivery.ReplyTo,
+		Expiration:      delivery.Expiration,
+		MessageId:       delivery.MessageId,
+		Timestamp:       delivery.Timestamp,
+		Type:            delivery.Type,
+		UserId:          delivery.UserId,
+		AppId:           delivery.AppId,
+		ConsumerTag:     delivery.ConsumerTag,
+		MessageCount:    delivery.MessageCount,
+		DeliveryTag:     delivery.DeliveryTag,
+		Redelivered:     delivery.Redelivered,
+		Exchange:        delivery.Exchange,
+		RoutingKey:      delivery.RoutingKey,
+		Body:            delivery.Body,
+	}
 }
