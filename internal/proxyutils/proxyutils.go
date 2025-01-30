@@ -128,7 +128,7 @@ func DisconnectWithStopped(t *testing.T, proxyName string, block, timeout, durat
 	}
 
 	return func() {
-		proxy.Close()
+		_ = proxy.Close()
 		wg.Wait()
 	}
 }
@@ -178,7 +178,7 @@ func DisconnectWithStartedStopped(t *testing.T, proxyName string, block, startIn
 	return func() {
 			wgStart.Wait()
 		}, func() {
-			proxy.Close()
+			_ = proxy.Close()
 			wgStop.Wait()
 		}
 }
@@ -241,7 +241,7 @@ func DisconnectWithStartStartedStopped(t *testing.T, proxyName string, duration 
 	}
 
 	awaitStopped = func() {
-		proxy.Close()
+		_ = proxy.Close()
 		wgStop.Wait()
 	}
 
