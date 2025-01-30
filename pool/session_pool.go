@@ -30,7 +30,6 @@ type SessionPool struct {
 	RecoverCallback                     types.SessionRetryCallback
 	PublishRetryCallback                types.SessionRetryCallback
 	GetRetryCallback                    types.SessionRetryCallback
-	ConsumeRetryCallback                types.SessionRetryCallback
 	ConsumeContextRetryCallback         types.SessionRetryCallback
 	ExchangeDeclareRetryCallback        types.SessionRetryCallback
 	ExchangeDeclarePassiveRetryCallback types.SessionRetryCallback
@@ -92,7 +91,6 @@ func newSessionPoolFromOption(pool *ConnectionPool, ctx context.Context, option 
 		RecoverCallback:                     option.RecoverCallback,
 		PublishRetryCallback:                option.PublishRetryCallback,
 		GetRetryCallback:                    option.GetRetryCallback,
-		ConsumeRetryCallback:                option.ConsumeRetryCallback,
 		ConsumeContextRetryCallback:         option.ConsumeContextRetryCallback,
 		ExchangeDeclareRetryCallback:        option.ExchangeDeclareRetryCallback,
 		ExchangeDeclarePassiveRetryCallback: option.ExchangeDeclarePassiveRetryCallback,
@@ -241,7 +239,6 @@ func (sp *SessionPool) deriveSession(ctx context.Context, conn *types.Connection
 		types.SessionWithRecoverCallback(sp.RecoverCallback),
 		types.SessionWithPublishRetryCallback(sp.PublishRetryCallback),
 		types.SessionWithGetRetryCallback(sp.GetRetryCallback),
-		types.SessionWithConsumeRetryCallback(sp.ConsumeRetryCallback),
 		types.SessionWithConsumeContextRetryCallback(sp.ConsumeContextRetryCallback),
 		types.SessionWithExchangeDeclareRetryCallback(sp.ExchangeDeclareRetryCallback),
 		types.SessionWithExchangeDeclarePassiveRetryCallback(sp.ExchangeDeclarePassiveRetryCallback),

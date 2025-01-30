@@ -16,7 +16,6 @@ type sessionPoolOption struct {
 	RecoverCallback                     types.SessionRetryCallback
 	PublishRetryCallback                types.SessionRetryCallback
 	GetRetryCallback                    types.SessionRetryCallback
-	ConsumeRetryCallback                types.SessionRetryCallback
 	ConsumeContextRetryCallback         types.SessionRetryCallback
 	ExchangeDeclareRetryCallback        types.SessionRetryCallback
 	ExchangeDeclarePassiveRetryCallback types.SessionRetryCallback
@@ -76,7 +75,6 @@ func SessionPoolWithRetryCallback(callback types.SessionRetryCallback) SessionPo
 		po.RecoverCallback = callback
 		po.PublishRetryCallback = callback
 		po.GetRetryCallback = callback
-		po.ConsumeRetryCallback = callback
 		po.ConsumeContextRetryCallback = callback
 		po.ExchangeDeclareRetryCallback = callback
 		po.ExchangeDeclarePassiveRetryCallback = callback
@@ -112,13 +110,6 @@ func SessionPoolWithPublishRetryCallback(callback types.SessionRetryCallback) Se
 func SessionPoolWithGetRetryCallback(callback types.SessionRetryCallback) SessionPoolOption {
 	return func(po *sessionPoolOption) {
 		po.GetRetryCallback = callback
-	}
-}
-
-// SessionPoolWithConsumeRetryCallback allows to set a custom consume retry callback for the session pool.
-func SessionPoolWithConsumeRetryCallback(callback types.SessionRetryCallback) SessionPoolOption {
-	return func(po *sessionPoolOption) {
-		po.ConsumeRetryCallback = callback
 	}
 }
 

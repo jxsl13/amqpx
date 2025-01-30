@@ -119,13 +119,6 @@ func WithSessionGetRetryCallback(callback types.SessionRetryCallback) Option {
 	}
 }
 
-// WithSessionConsumeRetryCallback allows to set a custom retry callback for the session pool.
-func WithSessionConsumeRetryCallback(callback types.SessionRetryCallback) Option {
-	return func(po *poolOption) {
-		SessionPoolWithConsumeRetryCallback(callback)(&po.spo)
-	}
-}
-
 // WithSessionConsumeContextRetryCallback allows to set a custom retry callback for the session pool.
 func WithSessionConsumeContextRetryCallback(callback types.SessionRetryCallback) Option {
 	return func(po *poolOption) {

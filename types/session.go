@@ -44,7 +44,6 @@ type Session struct {
 	recoverCB                     sessionRetryCallback
 	publishRetryCB                sessionRetryCallback
 	getRetryCB                    sessionRetryCallback
-	consumeRetryCB                sessionRetryCallback
 	consumeContextRetryCB         sessionRetryCallback
 	exchangeDeclareRetryCB        sessionRetryCallback
 	exchangeDeclarePassiveRetryCB sessionRetryCallback
@@ -123,8 +122,7 @@ func NewSession(conn *Connection, name string, options ...SessionOption) (*Sessi
 		recoverCB:                     newSessionRetryCallback("recover", option.RecoverCallback),
 		publishRetryCB:                newSessionRetryCallback("publish", option.PublishRetryCallback),
 		getRetryCB:                    newSessionRetryCallback("get", option.GetRetryCallback),
-		consumeRetryCB:                newSessionRetryCallback("consume", option.ConsumeRetryCallback),
-		consumeContextRetryCB:         newSessionRetryCallback("consume_context", option.ConsumeContextRetryCallback),
+		consumeContextRetryCB:         newSessionRetryCallback("consume", option.ConsumeContextRetryCallback),
 		exchangeDeclareRetryCB:        newSessionRetryCallback("exchange_declare", option.ExchangeDeclareRetryCallback),
 		exchangeDeclarePassiveRetryCB: newSessionRetryCallback("exchange_declare_passive", option.ExchangeDeclarePassiveRetryCallback),
 		exchangeDeleteRetryCB:         newSessionRetryCallback("exchange_delete", option.ExchangeDeleteRetryCallback),
@@ -532,7 +530,28 @@ func (s *Session) Get(ctx context.Context, queue string, autoAck bool) (msg Deli
 		return Delivery{}, false, err
 	}
 
-	return NewDeliveryFromAMQP091(intermediaryMsg), ok, nil
+	return Delivery{
+		Headers:         Table(intermediaryMsg.Headers),
+		ContentType:     intermediaryMsg.ContentType,
+		ContentEncoding: intermediaryMsg.ContentEncoding,
+		DeliveryMode:    intermediaryMsg.DeliveryMode,
+		Priority:        intermediaryMsg.Priority,
+		CorrelationId:   intermediaryMsg.CorrelationId,
+		ReplyTo:         intermediaryMsg.ReplyTo,
+		Expiration:      intermediaryMsg.Expiration,
+		MessageId:       intermediaryMsg.MessageId,
+		Timestamp:       intermediaryMsg.Timestamp,
+		Type:            intermediaryMsg.Type,
+		UserId:          intermediaryMsg.UserId,
+		AppId:           intermediaryMsg.AppId,
+		ConsumerTag:     intermediaryMsg.ConsumerTag,
+		MessageCount:    intermediaryMsg.MessageCount,
+		DeliveryTag:     intermediaryMsg.DeliveryTag,
+		Redelivered:     intermediaryMsg.Redelivered,
+		Exchange:        intermediaryMsg.Exchange,
+		RoutingKey:      intermediaryMsg.RoutingKey,
+		Body:            intermediaryMsg.Body,
+	}, ok, nil
 }
 
 // Nack rejects the message.

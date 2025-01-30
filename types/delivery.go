@@ -2,8 +2,6 @@ package types
 
 import (
 	"time"
-
-	"github.com/rabbitmq/amqp091-go"
 )
 
 /*
@@ -42,32 +40,6 @@ Channel.Get.
 		Body []byte
 	}
 */
-
-func NewDeliveryFromAMQP091(delivery amqp091.Delivery) Delivery {
-	return Delivery{
-		Headers:         Table(delivery.Headers),
-		ContentType:     delivery.ContentType,
-		ContentEncoding: delivery.ContentEncoding,
-		DeliveryMode:    delivery.DeliveryMode,
-		Priority:        delivery.Priority,
-		CorrelationId:   delivery.CorrelationId,
-		ReplyTo:         delivery.ReplyTo,
-		Expiration:      delivery.Expiration,
-		MessageId:       delivery.MessageId,
-		Timestamp:       delivery.Timestamp,
-		Type:            delivery.Type,
-		UserId:          delivery.UserId,
-		AppId:           delivery.AppId,
-		ConsumerTag:     delivery.ConsumerTag,
-		MessageCount:    delivery.MessageCount,
-		DeliveryTag:     delivery.DeliveryTag,
-		Redelivered:     delivery.Redelivered,
-		Exchange:        delivery.Exchange,
-		RoutingKey:      delivery.RoutingKey,
-		Body:            delivery.Body,
-	}
-}
-
 type Delivery struct {
 	// Contains exactly the same fields as amqp091.Delivery except for the Acknowledger field
 
