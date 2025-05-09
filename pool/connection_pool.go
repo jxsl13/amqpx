@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/url"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/jxsl13/amqpx/internal/contextutils"
@@ -39,7 +40,7 @@ type ConnectionPool struct {
 
 	mu                  sync.Mutex
 	transientID         uint64
-	concurrentTransient int
+	concurrentTransient int64
 }
 
 // NewConnectionPool creates a new connection pool which has a maximum size it
@@ -206,6 +207,8 @@ func (cp *ConnectionPool) nextTransientID() uint64 {
 // GetTransientConnection may return an error when the context was cancelled before the connection could be obtained.
 // Transient connections may be returned to the pool. The are closed properly upon returning.
 func (cp *ConnectionPool) GetTransientConnection(ctx context.Context) (conn *types.Connection, err error) {
+	atomic.AddInt64(&cp.concurrentTransient, 1)
+
 	conn, err = cp.deriveConnection(ctx, cp.nextTransientID(), false)
 	if err == nil {
 		return conn, nil
@@ -240,6 +243,7 @@ func (cp *ConnectionPool) ReturnConnection(conn *types.Connection, err error) {
 		if cerr != nil {
 			cp.warnf("failed to close returned transient connection: %v", cerr)
 		}
+		atomic.AddInt64(&cp.concurrentTransient, -1)
 		return
 	}
 	conn.Flag(err)
@@ -279,10 +283,8 @@ func (cp *ConnectionPool) Close() {
 }
 
 // StatTransientActive returns the number of active transient connections.
-func (cp *ConnectionPool) StatTransientActive() int {
-	cp.mu.Lock()
-	defer cp.mu.Unlock()
-	return cp.concurrentTransient
+func (cp *ConnectionPool) StatTransientActive() int64 {
+	return atomic.LoadInt64(&cp.concurrentTransient)
 }
 
 // StatCachedActive returns the number of active cached connections.
