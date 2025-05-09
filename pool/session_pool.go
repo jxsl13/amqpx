@@ -190,15 +190,15 @@ func (sp *SessionPool) ForceGetSession(ctx context.Context) (s *types.Session, e
 				sp.ReturnSession(session, err)
 			}
 		}()
-
+		sp.slog().Debug(fmt.Sprintf("using session from session pool: %s", session.Name()))
 		err := session.Recover(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("failed to recover session pool session: %w", err)
 		}
 		return session, nil
 	default:
+		sp.slog().Debug("session pool is empty, creating transient session")
 		return sp.GetTransientSession(ctx)
-
 	}
 }
 
