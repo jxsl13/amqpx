@@ -94,13 +94,14 @@ func (p *Publisher) Publish(ctx context.Context, exchange string, routingKey str
 func (p *Publisher) publish(ctx context.Context, exchange string, routingKey string, msg types.Publishing) (err error) {
 	defer func() {
 		if err != nil {
+			err = fmt.Errorf("publish failed: %w", err)
 			p.warn(exchange, routingKey, err, "failed to publish message")
 		} else {
 			p.info(exchange, routingKey, "published a message")
 		}
 	}()
 
-	s, err := p.pool.GetSession(ctx)
+	s, err := p.pool.ForceGetSession(ctx)
 	if err != nil {
 		return err
 	}

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/url"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/jxsl13/amqpx/internal/contextutils"
@@ -38,8 +39,8 @@ type ConnectionPool struct {
 	connections chan *types.Connection
 
 	mu                  sync.Mutex
-	transientID         int64
-	concurrentTransient int
+	transientID         uint64
+	concurrentTransient int64
 }
 
 // NewConnectionPool creates a new connection pool which has a maximum size it
@@ -124,7 +125,7 @@ func newConnectionPoolFromOption(connectUrl string, option connectionPoolOption)
 }
 
 func (cp *ConnectionPool) initCachedConns() error {
-	for id := int64(0); id < int64(cp.capacity); id++ {
+	for id := uint64(0); id < uint64(cp.capacity); id++ {
 		conn, err := cp.deriveConnection(cp.ctx, id, true)
 		if err != nil {
 			return fmt.Errorf("%w: %v", ErrPoolInitializationFailed, err)
@@ -143,7 +144,7 @@ func (cp *ConnectionPool) initCachedConns() error {
 	return nil
 }
 
-func (cp *ConnectionPool) deriveConnection(ctx context.Context, id int64, cached bool) (*types.Connection, error) {
+func (cp *ConnectionPool) deriveConnection(ctx context.Context, id uint64, cached bool) (*types.Connection, error) {
 	var name string
 	if cached {
 		name = fmt.Sprintf("%s-cached-connection-%d", cp.name, id)
@@ -162,6 +163,12 @@ func (cp *ConnectionPool) deriveConnection(ctx context.Context, id int64, cached
 
 // GetConnection only returns an error upon shutdown
 func (cp *ConnectionPool) GetConnection(ctx context.Context) (conn *types.Connection, err error) {
+	defer func() {
+		if err != nil {
+			err = fmt.Errorf("failed to get connection from connection pool: %w", err)
+		}
+	}()
+
 	select {
 	case conn, ok := <-cp.connections:
 		if !ok {
@@ -179,7 +186,7 @@ func (cp *ConnectionPool) GetConnection(ctx context.Context) (conn *types.Connec
 
 		err = conn.Recover(ctx)
 		if err != nil {
-			return nil, fmt.Errorf("failed to get connection: %w", err)
+			return nil, fmt.Errorf("failed to recover connection: %w", err)
 		}
 
 		return conn, nil
@@ -190,7 +197,7 @@ func (cp *ConnectionPool) GetConnection(ctx context.Context) (conn *types.Connec
 	}
 }
 
-func (cp *ConnectionPool) nextTransientID() int64 {
+func (cp *ConnectionPool) nextTransientID() uint64 {
 	cp.mu.Lock()
 	defer cp.mu.Unlock()
 	cp.transientID++
@@ -200,13 +207,18 @@ func (cp *ConnectionPool) nextTransientID() int64 {
 // GetTransientConnection may return an error when the context was cancelled before the connection could be obtained.
 // Transient connections may be returned to the pool. The are closed properly upon returning.
 func (cp *ConnectionPool) GetTransientConnection(ctx context.Context) (conn *types.Connection, err error) {
+	atomic.AddInt64(&cp.concurrentTransient, 1)
+
 	conn, err = cp.deriveConnection(ctx, cp.nextTransientID(), false)
 	if err == nil {
 		return conn, nil
 	}
 	defer func() {
 		if err != nil {
-			_ = conn.Close()
+			cerr := conn.Close()
+			if cerr != nil {
+				cp.warnf("failed to close transient connection: %v", cerr)
+			}
 		}
 	}()
 
@@ -227,7 +239,11 @@ func (cp *ConnectionPool) GetTransientConnection(ctx context.Context) (conn *typ
 func (cp *ConnectionPool) ReturnConnection(conn *types.Connection, err error) {
 	// close transient connections
 	if !conn.IsCached() {
-		_ = conn.Close()
+		cerr := conn.Close()
+		if cerr != nil {
+			cp.warnf("failed to close returned transient connection: %v", cerr)
+		}
+		atomic.AddInt64(&cp.concurrentTransient, -1)
 		return
 	}
 	conn.Flag(err)
@@ -256,7 +272,10 @@ func (cp *ConnectionPool) Close() {
 		go func() {
 			defer wg.Done()
 			conn := <-cp.connections
-			_ = conn.Close()
+			cerr := conn.Close()
+			if cerr != nil {
+				cp.error(cerr, "failed to close connection")
+			}
 		}()
 	}
 
@@ -264,10 +283,8 @@ func (cp *ConnectionPool) Close() {
 }
 
 // StatTransientActive returns the number of active transient connections.
-func (cp *ConnectionPool) StatTransientActive() int {
-	cp.mu.Lock()
-	defer cp.mu.Unlock()
-	return cp.concurrentTransient
+func (cp *ConnectionPool) StatTransientActive() int64 {
+	return atomic.LoadInt64(&cp.concurrentTransient)
 }
 
 // StatCachedActive returns the number of active cached connections.
@@ -304,4 +321,8 @@ func (cp *ConnectionPool) error(err error, a ...any) {
 
 func (cp *ConnectionPool) debug(a ...any) {
 	cp.log.WithField("connection_pool", cp.name).Debug(a...)
+}
+
+func (cp *ConnectionPool) warnf(format string, a ...any) {
+	cp.log.WithField("connection_pool", cp.name).Warnf(format, a...)
 }

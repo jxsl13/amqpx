@@ -251,7 +251,10 @@ func (s *Session) connect() (err error) {
 		return ErrClosed
 	}
 
-	_ = s.close() // close any open rabbitmq channel & cleanup Go channels
+	cerr := s.close() // close any open rabbitmq channel & cleanup Go channels
+	if cerr != nil {
+		s.warnf(cerr, "failed to close session before recreating it")
+	}
 
 	channel, err := s.conn.channel()
 	if err != nil {
@@ -321,7 +324,10 @@ func (s *Session) recover(ctx context.Context) error {
 
 	// necessary for cleanup and to cleanup potentially dangling open sessions
 	// already ran into a bug, where recovery spawned infinitely many channels.
-	_ = s.close()
+	cerr := s.close()
+	if cerr != nil {
+		s.warnf(cerr, "failed to close session before recovering it")
+	}
 
 	// tries to recover session forever
 	for try := 0; ; try++ {
