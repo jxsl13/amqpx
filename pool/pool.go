@@ -73,16 +73,32 @@ func (p *Pool) Close() {
 	p.cp.Close()
 }
 
+// ForceGetSession returns a new session from the pool, only returns an error upon shutdown or context cancelation.
+// In case that there are no sessions in the session pool, a transient session is created and returned.
+// A transient underlying connection is opened and closed when the session is closed.
+// You can return (close) the session by returning it back to the pool with [ReturnSession(Session, error)].
+func (p *Pool) ForceGetSession(ctx context.Context) (*types.Session, error) {
+	return p.sp.ForceGetSession(ctx)
+}
+
 // GetSession returns a new session from the pool, only returns an error upon shutdown.
 func (p *Pool) GetSession(ctx context.Context) (*types.Session, error) {
-	return p.sp.GetSession(ctx)
+	s, err := p.sp.GetSession(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get cached pool session: %w", err)
+	}
+	return s, nil
 }
 
 // GetTransientSession returns a new session which is decoupled from anyshutdown mechanism, thus
 // requiring a context for timeout handling.
 // The session does also use a transient connection which is closed when the transient session is closed.
 func (p *Pool) GetTransientSession(ctx context.Context) (*types.Session, error) {
-	return p.sp.GetTransientSession(ctx)
+	s, err := p.sp.GetTransientSession(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get transient pool session: %w", err)
+	}
+	return s, nil
 }
 
 // ReturnSession returns a Session back to the pool.

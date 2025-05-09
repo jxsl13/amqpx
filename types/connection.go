@@ -202,7 +202,10 @@ func (ch *Connection) connect(ctx context.Context) error {
 	// not closed, close before reconnecting
 	if !ch.isClosed() {
 		// ignore errors
-		_ = ch.conn.Close()
+		cerr := ch.conn.Close()
+		if cerr != nil {
+			ch.warn(cerr, "failed to close connection before reconnecting")
+		}
 	}
 
 	ch.debug("connecting...")
