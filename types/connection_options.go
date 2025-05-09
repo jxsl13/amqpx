@@ -23,7 +23,9 @@ type ConnectionOption func(*connectionOption)
 // ConnectionWithLogger allows to set a logger. By default no logger is set.
 func ConnectionWithLogger(logger *slog.Logger) ConnectionOption {
 	return func(co *connectionOption) {
-		co.Logger = logger
+		if logger != nil {
+			co.Logger = logger
+		}
 	}
 }
 

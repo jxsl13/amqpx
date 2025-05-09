@@ -38,7 +38,9 @@ type SessionPoolOption func(*sessionPoolOption)
 // SessionPoolWithLogger allows to set a custom logger
 func SessionPoolWithLogger(logger *slog.Logger) SessionPoolOption {
 	return func(po *sessionPoolOption) {
-		po.Logger = logger
+		if logger != nil {
+			po.Logger = logger
+		}
 	}
 }
 

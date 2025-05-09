@@ -80,7 +80,7 @@ func main() {
     _ = amqpx.Start(
         ctx,
         amqpx.NewURL("localhost", 5672, "admin", "password"), // or amqp://username@password:localhost:5672
-        amqpx.WithLogger(slog.New(slog.DiscardHandler)),            // provide a logger that implements the *slog.Logger interface
+        amqpx.WithLogger(slog.New(slog.DiscardHandler)),      // provide a *slog.Logger
     )
     defer amqpx.Close()
 
@@ -161,7 +161,7 @@ func main() {
     _ = amqpx.Start(
         ctx,
         amqpx.NewURL("localhost", 5672, "admin", "password"), // or amqp://username@password:localhost:5672
-        amqpx.WithLogger(slog.New(slog.DiscardHandler)),            // provide a logger that implements the *slog.Logger interface (logrus adapter is provided)
+        amqpx.WithLogger(slog.New(slog.DiscardHandler)),      // provide a *slog.Logger
     )
     defer amqpx.Close()
 

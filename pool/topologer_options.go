@@ -15,7 +15,9 @@ type TopologerOption func(*topologerOption)
 
 func TopologerWithLogger(logger *slog.Logger) TopologerOption {
 	return func(co *topologerOption) {
-		co.Logger = logger
+		if logger != nil {
+			co.Logger = logger
+		}
 	}
 }
 

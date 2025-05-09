@@ -32,7 +32,9 @@ func WithName(name string) Option {
 // WithLogger allows to set a custom logger for the connection AND session pool
 func WithLogger(logger *slog.Logger) Option {
 	return func(o *option) {
-		o.PoolOptions = append(o.PoolOptions, pool.WithLogger(logger))
+		if logger != nil {
+			o.PoolOptions = append(o.PoolOptions, pool.WithLogger(logger))
+		}
 	}
 }
 

@@ -22,7 +22,9 @@ func SubscriberWithContext(ctx context.Context) SubscriberOption {
 
 func SubscriberWithLogger(logger *slog.Logger) SubscriberOption {
 	return func(co *subscriberOption) {
-		co.Logger = logger
+		if logger != nil {
+			co.Logger = logger
+		}
 	}
 }
 
