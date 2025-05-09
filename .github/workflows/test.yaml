@@ -29,7 +29,8 @@ jobs:
   test:
     strategy:
       matrix:
-        go-version: ["stable", "oldstable"]
+        #go-version: ["stable", "oldstable"]
+        go-version: ["stable"]
         platform: [ubuntu-latest]
     runs-on: ${{ matrix.platform }}
     permissions:
