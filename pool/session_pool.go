@@ -107,7 +107,7 @@ func newSessionPoolFromOption(pool *ConnectionPool, ctx context.Context, option 
 		FlowRetryCallback:                   option.FlowRetryCallback,
 	}
 
-	log := sp.slog()
+	log := sessionPool.slog()
 	log.Debug("initializing pool sessions...")
 	defer func() {
 		if err != nil {
