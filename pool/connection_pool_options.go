@@ -3,13 +3,13 @@ package pool
 import (
 	"context"
 	"crypto/tls"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime/debug"
 	"strings"
 	"time"
 
-	"github.com/jxsl13/amqpx/logging"
 	"github.com/jxsl13/amqpx/types"
 )
 
@@ -23,7 +23,7 @@ type connectionPoolOption struct {
 	ConnTimeout           time.Duration
 	TLSConfig             *tls.Config
 
-	Logger logging.Logger
+	Logger *slog.Logger
 
 	ConnectionRecoverCallback types.ConnectionRecoverCallback
 }
@@ -48,9 +48,11 @@ func defaultAppName() string {
 }
 
 // ConnectionPoolWithLogger allows to set a custom logger.
-func ConnectionPoolWithLogger(logger logging.Logger) ConnectionPoolOption {
+func ConnectionPoolWithLogger(logger *slog.Logger) ConnectionPoolOption {
 	return func(po *connectionPoolOption) {
-		po.Logger = logger
+		if logger == nil {
+			po.Logger = logger
+		}
 	}
 }
 

@@ -3,13 +3,12 @@ package types
 import (
 	"context"
 	"crypto/tls"
+	"log/slog"
 	"time"
-
-	"github.com/jxsl13/amqpx/logging"
 )
 
 type connectionOption struct {
-	Logger            logging.Logger
+	Logger            *slog.Logger
 	Cached            bool
 	HeartbeatInterval time.Duration
 	ConnectionTimeout time.Duration
@@ -22,9 +21,11 @@ type connectionOption struct {
 type ConnectionOption func(*connectionOption)
 
 // ConnectionWithLogger allows to set a logger. By default no logger is set.
-func ConnectionWithLogger(logger logging.Logger) ConnectionOption {
+func ConnectionWithLogger(logger *slog.Logger) ConnectionOption {
 	return func(co *connectionOption) {
-		co.Logger = logger
+		if logger != nil {
+			co.Logger = logger
+		}
 	}
 }
 

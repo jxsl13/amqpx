@@ -2,12 +2,13 @@ package amqputils
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/jxsl13/amqpx/internal/testlogger"
 	"github.com/jxsl13/amqpx/internal/testutils"
-	"github.com/jxsl13/amqpx/logging"
 	"github.com/jxsl13/amqpx/pool"
 	"github.com/jxsl13/amqpx/types"
 	"github.com/stretchr/testify/assert"
@@ -23,7 +24,7 @@ func SubscriberConsumeN(
 	n int,
 	allowDuplicates bool,
 ) {
-	var log = logging.NewTestLogger(t)
+	var log = testlogger.NewTestLogger(t)
 
 	processingTime := 30 * time.Millisecond
 	cctx, ccancel := context.WithTimeout(ctx, 30*time.Second+time.Duration((2+1)*n)*processingTime)
@@ -52,7 +53,7 @@ func SubscriberConsumeN(
 		if allowDuplicates && receivedMsg == previouslyReceivedMsg {
 			// INFO: it is possible that messages are duplicated, but this is not a problem
 			// due to network issues. We should not fail the test in this case.
-			log.Warnf("received duplicate message: %s", receivedMsg)
+			log.Warn(fmt.Sprintf("received duplicate message: %s", receivedMsg))
 			return nil
 		}
 
@@ -67,10 +68,10 @@ func SubscriberConsumeN(
 			previouslyReceivedMsg,
 		)
 
-		log.Infof("consumed message: %s", receivedMsg)
+		log.Info(fmt.Sprintf("consumed message: %s", receivedMsg))
 		msgsReceived++
 		if msgsReceived == n {
-			logging.NewTestLogger(t).Infof("consumed %d messages, closing consumer", n)
+			log.Info(fmt.Sprintf("consumed %d messages, closing consumer", n))
 			ccancel()
 		}
 		// update last received message
@@ -118,7 +119,7 @@ func SubscriberBatchConsumeN(
 	maxBytes int,
 	allowDuplicates bool,
 ) {
-	var log = logging.NewTestLogger(t)
+	var log = testlogger.NewTestLogger(t)
 	processingTime := 30 * time.Millisecond
 	cctx, ccancel := context.WithTimeout(ctx, 30*time.Second+time.Duration((2+1)*n)*processingTime)
 	defer ccancel()
@@ -147,7 +148,7 @@ func SubscriberBatchConsumeN(
 			if allowDuplicates && receivedMsg == previouslyReceivedMsg {
 				// INFO: it is possible that messages are duplicated, but this is not a problem
 				// due to network issues. We should not fail the test in this case.
-				log.Warnf("received duplicate message: %s", receivedMsg)
+				log.Warn(fmt.Sprintf("received duplicate message: %s", receivedMsg))
 				continue
 			}
 
@@ -162,10 +163,10 @@ func SubscriberBatchConsumeN(
 				previouslyReceivedMsg,
 			)
 
-			log.Infof("consumed message: %s", receivedMsg)
+			log.Info(fmt.Sprintf("consumed message: %s", receivedMsg))
 			msgsReceived++
 			if msgsReceived == n {
-				logging.NewTestLogger(t).Infof("consumed %d messages, closing consumer", n)
+				log.Info(fmt.Sprintf("consumed %d messages, closing consumer", n))
 				ccancel()
 			}
 			// update last received message

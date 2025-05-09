@@ -4,12 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
 	"github.com/jxsl13/amqpx/internal/contextutils"
 	"github.com/jxsl13/amqpx/internal/errorutils"
-	"github.com/jxsl13/amqpx/logging"
 	"github.com/rabbitmq/amqp091-go"
 )
 
@@ -39,7 +39,7 @@ type Session struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	log logging.Logger
+	log *slog.Logger
 
 	recoverCB                     sessionRetryCallback
 	publishRetryCB                sessionRetryCallback
@@ -172,30 +172,32 @@ func (s *Session) IsFlagged() bool {
 func (s *Session) Close() (err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	log := s.slog()
 
-	s.debug("closing session...")
+	log.Debug("closing session...")
 	defer func() {
 		if err != nil {
-			s.warn(err, "closed")
+			log.Warn(fmt.Sprintf("failed to close session: %s", err.Error()))
 		} else {
-			s.info("closed")
+			log.Info("closed")
 		}
 	}()
 
 	if s.autoCloseConn {
 		defer func() {
-			s.debug("closing session connection...")
+			log.Debug("closing session connection...")
 			err = errors.Join(err, s.conn.Close())
 		}()
 	}
-	s.debug("closing session context...")
+	log.Debug("closing session context...")
 	s.cancel()
 	return s.close()
 }
 
 func (s *Session) close() (err error) {
+	log := s.slog()
 	defer func() {
-		s.debug("flushing channels...")
+		log.Debug("flushing channels...")
 		flush(s.errors)
 		flush(s.confirms)
 		flush(s.returned)
@@ -210,7 +212,7 @@ func (s *Session) close() (err error) {
 	}
 
 	if len(s.consumers) > 0 {
-		s.debug("canceling consumers...")
+		log.Debug("canceling consumers...")
 		for consumer := range s.consumers {
 			// ignore error, as at this point we cannot do anything about the error
 			// tell server to cancel consumer deliveries.
@@ -219,7 +221,7 @@ func (s *Session) close() (err error) {
 		}
 	}
 
-	s.debug("closing amqp channel...")
+	log.Debug("closing amqp channel...")
 	return s.channel.Close()
 }
 
@@ -235,14 +237,15 @@ func (s *Session) Connect() (err error) {
 }
 
 func (s *Session) connect() (err error) {
-	s.debug("opening session...")
+	log := s.slog()
+	log.Debug("opening session...")
 	defer func() {
 		// reset state in case of an error
 		if err != nil {
 			err = errors.Join(err, s.close())
-			s.warn(err, "failed to open session")
+			log.Error(fmt.Sprintf("failed to open session: %s", err.Error()))
 		} else {
-			s.info("opened session")
+			log.Info("opened session")
 		}
 	}()
 
@@ -253,7 +256,7 @@ func (s *Session) connect() (err error) {
 
 	cerr := s.close() // close any open rabbitmq channel & cleanup Go channels
 	if cerr != nil {
-		s.warnf(cerr, "failed to close session before recreating it")
+		log.Error(fmt.Sprintf("failed to close session before recreating it: %s", cerr.Error()))
 	}
 
 	channel, err := s.conn.channel()
@@ -320,13 +323,14 @@ func (s *Session) recover(ctx context.Context) error {
 	if err == nil {
 		return nil
 	}
-	s.warnf(err, "recovering session due to error: %v", err)
+	log := s.slog()
+	log.Warn(fmt.Sprintf("recovering session due to error: %s", err.Error()))
 
 	// necessary for cleanup and to cleanup potentially dangling open sessions
 	// already ran into a bug, where recovery spawned infinitely many channels.
 	cerr := s.close()
 	if cerr != nil {
-		s.warnf(cerr, "failed to close session before recovering it")
+		log.Error(fmt.Sprintf("failed to close session before recovering it: %s", cerr.Error()))
 	}
 
 	// tries to recover session forever
@@ -1431,27 +1435,11 @@ func (s *Session) shutdownErr() error {
 	return s.ctx.Err()
 }
 
-func (s *Session) slog() logging.Logger {
-	return s.log.WithFields(logging.Fields{
-		"connection": s.conn.Name(),
-		"session":    s.name,
-	})
-}
-
-func (s *Session) info(a ...any) {
-	s.slog().Info(a...)
-}
-
-func (s *Session) warn(err error, a ...any) {
-	s.slog().WithError(err).Warn(a...)
-}
-
-func (s *Session) warnf(err error, format string, a ...any) {
-	s.slog().WithError(err).Warnf(format, a...)
-}
-
-func (s *Session) debug(a ...any) {
-	s.slog().Debug(a...)
+func (s *Session) slog() *slog.Logger {
+	return s.log.With(
+		slog.String("connection", s.conn.Name()),
+		slog.String("session", s.name),
+	)
 }
 
 // Flush confirms channel

@@ -2,13 +2,14 @@ package pool_test
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/jxsl13/amqpx/internal/proxyutils"
+	"github.com/jxsl13/amqpx/internal/testlogger"
 	"github.com/jxsl13/amqpx/internal/testutils"
-	"github.com/jxsl13/amqpx/logging"
 	"github.com/jxsl13/amqpx/pool"
 	"github.com/stretchr/testify/assert"
 )
@@ -25,7 +26,7 @@ func TestNewSingleConnectionPool(t *testing.T) {
 		testutils.HealthyConnectURL,
 		connections,
 		pool.ConnectionPoolWithName(poolName),
-		pool.ConnectionPoolWithLogger(logging.NewTestLogger(t)),
+		pool.ConnectionPoolWithLogger(testlogger.NewTestLogger(t)),
 	)
 	if err != nil {
 		assert.NoError(t, err)
@@ -60,7 +61,7 @@ func TestNewConnectionPool(t *testing.T) {
 		testutils.HealthyConnectURL,
 		connections,
 		pool.ConnectionPoolWithName(poolName),
-		pool.ConnectionPoolWithLogger(logging.NewTestLogger(t)),
+		pool.ConnectionPoolWithLogger(testlogger.NewTestLogger(t)),
 	)
 	if err != nil {
 		assert.NoError(t, err)
@@ -99,7 +100,7 @@ func TestNewConnectionPoolWithDisconnect(t *testing.T) {
 
 	var (
 		ctx                      = context.TODO()
-		log                      = logging.NewTestLogger(t)
+		log                      = testlogger.NewTestLogger(t)
 		poolName                 = testutils.FuncName()
 		proxyName, connectURL, _ = testutils.NextConnectURL()
 	)
@@ -110,9 +111,9 @@ func TestNewConnectionPoolWithDisconnect(t *testing.T) {
 		connectURL,
 		connections,
 		pool.ConnectionPoolWithName(poolName),
-		pool.ConnectionPoolWithLogger(logging.NewTestLogger(t)),
+		pool.ConnectionPoolWithLogger(testlogger.NewTestLogger(t)),
 		pool.ConnectionPoolWithRecoverCallback(func(name string, retry int, err error) {
-			log.Warnf("recovering connection %s, attempt %d, error: %v", name, retry, err)
+			log.Warn(fmt.Sprintf("recovering connection %s, attempt %d, error: %v", name, retry, err))
 		}),
 	)
 	if err != nil {

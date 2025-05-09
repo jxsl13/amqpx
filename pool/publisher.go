@@ -4,12 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/jxsl13/amqpx/internal/contextutils"
 	"github.com/jxsl13/amqpx/internal/errorutils"
 	"github.com/jxsl13/amqpx/internal/timerutils"
-	"github.com/jxsl13/amqpx/logging"
 	"github.com/jxsl13/amqpx/types"
 )
 
@@ -21,12 +21,13 @@ type Publisher struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	log logging.Logger
+	log *slog.Logger
 }
 
 func (p *Publisher) Close() {
-	p.debugSimple("closing publisher...")
-	defer p.infoSimple("closed")
+	log := p.splog()
+	log.Debug("closing publisher...")
+	defer log.Info("publisher closed")
 
 	p.cancel()
 
@@ -66,13 +67,16 @@ func NewPublisher(p *Pool, options ...PublisherOption) *Publisher {
 		log: option.Logger,
 	}
 
-	pub.infoSimple("publisher initialized")
+	pub.splog().Info("publisher initialized")
 	return pub
 }
 
 // Publish a message to a specific exchange with a given routingKey.
 // You may set exchange to "" and routingKey to your queue name in order to publish directly to a queue.
 func (p *Publisher) Publish(ctx context.Context, exchange string, routingKey string, msg types.Publishing) error {
+	// does not change throughout the function
+	log := p.eplog(exchange, routingKey)
+
 	return p.retry(ctx, func() (cont bool, err error) {
 		err = p.publish(ctx, exchange, routingKey, msg)
 		switch {
@@ -85,7 +89,7 @@ func (p *Publisher) Publish(ctx context.Context, exchange string, routingKey str
 			return false, err
 		default:
 			// ErrDeliveryTagMismatch + all other unknown errors
-			p.warn(exchange, routingKey, err, "publish failed due to recoverable error, retrying")
+			log.Warn(fmt.Sprintf("publish failed due to recoverable error, retrying: %s", err.Error()))
 			return true, nil
 		}
 	})
@@ -93,11 +97,11 @@ func (p *Publisher) Publish(ctx context.Context, exchange string, routingKey str
 
 func (p *Publisher) publish(ctx context.Context, exchange string, routingKey string, msg types.Publishing) (err error) {
 	defer func() {
+		log := p.eplog(exchange, routingKey)
 		if err != nil {
-			err = fmt.Errorf("publish failed: %w", err)
-			p.warn(exchange, routingKey, err, "failed to publish message")
+			log.Error(fmt.Sprintf("failed to publish message: %s", err.Error()))
 		} else {
-			p.info(exchange, routingKey, "published a message")
+			log.Info("published a message")
 		}
 	}()
 
@@ -179,31 +183,16 @@ func (p *Publisher) Get(ctx context.Context, queue string, autoAck bool) (msg ty
 	return s.Get(ctx, queue, autoAck)
 }
 
-func (p *Publisher) info(exchange, routingKey string, a ...any) {
-	p.log.WithFields(map[string]any{
-		"publisher":   p.pool.Name(),
-		"exchange":    exchange,
-		"routing_key": routingKey,
-	}).Info(a...)
+func (p *Publisher) eplog(exchange, routingKey string) *slog.Logger {
+	return p.log.With(
+		slog.String("publisher", p.pool.Name()),
+		slog.String("exchange", exchange),
+		slog.String("routing_key", routingKey),
+	)
 }
 
-func (p *Publisher) warn(exchange, routingKey string, err error, a ...any) {
-	p.log.WithFields(map[string]any{
-		"publisher":   p.pool.Name(),
-		"exchange":    exchange,
-		"routing_key": routingKey,
-		"error":       err,
-	}).Warn(a...)
-}
-
-func (p *Publisher) infoSimple(a ...any) {
-	p.log.WithFields(map[string]any{
-		"publisher": p.pool.Name(),
-	}).Info(a...)
-}
-
-func (p *Publisher) debugSimple(a ...any) {
-	p.log.WithFields(map[string]any{
-		"publisher": p.pool.Name(),
-	}).Debug(a...)
+func (p *Publisher) splog() *slog.Logger {
+	return p.log.With(
+		slog.String("publisher", p.pool.Name()),
+	)
 }

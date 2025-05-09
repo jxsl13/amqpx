@@ -4,15 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 
 	"github.com/jxsl13/amqpx"
 	"github.com/jxsl13/amqpx/internal/testutils"
-	"github.com/jxsl13/amqpx/logging"
 	"github.com/jxsl13/amqpx/pool"
 	"github.com/jxsl13/amqpx/types"
 )
 
-func declareExchangeQueue(ctx context.Context, eq testutils.ExchangeQueue, t *pool.Topologer, log logging.Logger) (err error) {
+func declareExchangeQueue(ctx context.Context, eq testutils.ExchangeQueue, t *pool.Topologer, log *slog.Logger) (err error) {
 	err = createExchange(ctx, eq.Exchange, t, log)
 	if err != nil {
 		return err
@@ -30,7 +30,7 @@ func declareExchangeQueue(ctx context.Context, eq testutils.ExchangeQueue, t *po
 	return nil
 }
 
-func deleteExchangeQueue(ctx context.Context, eq testutils.ExchangeQueue, t *pool.Topologer, log logging.Logger) (err error) {
+func deleteExchangeQueue(ctx context.Context, eq testutils.ExchangeQueue, t *pool.Topologer, log *slog.Logger) (err error) {
 	err = unbindQueue(ctx, eq.Queue, eq.Exchange, eq.RoutingKey, t, log)
 	if err != nil {
 		return err
@@ -48,7 +48,7 @@ func deleteExchangeQueue(ctx context.Context, eq testutils.ExchangeQueue, t *poo
 	return nil
 }
 
-func createTopology(log logging.Logger, eqs ...testutils.ExchangeQueue) amqpx.TopologyFunc {
+func createTopology(log *slog.Logger, eqs ...testutils.ExchangeQueue) amqpx.TopologyFunc {
 	return func(ctx context.Context, t *pool.Topologer) (err error) {
 		// documentation: https://www.cloudamqp.com/blog/part4-rabbitmq-for-beginners-exchanges-routing-keys-bindings.html#:~:text=The%20routing%20key%20is%20a%20message%20attribute%20added%20to%20the,routing%20key%20of%20the%20message.
 
@@ -62,7 +62,7 @@ func createTopology(log logging.Logger, eqs ...testutils.ExchangeQueue) amqpx.To
 	}
 }
 
-func deleteTopology(log logging.Logger, eqs ...testutils.ExchangeQueue) amqpx.TopologyFunc {
+func deleteTopology(log *slog.Logger, eqs ...testutils.ExchangeQueue) amqpx.TopologyFunc {
 	return func(ctx context.Context, t *pool.Topologer) (err error) {
 
 		for _, eq := range eqs {
@@ -75,8 +75,8 @@ func deleteTopology(log logging.Logger, eqs ...testutils.ExchangeQueue) amqpx.To
 	}
 }
 
-func createQueue(ctx context.Context, name string, t *pool.Topologer, log logging.Logger) (err error) {
-	log.Infof("topology: creating queue: %s", name)
+func createQueue(ctx context.Context, name string, t *pool.Topologer, log *slog.Logger) (err error) {
+	log.Info(fmt.Sprintf("topology: creating queue: %s", name))
 
 	_, err = t.QueueDeclarePassive(ctx, name)
 	if !errors.Is(err, types.ErrNotFound) {
@@ -98,8 +98,8 @@ func createQueue(ctx context.Context, name string, t *pool.Topologer, log loggin
 	return nil
 }
 
-func deleteQueue(ctx context.Context, name string, t *pool.Topologer, log logging.Logger) (err error) {
-	log.Infof("topology: deleting queue: %s", name)
+func deleteQueue(ctx context.Context, name string, t *pool.Topologer, log *slog.Logger) (err error) {
+	log.Info(fmt.Sprintf("topology: deleting queue: %s", name))
 
 	_, err = t.QueueDeclarePassive(ctx, name)
 	if err != nil {
@@ -118,8 +118,8 @@ func deleteQueue(ctx context.Context, name string, t *pool.Topologer, log loggin
 	return nil
 }
 
-func createExchange(ctx context.Context, name string, t *pool.Topologer, log logging.Logger) (err error) {
-	log.Infof("topology: creating exchange: %s", name)
+func createExchange(ctx context.Context, name string, t *pool.Topologer, log *slog.Logger) (err error) {
+	log.Info(fmt.Sprintf("topology: creating exchange: %s", name))
 
 	err = t.ExchangeDeclarePassive(ctx, name, types.ExchangeKindTopic)
 	if !errors.Is(err, types.ErrNotFound) {
@@ -141,8 +141,8 @@ func createExchange(ctx context.Context, name string, t *pool.Topologer, log log
 	return nil
 }
 
-func deleteExchange(ctx context.Context, name string, t *pool.Topologer, log logging.Logger) (err error) {
-	log.Infof("topology: deleting exchange: %s", name)
+func deleteExchange(ctx context.Context, name string, t *pool.Topologer, log *slog.Logger) (err error) {
+	log.Info(fmt.Sprintf("topology: deleting exchange: %s", name))
 
 	err = t.ExchangeDeclarePassive(ctx, name, types.ExchangeKindTopic)
 	if err != nil {
@@ -161,8 +161,8 @@ func deleteExchange(ctx context.Context, name string, t *pool.Topologer, log log
 	return nil
 }
 
-func bindQueue(ctx context.Context, queue, exchange, routingKey string, t *pool.Topologer, log logging.Logger) (err error) {
-	log.Infof("topology: binding queue %s to exchange %s with routing key: %s", queue, exchange, routingKey)
+func bindQueue(ctx context.Context, queue, exchange, routingKey string, t *pool.Topologer, log *slog.Logger) (err error) {
+	log.Info(fmt.Sprintf("topology: binding queue %s to exchange %s with routing key: %s", queue, exchange, routingKey))
 	err = t.QueueBind(ctx, queue, routingKey, exchange)
 	if err != nil {
 		return err
@@ -170,8 +170,8 @@ func bindQueue(ctx context.Context, queue, exchange, routingKey string, t *pool.
 	return nil
 }
 
-func unbindQueue(ctx context.Context, queue, exchange, routingKey string, t *pool.Topologer, log logging.Logger) (err error) {
-	log.Infof("topology: unbinding queue %s from exchange %s with routing key: %s", queue, exchange, routingKey)
+func unbindQueue(ctx context.Context, queue, exchange, routingKey string, t *pool.Topologer, log *slog.Logger) (err error) {
+	log.Info(fmt.Sprintf("topology: unbinding queue %s from exchange %s with routing key: %s", queue, exchange, routingKey))
 	err = t.QueueUnbind(ctx, queue, routingKey, exchange)
 	if err != nil {
 		return err

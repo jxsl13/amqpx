@@ -2,10 +2,11 @@ package amqputils
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"testing"
 
-	"github.com/jxsl13/amqpx/logging"
+	"github.com/jxsl13/amqpx/internal/testlogger"
 	"github.com/jxsl13/amqpx/types"
 	"github.com/stretchr/testify/assert"
 )
@@ -32,9 +33,9 @@ func DeclareExchangeQueue(
 	cleanup = func() {}
 	var err error
 
-	log := logging.NewTestLogger(t)
+	log := testlogger.NewTestLogger(t)
 
-	log.Infof("declaring exchange %s", exchangeName)
+	log.Info(fmt.Sprintf("declaring exchange %s", exchangeName))
 	err = s.ExchangeDeclare(ctx, exchangeName, types.ExchangeKindTopic)
 	if err != nil {
 		assert.NoError(t, err, "expected no error when declaring exchange")
@@ -42,12 +43,12 @@ func DeclareExchangeQueue(
 	}
 	defer func() {
 		if err != nil {
-			log.Infof("deleting exchange %s", exchangeName)
+			log.Info(fmt.Sprintf("deleting exchange %s", exchangeName))
 			assert.NoError(t, s.ExchangeDelete(ctx, exchangeName), "expected no error when deleting exchange")
 		}
 	}()
 
-	log.Infof("declaring queue %s", queueName)
+	log.Info(fmt.Sprintf("declaring queue %s", queueName))
 	_, err = s.QueueDeclare(ctx, queueName)
 	if err != nil {
 		assert.NoError(t, err)
@@ -55,7 +56,7 @@ func DeclareExchangeQueue(
 	}
 	defer func() {
 		if err != nil {
-			log.Infof("deleting queue %s", queueName)
+			log.Info(fmt.Sprintf("deleting queue %s", queueName))
 			_, e := s.QueueDelete(ctx, queueName)
 			assert.NoError(t, e, "expected no error when deleting queue")
 			// INFO: asserting the number of purged messages seems to be flaky, so we do not do that for now.
@@ -63,7 +64,7 @@ func DeclareExchangeQueue(
 		}
 	}()
 
-	log.Infof("binding queue %s to exchange %s", queueName, exchangeName)
+	log.Info(fmt.Sprintf("binding queue %s to exchange %s", queueName, exchangeName))
 	err = s.QueueBind(ctx, queueName, "#", exchangeName)
 	if err != nil {
 		assert.NoError(t, err)
@@ -71,7 +72,7 @@ func DeclareExchangeQueue(
 	}
 	defer func() {
 		if err != nil {
-			log.Infof("unbinding queue %s from exchange %s", queueName, exchangeName)
+			log.Info(fmt.Sprintf("unbinding queue %s from exchange %s", queueName, exchangeName))
 			assert.NoError(t, s.QueueUnbind(ctx, queueName, "#", exchangeName, nil))
 		}
 	}()
@@ -79,14 +80,14 @@ func DeclareExchangeQueue(
 	once := sync.Once{}
 	return func() {
 		once.Do(func() {
-			log.Infof("unbinding queue %s from exchange %s", queueName, exchangeName)
+			log.Info(fmt.Sprintf("unbinding queue %s from exchange %s", queueName, exchangeName))
 			assert.NoError(t, s.QueueUnbind(ctx, queueName, "#", exchangeName, nil))
 
-			log.Infof("deleting queue %s", queueName)
+			log.Info(fmt.Sprintf("deleting queue %s", queueName))
 			_, e := s.QueueDelete(ctx, queueName)
 			assert.NoError(t, e)
 
-			log.Infof("deleting exchange %s", exchangeName)
+			log.Info(fmt.Sprintf("deleting exchange %s", exchangeName))
 			assert.NoError(t, s.ExchangeDelete(ctx, exchangeName))
 		})
 	}

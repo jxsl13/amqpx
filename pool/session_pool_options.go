@@ -1,7 +1,8 @@
 package pool
 
 import (
-	"github.com/jxsl13/amqpx/logging"
+	"log/slog"
+
 	"github.com/jxsl13/amqpx/types"
 )
 
@@ -11,7 +12,7 @@ type sessionPoolOption struct {
 	BufferCapacity int  // size of the session internal confirmation and error buffers.
 
 	AutoClosePool bool // whether to close the internal connection pool automatically
-	Logger        logging.Logger
+	Logger        *slog.Logger
 
 	RecoverCallback                     types.SessionRetryCallback
 	PublishRetryCallback                types.SessionRetryCallback
@@ -35,9 +36,11 @@ type sessionPoolOption struct {
 type SessionPoolOption func(*sessionPoolOption)
 
 // SessionPoolWithLogger allows to set a custom logger
-func SessionPoolWithLogger(logger logging.Logger) SessionPoolOption {
+func SessionPoolWithLogger(logger *slog.Logger) SessionPoolOption {
 	return func(po *sessionPoolOption) {
-		po.Logger = logger
+		if logger != nil {
+			po.Logger = logger
+		}
 	}
 }
 

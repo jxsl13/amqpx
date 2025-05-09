@@ -2,8 +2,8 @@ package pool
 
 import (
 	"context"
+	"log/slog"
 
-	"github.com/jxsl13/amqpx/logging"
 	"github.com/jxsl13/amqpx/types"
 )
 
@@ -11,7 +11,7 @@ type Topologer struct {
 	pool *Pool
 
 	transientOnly bool
-	log           logging.Logger
+	log           *slog.Logger
 	ctx           context.Context
 }
 

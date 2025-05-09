@@ -2,14 +2,15 @@ package types_test
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/jxsl13/amqpx/internal/amqputils"
 	"github.com/jxsl13/amqpx/internal/proxyutils"
+	"github.com/jxsl13/amqpx/internal/testlogger"
 	"github.com/jxsl13/amqpx/internal/testutils"
-	"github.com/jxsl13/amqpx/logging"
 	"github.com/jxsl13/amqpx/types"
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/stretchr/testify/assert"
@@ -39,7 +40,7 @@ func TestNewSingleSessionPublishAndConsume(t *testing.T) {
 		ctx,
 		testutils.HealthyConnectURL,
 		connName,
-		types.ConnectionWithLogger(logging.NewTestLogger(t)),
+		types.ConnectionWithLogger(testlogger.NewTestLogger(t)),
 	)
 	if err != nil {
 		assert.NoError(t, err)
@@ -92,7 +93,7 @@ func TestManyNewSessionsPublishAndConsume(t *testing.T) {
 		ctx,
 		testutils.HealthyConnectURL,
 		connName,
-		types.ConnectionWithLogger(logging.NewTestLogger(t)),
+		types.ConnectionWithLogger(testlogger.NewTestLogger(t)),
 	)
 	if err != nil {
 		assert.NoError(t, err)
@@ -155,7 +156,7 @@ func TestNewSessionQueueDeclarePassive(t *testing.T) {
 		ctx,
 		testutils.HealthyConnectURL,
 		connName,
-		types.ConnectionWithLogger(logging.NewTestLogger(t)),
+		types.ConnectionWithLogger(testlogger.NewTestLogger(t)),
 	)
 	if err != nil {
 		assert.NoError(t, err)
@@ -226,7 +227,7 @@ func TestNewSessionExchangeDeclareWithDisconnect(t *testing.T) {
 		ctx,
 		connectURL,
 		connName,
-		types.ConnectionWithLogger(logging.NewTestLogger(t)),
+		types.ConnectionWithLogger(testlogger.NewTestLogger(t)),
 	)
 	if err != nil {
 		assert.NoError(t, err)
@@ -278,7 +279,7 @@ func TestNewSessionExchangeDeleteWithDisconnect(t *testing.T) {
 		ctx,
 		connectURL,
 		connName,
-		types.ConnectionWithLogger(logging.NewTestLogger(t)),
+		types.ConnectionWithLogger(testlogger.NewTestLogger(t)),
 	)
 	if err != nil {
 		assert.NoError(t, err)
@@ -331,7 +332,7 @@ func TestNewSessionQueueDeclareWithDisconnect(t *testing.T) {
 		ctx,
 		connectURL,
 		connName,
-		types.ConnectionWithLogger(logging.NewTestLogger(t)),
+		types.ConnectionWithLogger(testlogger.NewTestLogger(t)),
 	)
 	if err != nil {
 		assert.NoError(t, err, "expected no error when creating new connection")
@@ -386,7 +387,7 @@ func TestNewSessionQueueDeleteWithDisconnect(t *testing.T) {
 		ctx,
 		connectURL,
 		connName,
-		types.ConnectionWithLogger(logging.NewTestLogger(t)),
+		types.ConnectionWithLogger(testlogger.NewTestLogger(t)),
 	)
 	if err != nil {
 		assert.NoError(t, err)
@@ -439,7 +440,7 @@ func TestNewSessionQueueBindWithDisconnect(t *testing.T) {
 		ctx,
 		connectURL,
 		connName,
-		types.ConnectionWithLogger(logging.NewTestLogger(t)),
+		types.ConnectionWithLogger(testlogger.NewTestLogger(t)),
 	)
 	if err != nil {
 		assert.NoError(t, err)
@@ -512,7 +513,7 @@ func TestNewSessionQueueUnbindWithDisconnect(t *testing.T) {
 		ctx,
 		connectURL,
 		connName,
-		types.ConnectionWithLogger(logging.NewTestLogger(t)),
+		types.ConnectionWithLogger(testlogger.NewTestLogger(t)),
 	)
 	if err != nil {
 		assert.NoError(t, err)
@@ -692,7 +693,7 @@ func TestChannelFullChainOnOutOfMemoryRabbitMQ(t *testing.T) {
 
 	var (
 		ctx              = context.TODO()
-		log              = logging.NewTestLogger(t)
+		log              = testlogger.NewTestLogger(t)
 		nextConnName     = testutils.ConnectionNameGenerator()
 		nextSessionName  = testutils.SessionNameGenerator(nextConnName())
 		sessionName      = nextSessionName()
@@ -887,7 +888,7 @@ func TestNewSingleSessionCloseWithDisconnect(t *testing.T) {
 		ctx,
 		connectURL,
 		connName,
-		types.ConnectionWithLogger(logging.NewTestLogger(t)),
+		types.ConnectionWithLogger(testlogger.NewTestLogger(t)),
 	)
 	if err != nil {
 		assert.NoError(t, err)
@@ -923,7 +924,7 @@ func TestNewSingleSessionCloseWithOutOfMemoryRabbitMQ(t *testing.T) {
 	t.Parallel()
 	var (
 		ctx              = context.TODO()
-		log              = logging.NewTestLogger(t)
+		log              = testlogger.NewTestLogger(t)
 		nextConnName     = testutils.ConnectionNameGenerator()
 		connName         = nextConnName()
 		nextSessionName  = testutils.SessionNameGenerator(connName)
@@ -966,7 +967,7 @@ func TestNewSingleSessionCloseWithOutOfMemoryRabbitMQ(t *testing.T) {
 	cleanup := amqputils.DeclareExchangeQueue(t, ctx, s, exchangeName, queueName)
 	defer cleanup()
 
-	log.Infof("publishing message to exchange %s", exchangeName)
+	log.Info(fmt.Sprintf("publishing message to exchange %s", exchangeName))
 	tag, err := s.Publish(ctx, exchangeName, "",
 		types.Publishing{
 			ContentType: "text/plain",
@@ -978,12 +979,12 @@ func TestNewSingleSessionCloseWithOutOfMemoryRabbitMQ(t *testing.T) {
 		return
 	}
 
-	log.Infof("awaiting confirm for tag %d", tag)
+	log.Info(fmt.Sprintf("awaiting confirm for tag %d", tag))
 	err = s.AwaitConfirm(ctx, tag)
 	assert.Error(t, err, "expected a flow control error")
 	cleanup()
 
-	log.Infof("closing session %s", s.Name())
+	log.Info(fmt.Sprintf("closing session %s", s.Name()))
 	err = s.Close()
 	assert.NoError(t, err)
 }
@@ -993,7 +994,7 @@ func TestNewSingleSessionCloseWithHealthyRabbitMQ(t *testing.T) {
 	t.Parallel()
 	var (
 		ctx              = context.TODO()
-		log              = logging.NewTestLogger(t)
+		log              = testlogger.NewTestLogger(t)
 		nextConnName     = testutils.ConnectionNameGenerator()
 		connName         = nextConnName()
 		nextSessionName  = testutils.SessionNameGenerator(connName)
@@ -1036,7 +1037,7 @@ func TestNewSingleSessionCloseWithHealthyRabbitMQ(t *testing.T) {
 	cleanup := amqputils.DeclareExchangeQueue(t, ctx, s, exchangeName, queueName)
 	defer cleanup()
 
-	log.Infof("publishing message to exchange %s", exchangeName)
+	log.Info(fmt.Sprintf("publishing message to exchange %s", exchangeName))
 	tag, err := s.Publish(ctx, exchangeName, "",
 		types.Publishing{
 			ContentType: "text/plain",
@@ -1048,14 +1049,14 @@ func TestNewSingleSessionCloseWithHealthyRabbitMQ(t *testing.T) {
 		return
 	}
 
-	log.Infof("awaiting confirm for tag %d", tag)
+	log.Info(fmt.Sprintf("awaiting confirm for tag %d", tag))
 	err = s.AwaitConfirm(ctx, tag)
-	log.Infof("await confirm failed(as expected): %v", err)
+	log.Info(fmt.Sprintf("await confirm failed(as expected): %v", err))
 	assert.NoError(t, err)
 
 	cleanup()
 
-	log.Infof("closing session %s", s.Name())
+	log.Info(fmt.Sprintf("closing session %s", s.Name()))
 	err = s.Close()
 	assert.NoError(t, err)
 }

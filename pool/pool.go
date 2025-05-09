@@ -3,9 +3,9 @@ package pool
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
-	"github.com/jxsl13/amqpx/logging"
 	"github.com/jxsl13/amqpx/types"
 )
 
@@ -23,7 +23,7 @@ func New(ctx context.Context, connectUrl string, numConns, numSessions int, opti
 		numSessions = numConns
 	}
 
-	logger := logging.NewNoOpLogger()
+	logger := slog.New(slog.DiscardHandler)
 
 	// use sane defaults
 	option := poolOption{

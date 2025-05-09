@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/jxsl13/amqpx/internal/proxyutils"
+	"github.com/jxsl13/amqpx/internal/testlogger"
 	"github.com/jxsl13/amqpx/internal/testutils"
-	"github.com/jxsl13/amqpx/logging"
 	"github.com/jxsl13/amqpx/types"
 	"github.com/stretchr/testify/assert"
 )
@@ -24,7 +24,7 @@ func TestNewSingleConnection(t *testing.T) {
 		ctx,
 		testutils.HealthyConnectURL,
 		nextName(),
-		types.ConnectionWithLogger(logging.NewTestLogger(t)),
+		types.ConnectionWithLogger(testlogger.NewTestLogger(t)),
 	)
 
 	if err != nil {
@@ -54,7 +54,7 @@ func TestManyNewConnection(t *testing.T) {
 				ctx,
 				testutils.HealthyConnectURL,
 				nextName(),
-				types.ConnectionWithLogger(logging.NewTestLogger(t)),
+				types.ConnectionWithLogger(testlogger.NewTestLogger(t)),
 			)
 			if err != nil {
 				assert.NoError(t, err)
@@ -89,7 +89,7 @@ func TestNewSingleConnectionWithDisconnect(t *testing.T) {
 		ctx,
 		connectURL,
 		nextName(),
-		types.ConnectionWithLogger(logging.NewTestLogger(t)),
+		types.ConnectionWithLogger(testlogger.NewTestLogger(t)),
 	)
 	if err != nil {
 		assert.NoError(t, err)
