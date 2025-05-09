@@ -6,7 +6,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/jxsl13/amqpx/logging"
+	"github.com/jxsl13/amqpx/internal/testlogger"
 	"github.com/jxsl13/amqpx/types"
 	"github.com/stretchr/testify/assert"
 )
@@ -30,7 +30,7 @@ func PublishN(
 		err := publish(ctx, p, exchangeName, message)
 		assert.NoError(t, err)
 	}
-	logging.NewTestLogger(t).Infof("published %d messages, closing publisher", n)
+	testlogger.NewTestLogger(t).Info(fmt.Sprintf("published %d messages, closing publisher", n))
 }
 
 func publish(ctx context.Context, p Producer, exchangeName string, message string) error {

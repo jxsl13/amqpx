@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -13,7 +14,6 @@ import (
 	"github.com/jxsl13/amqpx/internal/contextutils"
 	"github.com/jxsl13/amqpx/internal/errorutils"
 	"github.com/jxsl13/amqpx/internal/timerutils"
-	"github.com/jxsl13/amqpx/logging"
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
@@ -54,7 +54,7 @@ type Connection struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	log logging.Logger
+	log *slog.Logger
 
 	recoverCB ConnectionRecoverCallback
 }
@@ -64,7 +64,7 @@ type Connection struct {
 func NewConnection(ctx context.Context, connectUrl, name string, options ...ConnectionOption) (*Connection, error) {
 	// use sane defaults
 	option := connectionOption{
-		Logger:            logging.NewNoOpLogger(),
+		Logger:            slog.New(slog.DiscardHandler),
 		Cached:            false,
 		HeartbeatInterval: 15 * time.Second,
 		ConnectionTimeout: 30 * time.Second,
@@ -147,15 +147,17 @@ func (ch *Connection) Close() (err error) {
 		return nil
 	}
 
+	log := ch.clog()
+
 	ch.mu.Lock()
 	defer ch.mu.Unlock()
 
-	ch.debug("closing...")
+	log.Debug("closing connection...")
 	defer func() {
 		if err != nil {
-			ch.warn(err, "closed")
+			log.Error(fmt.Sprintf("failed to close connection: %s", err.Error()))
 		} else {
-			ch.info("closed")
+			log.Info("closed")
 		}
 	}()
 
@@ -198,17 +200,18 @@ func (ch *Connection) Connect(ctx context.Context) error {
 }
 
 func (ch *Connection) connect(ctx context.Context) error {
+	log := ch.clog()
 
 	// not closed, close before reconnecting
 	if !ch.isClosed() {
 		// ignore errors
-		cerr := ch.conn.Close()
-		if cerr != nil {
-			ch.warn(cerr, "failed to close connection before reconnecting")
+		err := ch.conn.Close()
+		if err != nil {
+			log.Error(fmt.Sprintf("failed to close connection before reconnecting: %s", err.Error()))
 		}
 	}
 
-	ch.debug("connecting...")
+	log.Debug("connecting...")
 	amqpConn, err := amqp.DialConfig(ch.url,
 		amqp.Config{
 			Heartbeat:       ch.heartbeat,
@@ -232,7 +235,7 @@ func (ch *Connection) connect(ctx context.Context) error {
 	ch.conn.NotifyClose(ch.errors)
 	ch.conn.NotifyBlocked(ch.blocking)
 
-	ch.info("connected")
+	log.Info("connected")
 	return nil
 }
 
@@ -321,10 +324,11 @@ func (ch *Connection) recover(ctx context.Context) (err error) {
 	var (
 		timer   = time.NewTimer(0)
 		drained = false
+		log     = ch.clog()
 	)
 	defer timerutils.CloseTimer(timer, &drained)
 
-	ch.info("recovering")
+	log.Info("recovering connection")
 	for try := 0; ; try++ {
 		ch.lastConnLoss = time.Now()
 		err := ch.connect(ctx)
@@ -375,7 +379,7 @@ func (ch *Connection) recover(ctx context.Context) (err error) {
 	// be unflagged via recovery
 	ch.flagged = false
 
-	ch.info("recovered")
+	log.Info("recovered connection")
 	return nil
 }
 
@@ -403,21 +407,9 @@ func (ch *Connection) shutdownErr() error {
 	return ch.ctx.Err()
 }
 
-func (ch *Connection) clog() logging.Logger {
-	return ch.log.WithFields(map[string]any{
-		"connection": ch.name,
-		"address":    ch.addr,
-	})
-}
-
-func (ch *Connection) info(a ...any) {
-	ch.clog().Info(a...)
-}
-
-func (ch *Connection) warn(err error, a ...any) {
-	ch.clog().WithError(err).Warn(a...)
-}
-
-func (ch *Connection) debug(a ...any) {
-	ch.clog().Debug(a...)
+func (ch *Connection) clog() *slog.Logger {
+	return ch.log.With(
+		slog.String("connection", ch.name),
+		slog.String("address", ch.addr),
+	)
 }

@@ -9,8 +9,8 @@ import (
 
 	"github.com/jxsl13/amqpx/internal/amqputils"
 	"github.com/jxsl13/amqpx/internal/proxyutils"
+	"github.com/jxsl13/amqpx/internal/testlogger"
 	"github.com/jxsl13/amqpx/internal/testutils"
-	"github.com/jxsl13/amqpx/logging"
 	"github.com/jxsl13/amqpx/pool"
 	"github.com/jxsl13/amqpx/types"
 	"github.com/stretchr/testify/assert"
@@ -22,7 +22,7 @@ func TestSinglePublisher(t *testing.T) {
 	var (
 		proxyName, connectURL, _ = testutils.NextConnectURL()
 		ctx                      = context.TODO()
-		log                      = logging.NewTestLogger(t)
+		log                      = testlogger.NewTestLogger(t)
 		nextConnName             = testutils.ConnectionNameGenerator()
 		numMsgs                  = 5
 	)
@@ -40,10 +40,10 @@ func TestSinglePublisher(t *testing.T) {
 		connectURL,
 		1,
 		1,
-		pool.WithLogger(logging.NewTestLogger(t)),
+		pool.WithLogger(testlogger.NewTestLogger(t)),
 		pool.WithConfirms(true),
 		pool.WithConnectionRecoverCallback(func(name string, retry int, err error) {
-			log.Warnf("connection %s is broken, retry %d, error: %s", name, retry, err)
+			log.Warn(fmt.Sprintf("connection %s is broken, retry %d, error: %s", name, retry, err))
 		}),
 	)
 	if err != nil {
@@ -126,7 +126,7 @@ func TestPublishAwaitFlowControl(t *testing.T) {
 		testutils.BrokenConnectURL,
 		1,
 		1,
-		pool.WithLogger(logging.NewTestLogger(t)),
+		pool.WithLogger(testlogger.NewTestLogger(t)),
 		pool.WithConfirms(true),
 	)
 	if !assert.NoError(t, err) {

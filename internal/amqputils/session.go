@@ -2,10 +2,11 @@ package amqputils
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
+	"github.com/jxsl13/amqpx/internal/testlogger"
 	"github.com/jxsl13/amqpx/internal/testutils"
-	"github.com/jxsl13/amqpx/logging"
 	"github.com/jxsl13/amqpx/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -13,7 +14,7 @@ import (
 
 func NewSession(t *testing.T, ctx context.Context, connectURL, connectionName string, options ...types.ConnectionOption) (_ *types.Session, cleanup func()) {
 	cleanup = func() {}
-	log := logging.NewTestLogger(t)
+	log := testlogger.NewTestLogger(t)
 	c, err := types.NewConnection(
 		ctx,
 		connectURL,
@@ -32,7 +33,7 @@ func NewSession(t *testing.T, ctx context.Context, connectURL, connectionName st
 		types.SessionWithConfirms(true),
 		types.SessionWithLogger(log),
 		types.SessionWithRetryCallback(func(operation, connName, sessionName string, retry int, err error) {
-			log.Infof("retrying %s on connection %s, session %s, attempt %d, error: %s", operation, connName, sessionName, retry, err)
+			log.Info(fmt.Sprintf("retrying %s on connection %s, session %s, attempt %d, error: %s", operation, connName, sessionName, retry, err))
 		}),
 	)
 	if err != nil {
@@ -40,9 +41,9 @@ func NewSession(t *testing.T, ctx context.Context, connectURL, connectionName st
 		return nil, cleanup
 	}
 	return s, func() {
-		log.Infof("closing session %s", s.Name())
+		log.Info(fmt.Sprintf("closing session %s", s.Name()))
 		assert.NoError(t, s.Close(), "expected no error when closing session")
-		log.Infof("closing connection %s", c.Name())
+		log.Info(fmt.Sprintf("closing connection %s", c.Name()))
 		assert.NoError(t, c.Close(), "expected no error when closing connection")
 	}
 }

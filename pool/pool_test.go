@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jxsl13/amqpx/internal/testlogger"
 	"github.com/jxsl13/amqpx/internal/testutils"
-	"github.com/jxsl13/amqpx/logging"
 	"github.com/jxsl13/amqpx/pool"
 	"github.com/stretchr/testify/assert"
 )
@@ -31,7 +31,7 @@ func TestNewPool(t *testing.T) {
 		connections,
 		sessions,
 		pool.WithName(poolName),
-		pool.WithLogger(logging.NewTestLogger(t)),
+		pool.WithLogger(testlogger.NewTestLogger(t)),
 	)
 	if err != nil {
 		assert.NoError(t, err)

@@ -2,12 +2,11 @@ package types
 
 import (
 	"context"
-
-	"github.com/jxsl13/amqpx/logging"
+	"log/slog"
 )
 
 type sessionOption struct {
-	Logger         logging.Logger
+	Logger         *slog.Logger
 	Cached         bool
 	Confirmable    bool
 	BufferCapacity int
@@ -37,7 +36,7 @@ type SessionOption func(*sessionOption)
 
 // SessionWithLogger allows to set a logger.
 // By default no logger is set.
-func SessionWithLogger(logger logging.Logger) SessionOption {
+func SessionWithLogger(logger *slog.Logger) SessionOption {
 	return func(so *sessionOption) {
 		so.Logger = logger
 	}

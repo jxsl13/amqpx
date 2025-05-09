@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/jxsl13/amqpx/logging"
+	"github.com/jxsl13/amqpx/internal/testlogger"
 	"github.com/jxsl13/amqpx/pool"
 	"github.com/stretchr/testify/assert"
 )
@@ -15,7 +15,7 @@ func NewPool(t *testing.T, ctx context.Context, connectURL, poolName string, num
 		connectURL,
 		numConns,
 		numSessions,
-		pool.WithLogger(logging.NewTestLogger(t)),
+		pool.WithLogger(testlogger.NewTestLogger(t)),
 		pool.WithConfirms(true),
 		pool.WithName(poolName),
 	)

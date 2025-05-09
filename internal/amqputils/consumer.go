@@ -2,10 +2,11 @@ package amqputils
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"testing"
 
-	"github.com/jxsl13/amqpx/logging"
+	"github.com/jxsl13/amqpx/internal/testlogger"
 	"github.com/jxsl13/amqpx/types"
 	"github.com/rabbitmq/amqp091-go"
 	"github.com/stretchr/testify/assert"
@@ -27,7 +28,7 @@ func ConsumeN(
 ) {
 	cctx, ccancel := context.WithCancel(ctx)
 	defer ccancel()
-	log := logging.NewTestLogger(t)
+	log := testlogger.NewTestLogger(t)
 
 	msgsReceived := 0
 	defer func() {
@@ -69,7 +70,7 @@ outer:
 				if allowDuplicates && receivedMsg == previouslyReceivedMsg {
 					// INFO: it is possible that messages are duplicated, but this is not a problem, we allow that
 					// due to network issues. We should not fail the test in this case.
-					log.Warnf("received duplicate message: %s", receivedMsg)
+					log.Warn(fmt.Sprintf("received duplicate message: %s", receivedMsg))
 					continue
 				}
 
@@ -84,10 +85,10 @@ outer:
 					previouslyReceivedMsg,
 				)
 
-				log.Infof("consumed message: %s", receivedMsg)
+				log.Info(fmt.Sprintf("consumed message: %s", receivedMsg))
 				msgsReceived++
 				if msgsReceived == n {
-					logging.NewTestLogger(t).Infof("consumed %d messages, closing consumer", n)
+					log.Info(fmt.Sprintf("consumed %d messages, closing consumer", n))
 					ccancel()
 				}
 				// update last received message

@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jxsl13/amqpx/internal/testlogger"
 	"github.com/jxsl13/amqpx/internal/testutils"
-	"github.com/jxsl13/amqpx/logging"
 	"github.com/jxsl13/amqpx/pool"
 	"github.com/stretchr/testify/assert"
 )
@@ -24,7 +24,7 @@ func TestSingleSessionPool(t *testing.T) {
 		testutils.HealthyConnectURL,
 		connections,
 		pool.ConnectionPoolWithName(poolName),
-		pool.ConnectionPoolWithLogger(logging.NewTestLogger(t)),
+		pool.ConnectionPoolWithLogger(testlogger.NewTestLogger(t)),
 	)
 	if err != nil {
 		assert.NoError(t, err)
@@ -66,7 +66,7 @@ func TestNewSessionPool(t *testing.T) {
 		testutils.HealthyConnectURL,
 		connections,
 		pool.ConnectionPoolWithName(poolName),
-		pool.ConnectionPoolWithLogger(logging.NewTestLogger(t)),
+		pool.ConnectionPoolWithLogger(testlogger.NewTestLogger(t)),
 	)
 	if err != nil {
 		assert.NoError(t, err)

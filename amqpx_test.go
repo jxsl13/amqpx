@@ -3,14 +3,15 @@ package amqpx_test
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/jxsl13/amqpx"
+	"github.com/jxsl13/amqpx/internal/testlogger"
 	"github.com/jxsl13/amqpx/internal/testutils"
-	"github.com/jxsl13/amqpx/logging"
 	"github.com/jxsl13/amqpx/pool"
 	"github.com/jxsl13/amqpx/types"
 	"github.com/stretchr/testify/assert"
@@ -27,7 +28,7 @@ func TestExchangeDeclarePassive(t *testing.T) {
 	var (
 		amqp             = amqpx.New()
 		ctx              = context.TODO()
-		log              = logging.NewTestLogger(t)
+		log              = testlogger.NewTestLogger(t)
 		funcName         = testutils.FuncName()
 		nextExchangeName = testutils.ExchangeNameGenerator(funcName)
 		exchangeName     = nextExchangeName()
@@ -49,7 +50,7 @@ func TestExchangeDeclarePassive(t *testing.T) {
 		ctx,
 		testutils.HealthyConnectURL,
 		amqpx.WithName(funcName),
-		amqpx.WithLogger(logging.NewTestLogger(t)),
+		amqpx.WithLogger(testlogger.NewTestLogger(t)),
 		amqpx.WithPublisherConnections(1),
 		amqpx.WithPublisherSessions(2),
 		amqpx.WithCloseTimeout(time.Minute),
@@ -62,7 +63,7 @@ func TestQueueDeclarePassive(t *testing.T) {
 	var (
 		amqp          = amqpx.New()
 		ctx           = context.TODO()
-		log           = logging.NewTestLogger(t)
+		log           = testlogger.NewTestLogger(t)
 		funcName      = testutils.FuncName()
 		nextQueueName = testutils.QueueNameGenerator(funcName)
 		queueName     = nextQueueName()
@@ -84,7 +85,7 @@ func TestQueueDeclarePassive(t *testing.T) {
 		ctx,
 		testutils.HealthyConnectURL,
 		amqpx.WithName(funcName),
-		amqpx.WithLogger(logging.NewTestLogger(t)),
+		amqpx.WithLogger(testlogger.NewTestLogger(t)),
 		amqpx.WithPublisherConnections(1),
 		amqpx.WithPublisherSessions(2),
 		amqpx.WithCloseTimeout(time.Minute),
@@ -97,7 +98,7 @@ func TestAMQPXPub(t *testing.T) {
 	var (
 		amqp     = amqpx.New()
 		ctx      = context.TODO()
-		log      = logging.NewTestLogger(t)
+		log      = testlogger.NewTestLogger(t)
 		funcName = testutils.FuncName()
 
 		nextExchangeQueue = testutils.NewExchangeQueueGenerator(funcName)
@@ -114,7 +115,7 @@ func TestAMQPXPub(t *testing.T) {
 		ctx,
 		testutils.HealthyConnectURL,
 		amqpx.WithName(funcName),
-		amqpx.WithLogger(logging.NewNoOpLogger()),
+		amqpx.WithLogger(slog.New(slog.DiscardHandler)),
 		amqpx.WithPublisherConnections(1),
 		amqpx.WithPublisherSessions(2),
 		amqpx.WithCloseTimeout(time.Minute),
@@ -169,7 +170,7 @@ func TestAMQPXSubAndPub(t *testing.T) {
 	t.Parallel()
 	var (
 		amqp              = amqpx.New()
-		log               = logging.NewTestLogger(t)
+		log               = testlogger.NewTestLogger(t)
 		cctx, cancel      = context.WithCancel(context.TODO())
 		funcName          = testutils.FuncName()
 		nextExchangeQueue = testutils.NewExchangeQueueGenerator(funcName)
@@ -189,7 +190,7 @@ func TestAMQPXSubAndPub(t *testing.T) {
 	expectedMsg := eq1.NextSubMsg()
 	amqp.RegisterHandler(eq1.Queue, func(ctx context.Context, d types.Delivery) error {
 		msg := string(d.Body)
-		log.Infof("subscriber of %s received message: %s", eq1.Queue, msg)
+		log.Info(fmt.Sprintf("subscriber of %s received message: %s", eq1.Queue, msg))
 		assert.Equal(t, expectedMsg, msg)
 		cancel()
 		return nil
@@ -199,7 +200,7 @@ func TestAMQPXSubAndPub(t *testing.T) {
 		cctx,
 		testutils.HealthyConnectURL,
 		amqpx.WithName(funcName),
-		amqpx.WithLogger(logging.NewNoOpLogger()),
+		amqpx.WithLogger(slog.New(slog.DiscardHandler)),
 		amqpx.WithPublisherConnections(1),
 		amqpx.WithPublisherSessions(5),
 		amqpx.WithCloseTimeout(time.Minute),
@@ -233,7 +234,7 @@ func TestAMQPXSubAndPubMulti(t *testing.T) {
 	t.Parallel()
 	var (
 		amqp              = amqpx.New()
-		log               = logging.NewTestLogger(t)
+		log               = testlogger.NewTestLogger(t)
 		cctx, cancel      = context.WithCancel(context.TODO())
 		funcName          = testutils.FuncName()
 		nextExchangeQueue = testutils.NewExchangeQueueGenerator(funcName)
@@ -253,7 +254,7 @@ func TestAMQPXSubAndPubMulti(t *testing.T) {
 
 	// publish -> queue-01 -> subscriber-01 -> queue-02 -> subscriber-02 -> queue-03 -> subscriber-03 -> cancel context
 	amqp.RegisterHandler(eq1.Queue, func(ctx context.Context, msg types.Delivery) error {
-		log.Infof("handler of %s", eq1.Queue)
+		log.Info(fmt.Sprintf("handler of %s", eq1.Queue))
 
 		assert.Equal(t, eq1.NextSubMsg(), string(msg.Body))
 
@@ -263,7 +264,7 @@ func TestAMQPXSubAndPubMulti(t *testing.T) {
 		})
 
 		if err != nil {
-			log.Errorf("%s: %v", eq1.Queue, err)
+			log.Error(fmt.Sprintf("%s: %v", eq1.Queue, err))
 			assert.NoError(t, err)
 		}
 
@@ -275,7 +276,7 @@ func TestAMQPXSubAndPubMulti(t *testing.T) {
 	)
 
 	amqp.RegisterHandler(eq2.Queue, func(ctx context.Context, msg types.Delivery) error {
-		log.Infof("handler of %s", eq2.Queue)
+		log.Info(fmt.Sprintf("handler of %s", eq2.Queue))
 
 		err := amqp.Publish(ctx, eq3.Exchange, eq3.RoutingKey, types.Publishing{
 			ContentType: msg.ContentType,
@@ -283,14 +284,14 @@ func TestAMQPXSubAndPubMulti(t *testing.T) {
 		})
 
 		if err != nil {
-			log.Errorf("%s: %v", eq2.Queue, err)
+			log.Error(fmt.Sprintf("%s: %v", eq2.Queue, err))
 		}
 
 		return nil
 	}, types.ConsumeOptions{ConsumerTag: eq2.ConsumerTag})
 
 	amqp.RegisterHandler(eq3.Queue, func(ctx context.Context, msg types.Delivery) error {
-		log.Infof("handler of %s: canceling context!", eq3.Queue)
+		log.Info(fmt.Sprintf("handler of %s: canceling context!", eq3.Queue))
 		cancel()
 		return nil
 	}, types.ConsumeOptions{ConsumerTag: eq3.ConsumerTag})
@@ -329,7 +330,7 @@ func TestAMQPXSubHandler(t *testing.T) {
 	t.Parallel()
 	var (
 		amqp              = amqpx.New()
-		log               = logging.NewTestLogger(t)
+		log               = testlogger.NewTestLogger(t)
 		cctx, cancel      = context.WithCancel(context.TODO())
 		funcName          = testutils.FuncName()
 		nextExchangeQueue = testutils.NewExchangeQueueGenerator(funcName)
@@ -350,7 +351,7 @@ func TestAMQPXSubHandler(t *testing.T) {
 	expectedMsg := eq1.NextSubMsg()
 	amqp.RegisterHandler(eq1.Queue, func(ctx context.Context, d types.Delivery) error {
 		msg := string(d.Body)
-		log.Infof("subscriber of %s: received message: %s", eq1.Queue, msg)
+		log.Info(fmt.Sprintf("subscriber of %s: received message: %s", eq1.Queue, msg))
 		assert.Equal(t, expectedMsg, msg)
 		log.Info("canceling context from within handler")
 		cancel()
@@ -361,7 +362,7 @@ func TestAMQPXSubHandler(t *testing.T) {
 		cctx,
 		testutils.HealthyConnectURL,
 		amqpx.WithName(funcName),
-		amqpx.WithLogger(logging.NewNoOpLogger()),
+		amqpx.WithLogger(slog.New(slog.DiscardHandler)),
 		amqpx.WithPublisherConnections(1),
 		amqpx.WithPublisherSessions(5),
 		amqpx.WithCloseTimeout(time.Minute),
@@ -395,7 +396,7 @@ func TestCreateDeleteTopology(t *testing.T) {
 	t.Parallel()
 	var (
 		amqp              = amqpx.New()
-		log               = logging.NewTestLogger(t)
+		log               = testlogger.NewTestLogger(t)
 		cctx, cancel      = context.WithCancel(context.TODO())
 		funcName          = testutils.FuncName()
 		nextExchangeQueue = testutils.NewExchangeQueueGenerator(funcName)
@@ -426,7 +427,7 @@ func TestPauseResumeHandlerNoProcessing(t *testing.T) {
 	t.Parallel()
 	var (
 		amqp          = amqpx.New()
-		log           = logging.NewTestLogger(t)
+		log           = testlogger.NewTestLogger(t)
 		cctx, cancel  = context.WithCancel(context.TODO())
 		funcName      = testutils.FuncName()
 		nextQueueName = testutils.QueueNameGenerator(funcName)
@@ -463,7 +464,7 @@ func TestPauseResumeHandlerNoProcessing(t *testing.T) {
 		cctx,
 		testutils.HealthyConnectURL,
 		amqpx.WithName(funcName),
-		amqpx.WithLogger(logging.NewNoOpLogger()),
+		amqpx.WithLogger(slog.New(slog.DiscardHandler)),
 		amqpx.WithCloseTimeout(time.Minute),
 	)
 	if err != nil {
@@ -497,7 +498,7 @@ func TestHandlerPauseAndResumeSubscriber(t *testing.T) {
 	t.Parallel()
 	var (
 		amqp              = amqpx.New()
-		log               = logging.NewTestLogger(t)
+		log               = testlogger.NewTestLogger(t)
 		cctx, cancel      = context.WithCancel(context.TODO())
 		funcName          = testutils.FuncName()
 		nextExchangeQueue = testutils.NewExchangeQueueGenerator(funcName)
@@ -510,7 +511,7 @@ func TestHandlerPauseAndResumeSubscriber(t *testing.T) {
 	}()
 
 	options := []amqpx.Option{
-		amqpx.WithLogger(logging.NewNoOpLogger()),
+		amqpx.WithLogger(slog.New(slog.DiscardHandler)),
 		amqpx.WithPublisherConnections(1),
 		amqpx.WithPublisherSessions(1),
 		amqpx.WithCloseTimeout(time.Minute),
@@ -627,7 +628,7 @@ func TestHandlerPauseAndResumeSubscriber(t *testing.T) {
 func TestHandlerPauseAndResumeInFlightNackSubscriber(t *testing.T) {
 	t.Parallel()
 	var (
-		log               = logging.NewTestLogger(t)
+		log               = testlogger.NewTestLogger(t)
 		cctx, cancel      = context.WithCancel(context.TODO())
 		funcName          = testutils.FuncName()
 		nextExchangeQueue = testutils.NewExchangeQueueGenerator(funcName)
@@ -647,7 +648,7 @@ func TestHandlerPauseAndResumeInFlightNackSubscriber(t *testing.T) {
 	)
 
 	options := []amqpx.Option{
-		amqpx.WithLogger(logging.NewNoOpLogger()),
+		amqpx.WithLogger(slog.New(slog.DiscardHandler)),
 		amqpx.WithPublisherConnections(1),
 		amqpx.WithPublisherSessions(1),
 		amqpx.WithCloseTimeout(time.Minute),
@@ -785,13 +786,14 @@ func TestRequeueLimitPreserveOrderOK(t *testing.T) {
 	// https://www.rabbitmq.com/docs/quorum-queues#repeated-requeues
 	t.Parallel()
 	var (
-		log               = logging.NewTestLogger(t)
+		log = testlogger.NewTestLogger(t, &slog.HandlerOptions{
+			Level: slog.LevelInfo,
+		})
 		cctx, cancel      = context.WithCancel(context.TODO())
 		funcName          = testutils.FuncName()
 		nextExchangeQueue = testutils.NewExchangeQueueGenerator(funcName)
 		eq1               = nextExchangeQueue()
 	)
-	log.SetLevel(0)
 
 	defer cancel()
 
@@ -924,7 +926,7 @@ func TestRequeueLimitPreserveOrderOK(t *testing.T) {
 		// At this point the order is NOT is not supposed to be broken.
 		// The bigger the batch, the more data we loose
 		for _, msg := range msgs {
-			log.Printf("received message: %s", string(msg.Body))
+			log.Info(fmt.Sprintf("received message: %s", string(msg.Body)))
 			err := eq1.ValidateNextSubMsg(string(msg.Body))
 			assert.NoError(t, err)
 		}
@@ -974,7 +976,7 @@ func TestHandlerPauseAndResume(t *testing.T) {
 func testHandlerPauseAndResume(t *testing.T, i int, closeTimeout time.Duration) {
 	var (
 		amqp              = amqpx.New()
-		log               = logging.NewTestLogger(t)
+		log               = testlogger.NewTestLogger(t)
 		cctx, cancel      = context.WithCancel(context.TODO())
 		funcName          = fmt.Sprintf("%s-%d", testutils.CallerFuncName(), i)
 		nextExchangeQueue = testutils.NewExchangeQueueGenerator(funcName)
@@ -989,7 +991,7 @@ func testHandlerPauseAndResume(t *testing.T, i int, closeTimeout time.Duration) 
 	}()
 
 	options := []amqpx.Option{
-		amqpx.WithLogger(logging.NewNoOpLogger()),
+		amqpx.WithLogger(slog.New(slog.DiscardHandler)),
 		amqpx.WithPublisherConnections(1),
 		amqpx.WithPublisherSessions(5),
 		amqpx.WithCloseTimeout(closeTimeout),
@@ -1048,7 +1050,7 @@ func testHandlerPauseAndResume(t *testing.T, i int, closeTimeout time.Duration) 
 	running := true
 	amqp.RegisterHandler(eq2.Queue, func(_ context.Context, msg types.Delivery) (err error) {
 		assert.Equal(t, eq2.NextSubMsg(), string(msg.Body))
-		log.Infof("received toggle request: %s", string(msg.Body))
+		log.Info(fmt.Sprintf("received toggle request: %s", string(msg.Body)))
 		queue := handler01.Queue()
 
 		if running {
@@ -1067,7 +1069,7 @@ func testHandlerPauseAndResume(t *testing.T, i int, closeTimeout time.Duration) 
 
 			err = handler01.Resume(cctx)
 			assert.NoError(t, err)
-			log.Infof("resumed processing of %s", queue)
+			log.Info(fmt.Sprintf("resumed processing of %s", queue))
 
 			assertActive(t, handler01, true)
 
@@ -1140,7 +1142,7 @@ func testBatchHandlerPauseAndResume(t *testing.T, i int) {
 
 	var (
 		amqp              = amqpx.New()
-		log               = logging.NewTestLogger(t)
+		log               = testlogger.NewTestLogger(t)
 		cctx, cancel      = context.WithCancel(context.TODO())
 		funcName          = fmt.Sprintf("%s-%d", testutils.CallerFuncName(), i)
 		nextExchangeQueue = testutils.NewExchangeQueueGenerator(funcName)
@@ -1154,7 +1156,7 @@ func testBatchHandlerPauseAndResume(t *testing.T, i int) {
 	defer cancel()
 
 	options := []amqpx.Option{
-		amqpx.WithLogger(logging.NewNoOpLogger()),
+		amqpx.WithLogger(slog.New(slog.DiscardHandler)),
 		amqpx.WithPublisherConnections(1),
 		amqpx.WithPublisherSessions(5),
 		amqpx.WithCloseTimeout(time.Minute),
@@ -1215,7 +1217,7 @@ func testBatchHandlerPauseAndResume(t *testing.T, i int) {
 		queue := handler01.Queue()
 
 		for _, msg := range msgs {
-			log.Infof("received toggle request: %s", string(msg.Body))
+			log.Info(fmt.Sprintf("received toggle request: %s", string(msg.Body)))
 			if running {
 				running = false
 
@@ -1232,7 +1234,7 @@ func testBatchHandlerPauseAndResume(t *testing.T, i int) {
 
 				err = handler01.Resume(cctx)
 				assert.NoError(t, err)
-				log.Infof("resumed processing of %s", queue)
+				log.Info(fmt.Sprintf("resumed processing of %s", queue))
 
 				assertActive(t, handler01, true)
 
@@ -1294,7 +1296,7 @@ func TestQueueDeletedConsumerReconnect(t *testing.T) {
 	var (
 		err           error
 		amqp          = amqpx.New()
-		log           = logging.NewTestLogger(t)
+		log           = testlogger.NewTestLogger(t)
 		cctx, cancel  = context.WithCancel(context.TODO())
 		funcName      = testutils.FuncName()
 		nextQueueName = testutils.QueueNameGenerator(funcName)
@@ -1368,7 +1370,7 @@ func TestQueueDeletedBatchConsumerReconnect(t *testing.T) {
 	var (
 		err           error
 		amqp          = amqpx.New()
-		log           = logging.NewTestLogger(t)
+		log           = testlogger.NewTestLogger(t)
 		cctx, cancel  = context.WithCancel(context.TODO())
 		funcName      = testutils.FuncName()
 		nextQueueName = testutils.QueueNameGenerator(funcName)
@@ -1438,7 +1440,7 @@ func TestQueueDeletedBatchConsumerReconnect(t *testing.T) {
 }
 
 func newTransientSession(t *testing.T, ctx context.Context, connectUrl string) (session *types.Session, closer func()) {
-	p, err := pool.New(ctx, connectUrl, 1, 1, pool.WithLogger(logging.NewTestLogger(t)))
+	p, err := pool.New(ctx, connectUrl, 1, 1, pool.WithLogger(testlogger.NewTestLogger(t)))
 	require.NoError(t, err)
 
 	s, err := p.GetSession(ctx)
@@ -1470,7 +1472,7 @@ func testHandlerReset(t *testing.T, i int) {
 	var (
 		err               error
 		amqp              = amqpx.New()
-		log               = logging.NewTestLogger(t)
+		log               = testlogger.NewTestLogger(t)
 		cctx, cancel      = context.WithCancel(context.TODO())
 		funcName          = fmt.Sprintf("%s-i-%d", testutils.CallerFuncName(), i)
 		nextExchangeQueue = testutils.NewExchangeQueueGenerator(funcName)
@@ -1484,7 +1486,7 @@ func testHandlerReset(t *testing.T, i int) {
 	defer cancel()
 
 	options := []amqpx.Option{
-		amqpx.WithLogger(logging.NewNoOpLogger()),
+		amqpx.WithLogger(slog.New(slog.DiscardHandler)),
 		amqpx.WithPublisherConnections(1),
 		amqpx.WithPublisherSessions(5),
 		amqpx.WithCloseTimeout(time.Minute),
@@ -1566,7 +1568,7 @@ func testBatchHandlerReset(t *testing.T, i int) {
 	var (
 		err               error
 		amqp              = amqpx.New()
-		log               = logging.NewTestLogger(t)
+		log               = testlogger.NewTestLogger(t)
 		cctx, cancel      = context.WithCancel(context.TODO())
 		funcName          = fmt.Sprintf("%s-i-%d", testutils.CallerFuncName(), i)
 		nextExchangeQueue = testutils.NewExchangeQueueGenerator(funcName)

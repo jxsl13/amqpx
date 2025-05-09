@@ -3,14 +3,16 @@ package pool_test
 import (
 	"context"
 	"fmt"
+	"log/slog"
+	"os"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/jxsl13/amqpx/internal/amqputils"
 	"github.com/jxsl13/amqpx/internal/proxyutils"
+	"github.com/jxsl13/amqpx/internal/testlogger"
 	"github.com/jxsl13/amqpx/internal/testutils"
-	"github.com/jxsl13/amqpx/logging"
 	"github.com/jxsl13/amqpx/pool"
 	"github.com/jxsl13/amqpx/types"
 	amqp "github.com/rabbitmq/amqp091-go"
@@ -196,7 +198,7 @@ func testBatchSubscriberMaxBytes(t *testing.T, funcName string, maxBatchBytes in
 			defer wg.Done()
 
 			var (
-				log = logging.NewTestLogger(t)
+				log = testlogger.NewTestLogger(t)
 				eq  = nextExchangeQueue()
 			)
 
@@ -229,18 +231,18 @@ func testBatchSubscriberMaxBytes(t *testing.T, funcName string, maxBatchBytes in
 				})
 				assert.NoError(t, err)
 			}
-			log.Debugf("max message length: %d", maxMsgLen)
-			log.Debugf("max batch bytes: %d", maxBatchBytes)
+			log.Debug(fmt.Sprintf("max message length: %d", maxMsgLen))
+			log.Debug(fmt.Sprintf("max batch bytes: %d", maxBatchBytes))
 			expectedMessagesPerBatch := maxBatchBytes / maxMsgLen
 			if maxBatchBytes%maxMsgLen > 0 {
 				expectedMessagesPerBatch += 1
 			}
-			log.Debugf("expected messages per batch: %d", expectedMessagesPerBatch)
+			log.Debug(fmt.Sprintf("expected messages per batch: %d", expectedMessagesPerBatch))
 			expectedBatches := numMsgs / expectedMessagesPerBatch
 			if numMsgs%expectedMessagesPerBatch > 0 {
 				expectedBatches += 1
 			}
-			log.Debugf("expected batches: %d", expectedBatches)
+			log.Debug(fmt.Sprintf("expected batches: %d", expectedBatches))
 
 			cctx, cancel := context.WithCancel(ctx)
 			defer cancel()
@@ -255,7 +257,7 @@ func testBatchSubscriberMaxBytes(t *testing.T, funcName string, maxBatchBytes in
 
 					for idx, msg := range msgs {
 						assert.Truef(t, len(msg.Body) > 0, "msg body is empty: message index: %d", idx)
-						log.Debugf("batch: %d message: %d: body: %q", batchCount, idx, string(msg.Body))
+						log.Debug(fmt.Sprintf("batch: %d message: %d: body: %q", batchCount, idx, string(msg.Body)))
 					}
 
 					messageCount += len(msgs)
@@ -328,7 +330,9 @@ func TestLowLevelConsumeBatchOK(t *testing.T) {
 			t.Parallel()
 
 			var (
-				log               = logging.NewTestLogger(t)
+				log = testlogger.NewTestLogger(t, &slog.HandlerOptions{
+					Level: slog.LevelInfo,
+				})
 				ctx, cancel       = context.WithCancel(context.TODO())
 				nextExchangeQueue = testutils.NewExchangeQueueGenerator(fmt.Sprintf("%s_%s", funcName, test.Name))
 				eq                = nextExchangeQueue()
@@ -341,21 +345,21 @@ func TestLowLevelConsumeBatchOK(t *testing.T) {
 				chDone       = make(chan struct{})
 				chAck        = make(chan struct{})
 			)
-
-			log.SetLevel(0)
 			defer cancel()
 
 			// open connection
 			conn, err := amqp.Dial(testutils.HealthyConnectURL)
 			if err != nil {
-				log.Fatal(err)
+				log.Error(err.Error())
+				os.Exit(1)
 			}
 			defer conn.Close()
 
 			// open channel
 			ch, err := conn.Channel()
 			if err != nil {
-				log.Fatal(err)
+				log.Error(err.Error())
+				os.Exit(1)
 			}
 			defer ch.Close()
 
@@ -394,7 +398,7 @@ func TestLowLevelConsumeBatchOK(t *testing.T) {
 				defer wg.Done()
 				consume(log, test.Qos, batchSize, batchTimeout, chDone, chAck, conn, queueName, messageCount, func(batch []*amqp.Delivery) {
 					for i, d := range batch {
-						log.Infof("Processing nack message: %d: %s", i, string(d.Body))
+						log.Info(fmt.Sprintf("Processing nack message: %d: %s", i, string(d.Body)))
 					}
 				})
 			}()
@@ -416,7 +420,7 @@ func TestLowLevelConsumeBatchOK(t *testing.T) {
 				defer wg.Done()
 				consume(log, test.Qos, 1, batchTimeout, chDone, chAck, conn, queueName, messageCount, func(batch []*amqp.Delivery) {
 					for i, d := range batch {
-						log.Infof("Processing ack message: %d: %s", i, string(d.Body))
+						log.Info(fmt.Sprintf("Processing ack message: %d: %s", i, string(d.Body)))
 						err := eq.ValidateNextSubMsg(string(d.Body))
 						assert.NoError(t, err)
 
@@ -466,7 +470,9 @@ func TestLowLevelConsumeBatchOK_2(t *testing.T) {
 			t.Parallel()
 
 			var (
-				log               = logging.NewTestLogger(t)
+				log = testlogger.NewTestLogger(t, &slog.HandlerOptions{
+					Level: slog.LevelInfo,
+				})
 				ctx, cancel       = context.WithCancel(context.TODO())
 				nextExchangeQueue = testutils.NewExchangeQueueGenerator(fmt.Sprintf("%s_%s", funcName, test.Name))
 				eq                = nextExchangeQueue()
@@ -479,21 +485,21 @@ func TestLowLevelConsumeBatchOK_2(t *testing.T) {
 				chDone       = make(chan struct{})
 				chAck        = make(chan struct{})
 			)
-
-			log.SetLevel(0)
 			defer cancel()
 
 			// open connection
 			conn, err := amqp.Dial(testutils.HealthyConnectURL)
 			if err != nil {
-				log.Fatal(err)
+				log.Error(err.Error())
+				os.Exit(1)
 			}
 			defer conn.Close()
 
 			// open channel
 			ch, err := conn.Channel()
 			if err != nil {
-				log.Fatal(err)
+				log.Error(err.Error())
+				os.Exit(1)
 			}
 			defer ch.Close()
 
@@ -520,7 +526,7 @@ func TestLowLevelConsumeBatchOK_2(t *testing.T) {
 				defer wg.Done()
 				consume(log, test.Qos, batchSize, batchTimeout, chDone, chAck, conn, queueName, messageCount, func(batch []*amqp.Delivery) {
 					for i, d := range batch {
-						log.Infof("Processing nack message: %d: %s", i, string(d.Body))
+						log.Info(fmt.Sprintf("Processing nack message: %d: %s", i, string(d.Body)))
 					}
 				})
 			}()
@@ -553,7 +559,7 @@ func TestLowLevelConsumeBatchOK_2(t *testing.T) {
 				defer wg.Done()
 				consume(log, test.Qos, 1, batchTimeout, chDone, chAck, conn, queueName, messageCount, func(batch []*amqp.Delivery) {
 					for i, d := range batch {
-						log.Infof("Processing ack message: %d: %s", i, string(d.Body))
+						log.Info(fmt.Sprintf("Processing ack message: %d: %s", i, string(d.Body)))
 
 						err := eq.ValidateNextSubMsg(string(d.Body))
 						assert.NoError(t, err)
@@ -571,7 +577,7 @@ func TestLowLevelConsumeBatchOK_2(t *testing.T) {
 	}
 }
 
-func consume(log logging.Logger, qos bool, batchSize int, batchTimeout time.Duration, chDone chan struct{}, chAck chan struct{}, conn *amqp.Connection, queueName string, messageCount int, process func(batch []*amqp.Delivery)) {
+func consume(log *slog.Logger, qos bool, batchSize int, batchTimeout time.Duration, chDone chan struct{}, chAck chan struct{}, conn *amqp.Connection, queueName string, messageCount int, process func(batch []*amqp.Delivery)) {
 	defer func() {
 		log.Info("consumer closed")
 	}()
@@ -579,7 +585,7 @@ func consume(log logging.Logger, qos bool, batchSize int, batchTimeout time.Dura
 	log.Info("starting consumer...")
 	ch, err := conn.Channel()
 	if err != nil {
-		log.Error(err)
+		log.Error(err.Error())
 		return
 	}
 	defer ch.Close()
@@ -588,14 +594,14 @@ func consume(log logging.Logger, qos bool, batchSize int, batchTimeout time.Dura
 		// consume message
 		err = ch.Qos(batchSize, 0, false)
 		if err != nil {
-			log.Error(err)
+			log.Error(err.Error())
 			return
 		}
 	}
 
 	msgs, err := ch.Consume(queueName, "", false, false, false, false, nil)
 	if err != nil {
-		log.Error(err)
+		log.Error(err.Error())
 		return
 	}
 
@@ -620,11 +626,11 @@ all:
 				batch = append(batch, &d)
 				batchCounter++
 				if batchCounter >= batchSize {
-					log.Infof("Batch is full with %d message(s)", len(batch))
+					log.Info(fmt.Sprintf("Batch is full with %d message(s)", len(batch)))
 					break collect
 				}
 			case <-c:
-				log.Infof("Batch timeout with %d message(s)", len(batch))
+				log.Info(fmt.Sprintf("Batch timeout with %d message(s)", len(batch)))
 				break collect
 			case <-chDone:
 				break all
@@ -642,7 +648,7 @@ all:
 
 			err := batch[len(batch)-1].Ack(true)
 			if err != nil {
-				log.Error(err)
+				log.Error(err.Error())
 				return
 			}
 
@@ -655,7 +661,7 @@ all:
 
 			err := batch[len(batch)-1].Nack(true, true)
 			if err != nil {
-				log.Error(err)
+				log.Error(err.Error())
 				return
 			}
 		}

@@ -2,6 +2,7 @@ package pool
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/signal"
 	"sync"
@@ -9,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jxsl13/amqpx/logging"
+	"github.com/jxsl13/amqpx/internal/testlogger"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -42,7 +43,7 @@ func TestStateContextSimpleSynchronized(t *testing.T) {
 func TestStateContextConcurrentTransitions(t *testing.T) {
 	t.Parallel()
 
-	log := logging.NewTestLogger(t)
+	log := testlogger.NewTestLogger(t)
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, os.Kill)
 	defer cancel()
 
@@ -70,18 +71,18 @@ func TestStateContextConcurrentTransitions(t *testing.T) {
 			case <-ctx.Done():
 				return
 			case <-trigger:
-				//log.Infof("routine %d triggered", id)
+				//log.Info(fmt.Sprintf("routine %d triggered", id))
 			}
 			time.Sleep(time.Duration(id/100) * 20 * time.Millisecond)
 
 			for i := 0; i < iterations; i++ {
 				if id%2 == 0 {
 					assert.NoError(t, sc.Resume(ctx))
-					// log.Infof("routine %d resumed", id)
+					// log.Info(fmt.Sprintf("routine %d resumed", id))
 					pause.Add(1)
 				} else {
 					assert.NoError(t, sc.Pause(ctx))
-					// log.Infof("routine %d paused", id)
+					// log.Info(fmt.Sprintf("routine %d paused", id))
 					resume.Add(1)
 				}
 			}
@@ -101,7 +102,7 @@ func TestStateContextConcurrentTransitions(t *testing.T) {
 			case <-ctx.Done():
 				return
 			case <-trigger:
-				//log.Infof("routine %d triggered", id)
+				//log.Info(fmt.Sprintf("routine %d triggered", id))
 			}
 			time.Sleep(time.Duration(id/100) * 10 * time.Millisecond)
 
@@ -113,11 +114,11 @@ func TestStateContextConcurrentTransitions(t *testing.T) {
 					active.Add(1)
 				case 1:
 					assert.NoError(t, sc.AwaitPaused(ctx))
-					// log.Infof("routine %d await paused", id)
+					// log.Info(fmt.Sprintf("routine %d await paused", id))
 					awaitPaused.Add(1)
 				case 2:
 					assert.NoError(t, sc.AwaitResumed(ctx))
-					// log.Infof("routine %d await resumed", id)
+					// log.Info(fmt.Sprintf("routine %d await resumed", id))
 					awaitResumed.Add(1)
 				}
 			}
@@ -131,17 +132,17 @@ func TestStateContextConcurrentTransitions(t *testing.T) {
 	cancel()
 	wwg.Wait()
 
-	log.Debugf("pause: %d", pause.Load())
-	log.Debugf("resume: %d", resume.Load())
-	log.Debugf("active: %d", active.Load())
-	log.Debugf("awaitPaused: %d", awaitPaused.Load())
-	log.Debugf("awaitResumed: %d", awaitResumed.Load())
+	log.Debug(fmt.Sprintf("pause: %d", pause.Load()))
+	log.Debug(fmt.Sprintf("resume: %d", resume.Load()))
+	log.Debug(fmt.Sprintf("active: %d", active.Load()))
+	log.Debug(fmt.Sprintf("awaitPaused: %d", awaitPaused.Load()))
+	log.Debug(fmt.Sprintf("awaitResumed: %d", awaitResumed.Load()))
 }
 
 func worker(t *testing.T, ctx context.Context, wg *sync.WaitGroup, sc *stateContext) {
 	defer wg.Done()
 
-	log := logging.NewTestLogger(t)
+	log := testlogger.NewTestLogger(t)
 	defer func() {
 		log.Debug("worker pausing (closing)")
 		sc.Paused()

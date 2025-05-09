@@ -1,6 +1,6 @@
 module github.com/jxsl13/amqpx
 
-go 1.22
+go 1.24
 
 require (
 	github.com/Shopify/toxiproxy/v2 v2.7.0

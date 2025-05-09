@@ -2,9 +2,9 @@ package pool
 
 import (
 	"crypto/tls"
+	"log/slog"
 	"time"
 
-	"github.com/jxsl13/amqpx/logging"
 	"github.com/jxsl13/amqpx/types"
 )
 
@@ -40,7 +40,7 @@ func WithNamePrefix(prefix string) Option {
 }
 
 // WithLogger allows to set a custom logger for the connection AND session pool
-func WithLogger(logger logging.Logger) Option {
+func WithLogger(logger *slog.Logger) Option {
 	return func(po *poolOption) {
 		ConnectionPoolWithLogger(logger)(&po.cpo)
 		SessionPoolWithLogger(logger)(&po.spo)

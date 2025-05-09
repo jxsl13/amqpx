@@ -2,19 +2,18 @@ package pool
 
 import (
 	"context"
-
-	"github.com/jxsl13/amqpx/logging"
+	"log/slog"
 )
 
 type topologerOption struct {
 	TransientOnly bool
-	Logger        logging.Logger
+	Logger        *slog.Logger
 	Ctx           context.Context
 }
 
 type TopologerOption func(*topologerOption)
 
-func TopologerWithLogger(logger logging.Logger) TopologerOption {
+func TopologerWithLogger(logger *slog.Logger) TopologerOption {
 	return func(co *topologerOption) {
 		co.Logger = logger
 	}

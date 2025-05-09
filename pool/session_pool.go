@@ -3,11 +3,11 @@ package pool
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sync"
 	"sync/atomic"
 
 	"github.com/jxsl13/amqpx/internal/contextutils"
-	"github.com/jxsl13/amqpx/logging"
 	"github.com/jxsl13/amqpx/types"
 )
 
@@ -25,7 +25,7 @@ type SessionPool struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	log logging.Logger
+	log *slog.Logger
 
 	RecoverCallback                     types.SessionRetryCallback
 	PublishRetryCallback                types.SessionRetryCallback
@@ -107,12 +107,13 @@ func newSessionPoolFromOption(pool *ConnectionPool, ctx context.Context, option 
 		FlowRetryCallback:                   option.FlowRetryCallback,
 	}
 
-	sessionPool.debug("initializing pool sessions...")
+	log := sp.slog()
+	log.Debug("initializing pool sessions...")
 	defer func() {
 		if err != nil {
-			sessionPool.error(err, "failed to initialize pool sessions")
+			log.Error(fmt.Sprintf("failed to initialize pool sessions: %s", err.Error()))
 		} else {
-			sessionPool.info("initialized")
+			log.Info("initialized session pool")
 		}
 	}()
 
@@ -293,11 +294,12 @@ func (sp *SessionPool) deriveSession(ctx context.Context, conn *types.Connection
 // If Session is not a cached channel, it is simply closed here.
 func (sp *SessionPool) ReturnSession(session *types.Session, err error) {
 
+	log := sp.slog()
 	// don't put unmanaged sessions back into the pool channel
 	if !session.IsCached() {
 		cerr := session.Close()
 		if cerr != nil {
-			sp.warnf("failed to close transient session: %v", cerr)
+			log.Warn(fmt.Sprintf("failed to close transient session %s: %s", session.Name(), cerr.Error()))
 		}
 		return
 	}
@@ -311,7 +313,7 @@ func (sp *SessionPool) ReturnSession(session *types.Session, err error) {
 	// even if the session is still broken
 	select {
 	case sp.sessions <- session:
-		sp.debugf("returned session %s to pool", session.Name())
+		log.Debug(fmt.Sprintf("returned session %s to pool", session.Name()))
 	default:
 		panic("session buffer full: not supposed to happen")
 	}
@@ -328,8 +330,9 @@ func (sp *SessionPool) shutdownErr() error {
 // Closes the session pool with all of its sessions
 func (sp *SessionPool) Close() {
 
-	sp.info("closing session pool...")
-	defer sp.info("closed")
+	log := sp.slog()
+	log.Debug("closing session pool...")
+	defer log.Info("closed session pool")
 
 	// trigger session cancelation
 	// consumers, publishers, etc.
@@ -345,9 +348,9 @@ func (sp *SessionPool) Close() {
 			defer wg.Done()
 			cerr := s.Close()
 			if cerr != nil {
-				sp.error(cerr, "failed to close session %s", s.Name())
+				log.Error(fmt.Sprintf("failed to close session %s", s.Name()))
 			} else {
-				sp.debugf("closed session %s", s.Name())
+				log.Debug(fmt.Sprintf("closed session %s", s.Name()))
 			}
 		}(session)
 	}
@@ -358,22 +361,8 @@ func (sp *SessionPool) Close() {
 	}
 }
 
-func (sp *SessionPool) info(a ...any) {
-	sp.log.WithField("session_pool", sp.pool.name).Info(a...)
-}
-
-func (sp *SessionPool) error(err error, a ...any) {
-	sp.log.WithField("session_pool", sp.pool.name).WithField("error", err.Error()).Error(a...)
-}
-
-func (sp *SessionPool) warnf(format string, a ...any) {
-	sp.log.WithField("session_pool", sp.pool.name).Warnf(format, a...)
-}
-
-func (sp *SessionPool) debug(a ...any) {
-	sp.log.WithField("session_pool", sp.pool.name).Debug(a...)
-}
-
-func (sp *SessionPool) debugf(format string, a ...any) {
-	sp.log.WithField("session_pool", sp.pool.name).Debugf(format, a...)
+func (sp *SessionPool) slog() *slog.Logger {
+	return sp.log.With(
+		slog.String("session_pool", sp.pool.name),
+	)
 }

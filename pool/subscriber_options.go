@@ -2,15 +2,14 @@ package pool
 
 import (
 	"context"
-
-	"github.com/jxsl13/amqpx/logging"
+	"log/slog"
 )
 
 type subscriberOption struct {
 	Ctx           context.Context
 	AutoClosePool bool
 
-	Logger logging.Logger
+	Logger *slog.Logger
 }
 
 type SubscriberOption func(*subscriberOption)
@@ -21,7 +20,7 @@ func SubscriberWithContext(ctx context.Context) SubscriberOption {
 	}
 }
 
-func SubscriberWithLogger(logger logging.Logger) SubscriberOption {
+func SubscriberWithLogger(logger *slog.Logger) SubscriberOption {
 	return func(co *subscriberOption) {
 		co.Logger = logger
 	}

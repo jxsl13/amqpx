@@ -2,8 +2,8 @@ package pool
 
 import (
 	"context"
+	"log/slog"
 
-	"github.com/jxsl13/amqpx/logging"
 	"github.com/jxsl13/amqpx/types"
 )
 
@@ -13,7 +13,7 @@ type publisherOption struct {
 	AutoClosePool bool
 	BackoffPolicy types.BackoffFunc
 
-	Logger logging.Logger
+	Logger *slog.Logger
 }
 
 type PublisherOption func(*publisherOption)
@@ -26,7 +26,7 @@ func PublisherWithContext(ctx context.Context) PublisherOption {
 	}
 }
 
-func PublisherWithLogger(logger logging.Logger) PublisherOption {
+func PublisherWithLogger(logger *slog.Logger) PublisherOption {
 	return func(po *publisherOption) {
 		if logger != nil {
 			po.Logger = logger

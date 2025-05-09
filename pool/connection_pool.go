@@ -4,13 +4,13 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"log/slog"
 	"net/url"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/jxsl13/amqpx/internal/contextutils"
-	"github.com/jxsl13/amqpx/logging"
 	"github.com/jxsl13/amqpx/types"
 )
 
@@ -32,7 +32,7 @@ type ConnectionPool struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	log logging.Logger
+	log *slog.Logger
 
 	recoverCB types.ConnectionRecoverCallback
 
@@ -61,7 +61,7 @@ func NewConnectionPool(ctx context.Context, connectUrl string, numConns int, opt
 		ConnTimeout:           30 * time.Second,
 		TLSConfig:             nil,
 
-		Logger: logging.NewNoOpLogger(),
+		Logger: slog.New(slog.DiscardHandler),
 
 		ConnectionRecoverCallback: nil,
 	}
@@ -107,12 +107,13 @@ func newConnectionPoolFromOption(connectUrl string, option connectionPoolOption)
 		recoverCB: option.ConnectionRecoverCallback,
 	}
 
-	cp.debug("initializing pool connections...")
+	log := cp.plog()
+	log.Debug("initializing pool connections...")
 	defer func() {
 		if err != nil {
-			cp.error(err, "failed to initialize pool connections")
+			log.Error(fmt.Sprintf("failed to initialize pool connections: %s", err.Error()))
 		} else {
-			cp.info("initialized pool connections")
+			log.Info("initialized pool connections")
 		}
 	}()
 
@@ -217,7 +218,7 @@ func (cp *ConnectionPool) GetTransientConnection(ctx context.Context) (conn *typ
 		if err != nil {
 			cerr := conn.Close()
 			if cerr != nil {
-				cp.warnf("failed to close transient connection: %v", cerr)
+				cp.plog().Warn(fmt.Sprintf("failed to close transient connection: %s", cerr.Error()))
 			}
 		}
 	}()
@@ -241,7 +242,7 @@ func (cp *ConnectionPool) ReturnConnection(conn *types.Connection, err error) {
 	if !conn.IsCached() {
 		cerr := conn.Close()
 		if cerr != nil {
-			cp.warnf("failed to close returned transient connection: %v", cerr)
+			cp.plog().Warn(fmt.Sprintf("failed to close transient connection: %s", cerr.Error()))
 		}
 		atomic.AddInt64(&cp.concurrentTransient, -1)
 		return
@@ -261,8 +262,9 @@ func (cp *ConnectionPool) ReturnConnection(conn *types.Connection, err error) {
 // Any returned sessions or connections will be closed properly.
 func (cp *ConnectionPool) Close() {
 
-	cp.debug("closing connection pool...")
-	defer cp.info("closed")
+	log := cp.plog()
+	log.Debug("closing connection pool...")
+	defer log.Info("closed connection pool")
 
 	wg := &sync.WaitGroup{}
 	wg.Add(cp.capacity)
@@ -274,7 +276,7 @@ func (cp *ConnectionPool) Close() {
 			conn := <-cp.connections
 			cerr := conn.Close()
 			if cerr != nil {
-				cp.error(cerr, "failed to close connection")
+				log.Error(fmt.Sprintf("failed to close connection: %s", cerr.Error()))
 			}
 		}()
 	}
@@ -311,18 +313,8 @@ func (cp *ConnectionPool) Name() string {
 	return cp.name
 }
 
-func (cp *ConnectionPool) info(a ...any) {
-	cp.log.WithField("connection_pool", cp.name).Info(a...)
-}
-
-func (cp *ConnectionPool) error(err error, a ...any) {
-	cp.log.WithField("connection_pool", cp.name).WithField("error", err.Error()).Error(a...)
-}
-
-func (cp *ConnectionPool) debug(a ...any) {
-	cp.log.WithField("connection_pool", cp.name).Debug(a...)
-}
-
-func (cp *ConnectionPool) warnf(format string, a ...any) {
-	cp.log.WithField("connection_pool", cp.name).Warnf(format, a...)
+func (cp *ConnectionPool) plog() *slog.Logger {
+	return cp.log.With(
+		slog.String("connection_pool", cp.name),
+	)
 }
