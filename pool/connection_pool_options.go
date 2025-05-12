@@ -50,7 +50,7 @@ func defaultAppName() string {
 // ConnectionPoolWithLogger allows to set a custom logger.
 func ConnectionPoolWithLogger(logger *slog.Logger) ConnectionPoolOption {
 	return func(po *connectionPoolOption) {
-		if logger == nil {
+		if logger != nil {
 			po.Logger = logger
 		}
 	}
