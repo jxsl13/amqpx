@@ -38,7 +38,7 @@ type SessionOption func(*sessionOption)
 // By default no logger is set.
 func SessionWithLogger(logger *slog.Logger) SessionOption {
 	return func(so *sessionOption) {
-		if logger == nil {
+		if logger != nil {
 			so.Logger = logger
 		}
 	}
