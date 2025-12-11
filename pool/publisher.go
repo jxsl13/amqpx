@@ -125,6 +125,65 @@ func (p *Publisher) publish(ctx context.Context, exchange string, routingKey str
 	return s.AwaitConfirm(ctx, tag)
 }
 
+// PublishBatch a message to a specific exchange with a given routingKey.
+// You may set exchange to "" and routingKey to your queue name in order to publish directly to a queue.
+func (p *Publisher) PublishBatch(ctx context.Context, exchange string, routingKey string, msgs []types.Publishing) error {
+	// does not change throughout the function
+	log := p.eplog(exchange, routingKey)
+
+	return p.retry(ctx, func() (cont bool, err error) {
+		err = p.publishBatch(ctx, exchange, routingKey, msgs)
+		switch {
+		case err == nil:
+			return false, nil
+		case errors.Is(err, types.ErrNack):
+			return false, err
+		case !errorutils.Recoverable(err):
+			// not recoverable
+			return false, err
+		default:
+			// ErrDeliveryTagMismatch + all other unknown errors
+			log.Warn(fmt.Sprintf("publish failed due to recoverable error, retrying: %s", err.Error()))
+			return true, nil
+		}
+	})
+}
+
+func (p *Publisher) publishBatch(ctx context.Context, exchange string, routingKey string, msgs []types.Publishing) (err error) {
+	defer func() {
+		log := p.eplog(exchange, routingKey)
+		if err != nil {
+			log.Error(fmt.Sprintf("failed to publish batch: %s", err.Error()))
+		} else {
+			log.Info("published a batch with %d messages", slog.Int("batch_size", len(msgs)))
+		}
+	}()
+
+	s, err := p.pool.ForceGetSession(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		p.pool.ReturnSession(s, err)
+	}()
+
+	deliveryTags, err := s.PublishBatch(ctx, exchange, routingKey, msgs)
+	if err != nil {
+		return err
+	}
+
+	if !s.IsConfirmable() {
+		return nil
+	}
+	for _, tag := range deliveryTags {
+		err = s.AwaitConfirm(ctx, tag)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (p *Publisher) retry(ctx context.Context, f func() (cont bool, err error)) error {
 	// fast path
 	cont, err := f()

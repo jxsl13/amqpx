@@ -103,6 +103,101 @@ func TestSinglePublisher(t *testing.T) {
 	wg.Wait()
 }
 
+func TestPublisherPublishBatch(t *testing.T) {
+	t.Parallel()
+
+	var (
+		proxyName, connectURL, _ = testutils.NextConnectURL()
+		ctx, cancel              = context.WithCancel(t.Context())
+		log                      = testlogger.NewTestLogger(t)
+		nextConnName             = testutils.ConnectionNameGenerator()
+		batchSize                = 100
+		numBatches               = 10
+	)
+	defer cancel()
+
+	hs, hsclose := amqputils.NewSession(
+		t,
+		ctx,
+		testutils.HealthyConnectURL,
+		nextConnName(),
+	)
+	defer hsclose()
+
+	p, err := pool.New(
+		ctx,
+		connectURL,
+		1,
+		1,
+		pool.WithLogger(testlogger.NewTestLogger(t)),
+		pool.WithConfirms(true),
+		pool.WithConnectionRecoverCallback(func(name string, retry int, err error) {
+			log.Warn(fmt.Sprintf("connection %s is broken, retry %d, error: %s", name, retry, err))
+		}),
+	)
+	if !assert.NoError(t, err) {
+		return
+	}
+	defer p.Close()
+
+	var (
+		nextExchangeName = testutils.ExchangeNameGenerator(hs.Name())
+		nextQueueName    = testutils.QueueNameGenerator(hs.Name())
+		exchangeName     = nextExchangeName()
+		queueName        = nextQueueName()
+	)
+	cleanup := amqputils.DeclareExchangeQueue(t, ctx, hs, exchangeName, queueName)
+	defer cleanup()
+
+	var (
+		nextConsumerName = testutils.ConsumerNameGenerator(queueName)
+		publisherMsgGen  = testutils.MessageGenerator(queueName)
+		consumerMsgGen   = testutils.MessageGenerator(queueName)
+		wg               sync.WaitGroup
+	)
+
+	pub := pool.NewPublisher(p)
+	defer pub.Close()
+
+	// INFO: currently this test allows duplication of messages
+	amqputils.ConsumeBatchAsyncN(t, ctx, &wg, hs, queueName, nextConsumerName(), consumerMsgGen, batchSize, numBatches, true)
+
+	// Publish messages in batches
+	for i := range numBatches {
+
+		batch := make([]types.Publishing, 0, batchSize)
+		for range batchSize {
+			msg := publisherMsgGen()
+			batch = append(batch, types.Publishing{
+				Mandatory:   true,
+				ContentType: "text/plain",
+				Body:        []byte(msg),
+			})
+		}
+
+		err = func(batch []types.Publishing) error {
+			disconnected, reconnected := proxyutils.DisconnectWithStartedStopped(
+				t,
+				proxyName,
+				0,
+				testutils.Jitter(2*time.Millisecond, 5*time.Millisecond),
+				testutils.Jitter(300*time.Millisecond, 500*time.Millisecond),
+			)
+			defer func() {
+				disconnected()
+				reconnected()
+			}()
+
+			return pub.PublishBatch(ctx, exchangeName, "", batch)
+		}(batch)
+		if !assert.NoError(t, err, fmt.Sprintf("when publishing batch starting at index %d", i)) {
+			cancel()
+			break
+		}
+	}
+	wg.Wait()
+}
+
 /*
 // FIXME: TODO: out of memory rabbitmq tests are disabled until https://github.com/rabbitmq/amqp091-go/issues/253 is resolved
 func TestPublishAwaitFlowControl(t *testing.T) {
