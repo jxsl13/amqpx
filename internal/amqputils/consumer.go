@@ -29,6 +29,14 @@ func ConsumeBatchAsyncN(
 	alllowDuplicates bool,
 ) {
 
+	if batchSize <= 0 {
+		panic("batchSize must be greater than 0")
+	}
+
+	if batchCount <= 0 {
+		panic("batchCount must be greater than 0")
+	}
+
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -47,11 +55,26 @@ func ConsumeBatchN(
 	batchCount int,
 	allowDuplicates bool,
 ) {
+
+	if batchSize <= 0 {
+		panic("batchSize must be greater than 0")
+	}
+
+	if batchCount <= 0 {
+		panic("batchCount must be greater than 0")
+	}
+
 	cctx, ccancel := context.WithCancel(ctx)
 	defer ccancel()
 	log := testlogger.NewTestLogger(t)
 
 	currentBatch := 1
+	// initial batch must be defined before any loop iteration, neither outer nor inner loop.
+	batch := make([]string, 0, batchSize)
+	for range batchSize {
+		batch = append(batch, messageGenerator())
+	}
+
 outer:
 	for {
 		delivery, err := c.ConsumeWithContext(
@@ -62,14 +85,9 @@ outer:
 				Exclusive:   true,
 			},
 		)
-		if err != nil {
-			assert.NoError(t, err)
-			return
-		}
-
-		batch := make([]string, 0, batchSize)
-		for range batchSize {
-			batch = append(batch, messageGenerator())
+		if !assert.NoError(t, err) {
+			// continue on error
+			continue
 		}
 
 		i := 0
@@ -83,32 +101,31 @@ outer:
 					continue outer
 				}
 				err := val.Ack(false)
-				if err != nil {
-					assert.NoError(t, err)
-					return
+				if !assert.NoError(t, err) {
+					continue outer
 				}
 
 				receivedMsg := string(val.Body)
+				expectedMsg := batch[i]
+				firstBatchMsg := batch[0]
 
-				if allowDuplicates && i > 0 && batch[0] == receivedMsg {
+				if allowDuplicates && i > 0 && firstBatchMsg == receivedMsg {
 					// INFO: it is possible that messages are duplicated, but this is not a problem, we allow that
 					// due to network issues. We should not fail the test in this case.
 					log.Warn(fmt.Sprintf("detected duplicate batch start message, found %d duplicate messages", i))
 					i = 0
+					expectedMsg = firstBatchMsg
 				}
-				expectedMsg := batch[i]
+				i++
 
 				assert.Equalf(
 					t,
 					expectedMsg,
 					receivedMsg,
-					"expected message %s, got %s, previously received message: %s",
+					"expected message %s, got %s",
 					expectedMsg,
 					receivedMsg,
-					batch[max(i-1, 0)],
 				)
-
-				i++
 
 				log.Info(fmt.Sprintf("consumed message: %s", receivedMsg))
 				if i == batchSize {
@@ -124,8 +141,8 @@ outer:
 					for range batchSize {
 						batch = append(batch, messageGenerator())
 					}
-					currentBatch++
 					i = 0
+					currentBatch++
 				}
 			}
 		}
