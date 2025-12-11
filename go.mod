@@ -4,7 +4,7 @@ go 1.24
 
 require (
 	github.com/Shopify/toxiproxy/v2 v2.7.0
-	github.com/rabbitmq/amqp091-go v1.9.0
+	github.com/rabbitmq/amqp091-go v1.10.0
 	github.com/stretchr/testify v1.9.0
 	go.uber.org/goleak v1.3.0
 )

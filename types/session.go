@@ -489,7 +489,7 @@ func (s *Session) Publish(ctx context.Context, exchange string, routingKey strin
 			deliveryTag = s.channel.GetNextPublishSeqNo()
 		}
 
-		err = s.channel.PublishWithContext(
+		_, err = s.channel.PublishWithDeferredConfirmWithContext(
 			ctx,
 			exchange,
 			routingKey,
@@ -521,6 +521,73 @@ func (s *Session) Publish(ctx context.Context, exchange string, routingKey strin
 		return 0, err
 	}
 	return deliveryTag, nil
+}
+
+// PublishBatch sends a list of Publishings from the client to an exchange on the server.
+// When you want a batch to be delivered to a single queue, you can publish to the default exchange with the routingKey of the queue name.
+// This is because every declared queue gets an implicit route from the default exchange.
+// It is possible for publishing to not reach the broker if the underlying socket is shut down without pending publishing packets being flushed from the kernel buffers.
+// The easy way of making it probable that all publishings reach the server is to always call Connection.Close before terminating your publishing application.
+// The way to ensure that all publishings reach the server is to add a listener to Channel.NotifyPublish and put the channel in confirm mode with Channel.Confirm.
+// Publishing delivery tags and their corresponding confirmations start at 1. Exit when all publishings are confirmed.
+// When Publish does not return an error and the channel is in confirm mode, the internal counter for DeliveryTags with the first confirmation starts at 1.
+func (s *Session) PublishBatch(ctx context.Context, exchange string, routingKey string, msgs []Publishing) (deliveryTags []uint64, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	deliveryTags = make([]uint64, len(msgs))
+	err = s.retry(ctx, s.publishRetryCB, func() error {
+
+		for i, msg := range msgs {
+
+			// we want to have a persistent messages by default
+			// this allows to even in a disaster case where the rabbitmq node is restarted or crashes
+			// to still have our messages persisted to disk.
+			// https://www.rabbitmq.com/persistence-conf.html#how-it-works
+			var amqpDeliverMode uint8
+			if msg.DeliveryMode == 1 {
+				amqpDeliverMode = 1 // transient (purged upon rabbitmq restart)
+			} else {
+				amqpDeliverMode = 2 // persistent (persisted to disk upon arrival in queue)
+			}
+
+			if s.confirmable {
+				deliveryTags[i] = s.channel.GetNextPublishSeqNo()
+			}
+
+			_, err = s.channel.PublishWithDeferredConfirmWithContext(
+				ctx,
+				exchange,
+				routingKey,
+				msg.Mandatory,
+				msg.Immediate,
+				amqp091.Publishing{
+					Headers:         amqp091.Table(msg.Headers),
+					ContentType:     msg.ContentType,
+					ContentEncoding: msg.ContentEncoding,
+					DeliveryMode:    amqpDeliverMode,
+					Priority:        msg.Priority,
+					CorrelationId:   msg.CorrelationId,
+					ReplyTo:         msg.ReplyTo,
+					Expiration:      msg.Expiration,
+					MessageId:       msg.MessageId,
+					Timestamp:       msg.Timestamp,
+					Type:            msg.Type,
+					UserId:          msg.UserId,
+					AppId:           msg.AppId,
+					Body:            msg.Body,
+				},
+			)
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return deliveryTags, nil
 }
 
 // Get is only supposed to be used for testing purposes, do not us eit to poll the queue periodically.

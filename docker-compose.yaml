@@ -1,7 +1,7 @@
 
 services:
   rabbitmq:
-    image: docker.io/bitnami/rabbitmq:4.0
+    image: rabbitmq:4.2-management-alpine
     ports:
       #- '4369:4369'
       #- '5551:5551'
@@ -10,20 +10,13 @@ services:
       #- '25672:25672'
       # user interface
       - '127.0.0.1:15672:15672'
-    environment:
-      RABBITMQ_NODE_TYPE: stats
-      RABBITMQ_MANAGEMENT_ALLOW_WEB_ACCESS: true
-      RABBITMQ_USERNAME: admin
-      RABBITMQ_PASSWORD: password
-      RABBITMQ_DISK_FREE_RELATIVE_LIMIT: 0.1
-      RABBITMQ_VM_MEMORY_HIGH_WATERMARK: 0.9
-      # See: https://www.rabbitmq.com/access-control.html#loopback-users
-      RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS: "-rabbit loopback_users []"
+    volumes:
+      - ./docker/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
     networks:
       - rabbitnet
 
   rabbitmq-broken:
-    image: docker.io/bitnami/rabbitmq:4.0
+    image: rabbitmq:4.2-management-alpine
     ports:
       #- '14369:4369'
       #- '15551:5551'
@@ -32,15 +25,8 @@ services:
       #- '35672:25672'
       # user interface
       - '127.0.0.1:25672:15672'
-    environment:
-      RABBITMQ_NODE_TYPE: stats
-      RABBITMQ_MANAGEMENT_ALLOW_WEB_ACCESS: true
-      RABBITMQ_USERNAME: admin
-      RABBITMQ_PASSWORD: password
-      #RABBITMQ_DISK_FREE_RELATIVE_LIMIT: 100
-      RABBITMQ_VM_MEMORY_HIGH_WATERMARK: 1000 # 1000 bytes
-      # See: https://www.rabbitmq.com/access-control.html#loopback-users
-      RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS: "-rabbit loopback_users []"
+    volumes:
+      - ./docker/rabbitmq-broken.conf:/etc/rabbitmq/rabbitmq.conf:ro
     networks:
       - rabbitnet
 

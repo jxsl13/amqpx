@@ -327,6 +327,11 @@ func (a *AMQPX) close() (err error) {
 	return err
 }
 
+// PublisherPool returns the publisher pool.
+func (a *AMQPX) PublisherPool() *pool.Pool {
+	return a.pubPool
+}
+
 // Publish a message to a specific exchange with a given routingKey.
 // You may set exchange to "" and routingKey to your queue name in order to publish directly to a queue.
 func (a *AMQPX) Publish(ctx context.Context, exchange string, routingKey string, msg types.Publishing) error {
@@ -337,6 +342,18 @@ func (a *AMQPX) Publish(ctx context.Context, exchange string, routingKey string,
 	}
 
 	return a.pub.Publish(ctx, exchange, routingKey, msg)
+}
+
+// PublishBatch publishes a batch of messages to a specific exchange with a given routingKey.
+// You may set exchange to "" and routingKey to your queue name in order to publish directly to a queue.
+func (a *AMQPX) PublishBatch(ctx context.Context, exchange string, routingKey string, msgs []types.Publishing) error {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	if a.pub == nil {
+		panic("amqpx package was not started")
+	}
+
+	return a.pub.PublishBatch(ctx, exchange, routingKey, msgs)
 }
 
 // Get is only supposed to be used for testing, do not use get for polling any broker queues.
