@@ -135,8 +135,7 @@ func TestPublisherPublishBatch(t *testing.T) {
 			log.Warn(fmt.Sprintf("connection %s is broken, retry %d, error: %s", name, retry, err))
 		}),
 	)
-	if err != nil {
-		assert.NoError(t, err)
+	if !assert.NoError(t, err) {
 		return
 	}
 	defer p.Close()
@@ -191,8 +190,7 @@ func TestPublisherPublishBatch(t *testing.T) {
 
 			return pub.PublishBatch(ctx, exchangeName, "", batch)
 		}(batch)
-		if err != nil {
-			assert.NoError(t, err, fmt.Sprintf("when publishing batch starting at index %d", i))
+		if !assert.NoError(t, err, fmt.Sprintf("when publishing batch starting at index %d", i)) {
 			cancel()
 			break
 		}
