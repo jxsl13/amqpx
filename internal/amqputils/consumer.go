@@ -68,12 +68,15 @@ func ConsumeBatchN(
 	defer ccancel()
 	log := testlogger.NewTestLogger(t)
 
-	currentBatch := 1
+	numBatches := 1
 	// initial batch must be defined before any loop iteration, neither outer nor inner loop.
-	batch := make([]string, 0, batchSize)
+	expectedBatch := make([]string, 0, batchSize)
 	for range batchSize {
-		batch = append(batch, messageGenerator())
+		expectedBatch = append(expectedBatch, messageGenerator())
 	}
+
+	i := 0
+	currentBatch := make([]string, 0, batchSize)
 
 outer:
 	for {
@@ -85,12 +88,11 @@ outer:
 				Exclusive:   true,
 			},
 		)
-		if !assert.NoError(t, err) {
-			// continue on error
-			continue
-		}
 
-		i := 0
+		if err != nil {
+			// continue on error
+			continue outer
+		}
 
 		for {
 			select {
@@ -98,51 +100,62 @@ outer:
 				return
 			case val, ok := <-delivery:
 				if !ok {
-					continue outer
+					return
 				}
+
 				err := val.Ack(false)
 				if !assert.NoError(t, err) {
-					continue outer
+					return
 				}
 
 				receivedMsg := string(val.Body)
-				expectedMsg := batch[i]
-				firstBatchMsg := batch[0]
-
-				if allowDuplicates && i > 0 && firstBatchMsg == receivedMsg {
-					// INFO: it is possible that messages are duplicated, but this is not a problem, we allow that
-					// due to network issues. We should not fail the test in this case.
-					log.Warn(fmt.Sprintf("detected duplicate batch start message, found %d duplicate messages", i))
+				expectedMsg := expectedBatch[i%len(expectedBatch)]
+				if allowDuplicates && i > 0 && receivedMsg == expectedBatch[0] {
 					i = 0
-					expectedMsg = firstBatchMsg
+					expectedMsg = expectedBatch[0]
+					currentBatch = currentBatch[:0]
+					log.Warn(fmt.Sprintf("received duplicate message: %s", receivedMsg))
 				}
+
+				// append to either reset and empty or partial batch
+				currentBatch = append(currentBatch, receivedMsg)
 				i++
 
-				assert.Equalf(
+				if !assert.Equalf(
 					t,
 					expectedMsg,
 					receivedMsg,
 					"expected message %s, got %s",
 					expectedMsg,
 					receivedMsg,
-				)
+				) {
+					log.Warn(fmt.Sprintf("message mismatch expected %q, got %q", expectedMsg, receivedMsg))
+				}
 
 				log.Info(fmt.Sprintf("consumed message: %s", receivedMsg))
-				if i == batchSize {
+				if len(currentBatch) == batchSize {
+					assert.Equal(t,
+						expectedBatch,
+						currentBatch,
+						"expected batch %v, got %v",
+						expectedBatch,
+						currentBatch,
+					)
 
-					log.Info(fmt.Sprintf("consumed %d messages in batch %d/%d", batchSize, currentBatch, batchCount))
-					if currentBatch == batchCount {
+					numBatches++
+					i = 0
+					currentBatch = currentBatch[:0]
+
+					log.Info(fmt.Sprintf("consumed %d messages in batch %d/%d", batchSize, numBatches, batchCount))
+					if numBatches >= batchCount {
 						ccancel()
 						continue
 					}
 
-					// prepare for next batch
-					batch = batch[:0]
+					expectedBatch = expectedBatch[:0]
 					for range batchSize {
-						batch = append(batch, messageGenerator())
+						expectedBatch = append(expectedBatch, messageGenerator())
 					}
-					i = 0
-					currentBatch++
 				}
 			}
 		}
