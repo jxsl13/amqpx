@@ -2,7 +2,6 @@ package types_test
 
 import (
 	"context"
-	"sync"
 	"testing"
 	"time"
 
@@ -182,7 +181,6 @@ func TestAwaitConfirmConcurrentPublishersWithContextTimeout(t *testing.T) {
 		queueName        = nextQueueName()
 		nextExchangeName = testutils.ExchangeNameGenerator(sessionName)
 		exchangeName     = nextExchangeName()
-		wg               sync.WaitGroup
 		numPublishers    = 10
 	)
 
@@ -228,8 +226,6 @@ func TestAwaitConfirmConcurrentPublishersWithContextTimeout(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// Now: many sequential publishes should all succeed despite the initial stale confirm
-	_ = numPublishers
-	_ = wg
 	for i := 0; i < numPublishers; i++ {
 		tag, err := s.Publish(ctx, exchangeName, "", types.Publishing{
 			ContentType: "text/plain",
