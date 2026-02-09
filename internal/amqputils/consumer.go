@@ -68,12 +68,15 @@ func ConsumeBatchN(
 	defer ccancel()
 	log := testlogger.NewTestLogger(t)
 
-	numBatches := 1
+	numBatches := 0
 	// initial batch must be defined before any loop iteration, neither outer nor inner loop.
 	expectedBatch := make([]string, 0, batchSize)
 	for range batchSize {
 		expectedBatch = append(expectedBatch, messageGenerator())
 	}
+
+	// track previous batch messages for cross-batch duplicate detection
+	var previousBatchSet map[string]struct{}
 
 	i := 0
 	currentBatch := make([]string, 0, batchSize)
@@ -108,7 +111,26 @@ outer:
 					return
 				}
 
+				// it is possible that after the complete batch was sent, we resend
+				// the complete batch because of network problems that kill the channel before the confirmations
+				// are awaited. In that case we reset the batch at the beginning of the batchSize +1's message.
+				if len(currentBatch) == batchSize {
+					// only the last batch may leave messages in the queue, because we cannot otherwise stop consuming
+					// in the normal case, where the whole batch is not resent.
+					i = 0
+					currentBatch = currentBatch[:0]
+				}
+
 				receivedMsg := string(val.Body)
+
+				// skip duplicates from the previous batch (cross-batch retry)
+				if allowDuplicates && len(previousBatchSet) > 0 {
+					if _, isDup := previousBatchSet[receivedMsg]; isDup {
+						log.Warn(fmt.Sprintf("skipping duplicate from previous batch: %s", receivedMsg))
+						continue
+					}
+				}
+
 				expectedMsg := expectedBatch[i%len(expectedBatch)]
 				if allowDuplicates && i > 0 && receivedMsg == expectedBatch[0] {
 					i = 0
@@ -141,17 +163,18 @@ outer:
 						expectedBatch,
 						currentBatch,
 					)
-
 					numBatches++
-					i = 0
-					currentBatch = currentBatch[:0]
-
 					log.Info(fmt.Sprintf("consumed %d messages in batch %d/%d", batchSize, numBatches, batchCount))
 					if numBatches >= batchCount {
 						ccancel()
 						continue
 					}
 
+					// advance to next batch: save current as previous, generate new expected
+					previousBatchSet = make(map[string]struct{}, batchSize)
+					for _, msg := range expectedBatch {
+						previousBatchSet[msg] = struct{}{}
+					}
 					expectedBatch = expectedBatch[:0]
 					for range batchSize {
 						expectedBatch = append(expectedBatch, messageGenerator())
