@@ -41,11 +41,11 @@ package main
 import (
     "context"
     "fmt"
+    "log/slog"
     "os/signal"
     "syscall"
 
     "github.com/jxsl13/amqpx"
-    "github.com/jxsl13/amqpx/logging"
     "github.com/jxsl13/amqpx/pool"
     "github.com/jxsl13/amqpx/types"
 )
@@ -102,11 +102,11 @@ package main
 import (
     "context"
     "fmt"
+    "log/slog"
     "os/signal"
     "syscall"
 
     "github.com/jxsl13/amqpx"
-    "github.com/jxsl13/amqpx/logging"
     "github.com/jxsl13/amqpx/pool"
     "github.com/jxsl13/amqpx/types"
 )

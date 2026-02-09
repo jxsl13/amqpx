@@ -206,30 +206,30 @@ func (cp *ConnectionPool) nextTransientID() uint64 {
 }
 
 // GetTransientConnection may return an error when the context was cancelled before the connection could be obtained.
-// Transient connections may be returned to the pool. The are closed properly upon returning.
+// Transient connections may be returned to the pool. They are closed properly upon returning.
 func (cp *ConnectionPool) GetTransientConnection(ctx context.Context) (conn *types.Connection, err error) {
-	atomic.AddInt64(&cp.concurrentTransient, 1)
-
-	conn, err = cp.deriveConnection(ctx, cp.nextTransientID(), false)
-	if err == nil {
-		return conn, nil
-	}
 	defer func() {
-		if err != nil {
-			cerr := conn.Close()
-			if cerr != nil {
-				cp.plog().Warn(fmt.Sprintf("failed to close transient connection: %s", cerr.Error()))
-			}
+		if err == nil {
+			atomic.AddInt64(&cp.concurrentTransient, 1)
 		}
 	}()
 
-	// recover until context is closed
-	err = conn.Recover(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get transient connection: %w", err)
-	}
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("failed to get transient connection: %w", ctx.Err())
+		case <-cp.catchShutdown():
+			return nil, fmt.Errorf("failed to get transient connection: %w", types.ErrClosed)
+		default:
+		}
 
-	return conn, nil
+		conn, err = cp.deriveConnection(ctx, cp.nextTransientID(), false)
+		if err == nil {
+			return conn, nil
+		}
+
+		cp.plog().Warn(fmt.Sprintf("failed to derive transient connection, retrying: %s", err.Error()))
+	}
 }
 
 // ReturnConnection puts the connection back in the queue and flag it for error.
