@@ -377,51 +377,59 @@ func (s *Session) AwaitConfirm(ctx context.Context, expectedTag uint64) (err err
 		return ErrNoConfirms
 	}
 
-	select {
-	// TODO: WARNING: this might lead to problems when a single session is used
-	// in a multithreaded context. That way we might received out of order confirmations
-	// which could lead to unexpected behavior.
-	case confirm, ok := <-s.confirms:
-		if !ok {
-			err := s.error()
-			if err != nil {
-				return fmt.Errorf("confirms channel closed: %w", err)
+	log := s.slog()
+
+	for {
+		select {
+		case confirm, ok := <-s.confirms:
+			if !ok {
+				err := s.error()
+				if err != nil {
+					return fmt.Errorf("confirms channel closed: %w", err)
+				}
+				return fmt.Errorf("confirms channel %w", ErrClosed)
 			}
-			return fmt.Errorf("confirms channel %w", ErrClosed)
-		}
-		if confirm.DeliveryTag != expectedTag {
-			// https://www.rabbitmq.com/docs/confirms#publisher-confirms-latency
-			return fmt.Errorf("%w: expected %d, got %d", ErrDeliveryTagMismatch, expectedTag, confirm.DeliveryTag)
-		}
-		if !confirm.Ack {
-			// in case the server did not accept the message, it might be due to resource problems.
-			// TODO: do we want to pause here upon flow control messages?
-			return ErrNack
-		}
-		// confirmed by broker
-		return nil
-	case returned, ok := <-s.returned:
-		if !ok {
-			err := s.error()
-			if err != nil {
-				return fmt.Errorf("returned channel closed: %w", err)
+			if confirm.DeliveryTag < expectedTag {
+				// Stale confirm from a previous publish whose AwaitConfirm was
+				// interrupted (e.g., by context cancellation). Discard and keep
+				// waiting for our expected tag.
+				log.Warn(fmt.Sprintf("discarding stale confirm for tag %d, waiting for tag %d", confirm.DeliveryTag, expectedTag))
+				continue
 			}
-			return fmt.Errorf("%w", errReturnedClosed)
-		}
-		return fmt.Errorf("%w: %s", ErrReturned, returned.ReplyText)
-	case blocking, ok := <-s.conn.BlockingFlowControl():
-		if !ok {
-			err := s.error()
-			if err != nil {
-				return fmt.Errorf("blocking channel closed: %w", err)
+			if confirm.DeliveryTag != expectedTag {
+				// https://www.rabbitmq.com/docs/confirms#publisher-confirms-latency
+				return fmt.Errorf("%w: expected %d, got %d", ErrDeliveryTagMismatch, expectedTag, confirm.DeliveryTag)
 			}
-			return fmt.Errorf("%w", errBlockingFlowControlClosed)
+			if !confirm.Ack {
+				// in case the server did not accept the message, it might be due to resource problems.
+				// TODO: do we want to pause here upon flow control messages?
+				return ErrNack
+			}
+			// confirmed by broker
+			return nil
+		case returned, ok := <-s.returned:
+			if !ok {
+				err := s.error()
+				if err != nil {
+					return fmt.Errorf("returned channel closed: %w", err)
+				}
+				return fmt.Errorf("%w", errReturnedClosed)
+			}
+			return fmt.Errorf("%w: %s", ErrReturned, returned.ReplyText)
+		case blocking, ok := <-s.conn.BlockingFlowControl():
+			if !ok {
+				err := s.error()
+				if err != nil {
+					return fmt.Errorf("blocking channel closed: %w", err)
+				}
+				return fmt.Errorf("%w", errBlockingFlowControlClosed)
+			}
+			return fmt.Errorf("%w: %s", ErrBlockingFlowControl, blocking.Reason)
+		case <-ctx.Done():
+			return fmt.Errorf("await confirm: failed context %w: %w", ErrClosed, ctx.Err())
+		case <-s.ctx.Done():
+			return fmt.Errorf("session %w: %w", ErrClosed, ctx.Err())
 		}
-		return fmt.Errorf("%w: %s", ErrBlockingFlowControl, blocking.Reason)
-	case <-ctx.Done():
-		return fmt.Errorf("await confirm: failed context %w: %w", ErrClosed, ctx.Err())
-	case <-s.ctx.Done():
-		return fmt.Errorf("session %w: %w", ErrClosed, ctx.Err())
 	}
 }
 

@@ -124,7 +124,7 @@ func (p *Pool) ConnectionPoolCapacity() int {
 
 // ConnectionPoolSize returns the number of connections in the pool that are idling.
 func (p *Pool) ConnectionPoolSize() int {
-	return p.cp.Capacity()
+	return p.cp.Size()
 }
 
 // SessionPoolCapacity returns the capacity of the session pool.
