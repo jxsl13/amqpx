@@ -1,11 +1,11 @@
 module github.com/jxsl13/amqpx
 
-go 1.24
+go 1.27.0
 
 require (
-	github.com/Shopify/toxiproxy/v2 v2.12.0
+	github.com/Shopify/toxiproxy/v2 v2.13.0
 	github.com/rabbitmq/amqp091-go v1.15.0
-	github.com/stretchr/testify v1.10.0
+	github.com/stretchr/testify v1.11.1
 	go.uber.org/goleak v1.3.0
 )
 
